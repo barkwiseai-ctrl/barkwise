@@ -1,0 +1,615 @@
+package com.petsocial.app.data
+
+import java.time.Instant
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
+
+class MockApiService private constructor() : ApiService {
+    private val providers = mutableListOf(
+        ServiceProvider(
+            id = "provider_1",
+            name = "Paws & Play Walkers",
+            category = "dog_walking",
+            suburb = "Surry Hills",
+            rating = 4.9,
+            reviewCount = 124,
+            priceFrom = 35,
+            description = "Daily neighborhood walks with photo updates.",
+            fullDescription = "Local dog walkers for weekday and weekend sessions.",
+            latitude = -33.8842,
+            longitude = 151.2106,
+            ownerUserId = "user_1",
+            ownerLabel = "Account A",
+        ),
+        ServiceProvider(
+            id = "provider_2",
+            name = "Clean Pup Grooming",
+            category = "grooming",
+            suburb = "Redfern",
+            rating = 4.7,
+            reviewCount = 88,
+            priceFrom = 65,
+            description = "Full grooming, nail trim, and wash packages.",
+            fullDescription = "Salon grooming with pickup windows every afternoon.",
+            latitude = -33.8935,
+            longitude = 151.2048,
+            ownerUserId = "user_3",
+            ownerLabel = "Account C",
+        ),
+    )
+    private val reviewsByProvider = mutableMapOf(
+        "provider_1" to mutableListOf(
+            Review("review_1", "provider_1", "Sam", 5, "Always on time and patient with our lab."),
+            Review("review_2", "provider_1", "June", 5, "Great updates and friendly service."),
+        ),
+        "provider_2" to mutableListOf(
+            Review("review_3", "provider_2", "Mia", 4, "Good groom and easy booking flow."),
+        ),
+    )
+    private val groupMembers = mutableMapOf(
+        "group_1" to mutableSetOf("user_1", "user_2"),
+        "group_2" to mutableSetOf("user_3"),
+    )
+    private val groupPendingMembers = mutableMapOf(
+        "group_1" to mutableSetOf("user_4"),
+        "group_2" to mutableSetOf<String>(),
+    )
+    private val groupInvites = mutableMapOf<String, GroupInvite>()
+    private val groups = mutableListOf(
+        Group(
+            id = "group_1",
+            name = "Surry Hills Dog Parents",
+            suburb = "Surry Hills",
+            memberCount = 2,
+            official = true,
+            ownerUserId = "user_1",
+        ),
+        Group(
+            id = "group_2",
+            name = "Redfern Weekend Walks",
+            suburb = "Redfern",
+            memberCount = 1,
+            ownerUserId = "user_3",
+        ),
+    )
+    private val posts = mutableListOf(
+        CommunityPost(
+            id = "post_1",
+            type = "lost_found",
+            title = "Found leash near Prince Alfred Park",
+            body = "Blue leash dropped at the off-leash area. Message me to claim.",
+            suburb = "Surry Hills",
+            createdAt = Instant.now().minus(2, ChronoUnit.HOURS).toString(),
+        ),
+    )
+    private val events = mutableListOf(
+        CommunityEvent(
+            id = "event_1",
+            title = "Morning Social Walk",
+            description = "Easy-paced dog walk and coffee meetup.",
+            suburb = "Surry Hills",
+            date = LocalDate.now().plusDays(2).toString(),
+            groupId = "group_1",
+            attendeeCount = 1,
+            createdBy = "user_1",
+            status = "approved",
+        ),
+    )
+    private val eventAttendees = mutableMapOf(
+        "event_1" to mutableSetOf("user_2"),
+    )
+    private val bookings = mutableListOf<BookingResponse>()
+    private val providerBlackouts = mutableMapOf<String, MutableList<ProviderBlackout>>()
+    private val conversationByUser = mutableMapOf<String, MutableList<ChatTurn>>()
+    private val notifications = mutableListOf(
+        AppNotification(
+            id = "notif_1",
+            userId = "user_2",
+            title = "Booking updated",
+            body = "Your walker confirmed tomorrow's booking.",
+            category = "booking",
+            read = false,
+            createdAt = Instant.now().minus(1, ChronoUnit.HOURS).toString(),
+            deepLink = "messages",
+        ),
+    )
+    private var bookingCounter = 1
+    private var holdCounter = 1
+    private var postCounter = 2
+    private var eventCounter = 2
+    private var groupCounter = 3
+    private var blackoutCounter = 1
+
+    override suspend fun getProviders(
+        category: String?,
+        suburb: String?,
+        minRating: Double?,
+        maxDistanceKm: Double?,
+        userLat: Double?,
+        userLng: Double?,
+        query: String?,
+        sortBy: String?,
+    ): List<ServiceProvider> {
+        val filtered = providers
+            .asSequence()
+            .filter { category.isNullOrBlank() || it.category == category }
+            .filter { suburb.isNullOrBlank() || it.suburb.equals(suburb, ignoreCase = true) }
+            .filter { minRating == null || it.rating >= minRating }
+            .filter {
+                query.isNullOrBlank() ||
+                    it.name.contains(query, ignoreCase = true) ||
+                    it.description.contains(query, ignoreCase = true)
+            }
+            .map { provider ->
+                if (userLat != null && userLng != null) {
+                    provider.copy(distanceKm = distanceKm(userLat, userLng, provider.latitude, provider.longitude))
+                } else {
+                    provider.copy(distanceKm = null)
+                }
+            }
+            .filter { maxDistanceKm == null || (it.distanceKm ?: 0.0) <= maxDistanceKm }
+            .toList()
+        return when (sortBy) {
+            "rating_desc" -> filtered.sortedByDescending { it.rating }
+            "price_asc" -> filtered.sortedBy { it.priceFrom }
+            "distance_asc" -> filtered.sortedBy { it.distanceKm ?: Double.MAX_VALUE }
+            else -> filtered
+        }
+    }
+
+    override suspend fun getProviderDetails(providerId: String): ServiceProviderDetailsResponse {
+        val provider = providers.firstOrNull { it.id == providerId } ?: error("Provider not found: $providerId")
+        return ServiceProviderDetailsResponse(
+            provider = provider,
+            reviews = reviewsByProvider[providerId].orEmpty(),
+        )
+    }
+
+    override suspend fun getProviderAvailability(providerId: String, date: String): List<ServiceAvailabilitySlot> {
+        val slots = listOf("09:00", "11:00", "13:00", "15:00", "17:00")
+        val blackouts = providerBlackouts[providerId].orEmpty()
+            .filter { it.date == date }
+            .map { it.timeSlot }
+            .toSet()
+        val taken = bookings
+            .filter { it.providerId == providerId && it.date == date && !it.status.startsWith("cancelled") }
+            .map { it.timeSlot }
+            .toSet()
+        return slots.map { slot ->
+            val blocked = slot in blackouts || slot in taken
+            ServiceAvailabilitySlot(
+                date = date,
+                timeSlot = slot,
+                available = !blocked,
+                reason = if (blocked) "Unavailable" else null,
+            )
+        }
+    }
+
+    override suspend fun createBooking(payload: BookingRequest): BookingResponse {
+        val booking = BookingResponse(
+            id = "booking_${bookingCounter++}",
+            ownerUserId = payload.userId,
+            providerId = payload.providerId,
+            petName = payload.petName,
+            date = payload.date,
+            timeSlot = payload.timeSlot,
+            note = payload.note,
+            status = "pending_provider_confirmation",
+        )
+        bookings += booking
+        return booking
+    }
+
+    override suspend fun createBookingHold(payload: BookingHoldRequest): BookingHoldResponse {
+        return BookingHoldResponse(
+            id = "hold_${holdCounter++}",
+            providerId = payload.providerId,
+            ownerUserId = payload.userId,
+            date = payload.date,
+            timeSlot = payload.timeSlot,
+            expiresAt = Instant.now().plus(15, ChronoUnit.MINUTES).toString(),
+        )
+    }
+
+    override suspend fun updateBookingStatus(
+        bookingId: String,
+        payload: BookingStatusUpdateRequest,
+    ): BookingResponse {
+        val index = bookings.indexOfFirst { it.id == bookingId }
+        if (index < 0) error("Booking not found: $bookingId")
+        val updated = bookings[index].copy(
+            status = payload.status,
+            note = payload.note,
+        )
+        bookings[index] = updated
+        return updated
+    }
+
+    override suspend fun getBookings(userId: String?, role: String?): List<BookingResponse> {
+        val providerOwnerById = providers.associate { it.id to (it.ownerUserId ?: "") }
+        return bookings.filter { booking ->
+            when (role) {
+                "owner" -> userId == null || booking.ownerUserId == userId
+                "provider" -> userId == null || providerOwnerById[booking.providerId] == userId
+                else -> {
+                    userId == null || booking.ownerUserId == userId || providerOwnerById[booking.providerId] == userId
+                }
+            }
+        }
+    }
+
+    override suspend fun getCalendarEvents(
+        userId: String,
+        dateFrom: String,
+        dateTo: String,
+        role: String,
+    ): List<CalendarEvent> {
+        val from = LocalDate.parse(dateFrom)
+        val to = LocalDate.parse(dateTo)
+        val providerOwnerById = providers.associate { it.id to (it.ownerUserId ?: "") }
+        return bookings
+            .filter { booking ->
+                val bookingDate = runCatching { LocalDate.parse(booking.date) }.getOrNull() ?: return@filter false
+                if (bookingDate < from || bookingDate > to) return@filter false
+                when (role) {
+                    "owner" -> booking.ownerUserId == userId
+                    "provider" -> providerOwnerById[booking.providerId] == userId
+                    else -> booking.ownerUserId == userId || providerOwnerById[booking.providerId] == userId
+                }
+            }
+            .map { booking ->
+                val providerName = providers.firstOrNull { it.id == booking.providerId }?.name ?: "Provider"
+                CalendarEvent(
+                    id = "calendar_${booking.id}",
+                    type = "booking",
+                    role = if (booking.ownerUserId == userId) "owner" else "provider",
+                    title = providerName,
+                    subtitle = booking.petName,
+                    date = booking.date,
+                    timeSlot = booking.timeSlot,
+                    status = booking.status,
+                    providerId = booking.providerId,
+                    bookingId = booking.id,
+                )
+            }
+    }
+
+    override suspend fun createProviderBlackout(
+        providerId: String,
+        payload: ProviderBlackoutRequest,
+    ): ProviderBlackout {
+        val blackout = ProviderBlackout(
+            id = "blackout_${blackoutCounter++}",
+            providerId = providerId,
+            date = payload.date,
+            timeSlot = payload.timeSlot,
+            reason = payload.reason,
+        )
+        providerBlackouts.getOrPut(providerId) { mutableListOf() }.add(blackout)
+        return blackout
+    }
+
+    override suspend fun getProviderBlackouts(providerId: String): List<ProviderBlackout> {
+        return providerBlackouts[providerId].orEmpty()
+    }
+
+    override suspend fun chat(payload: ChatRequest): ChatResponse {
+        val conversation = conversationByUser.getOrPut(payload.userId) { mutableListOf() }
+        conversation += ChatTurn(role = "user", content = payload.message)
+        val suburbHint = payload.suburb?.let { " around $it" }.orEmpty()
+        val answer = "Mock BarkAI: I can help you find walkers, groomers, and local events$suburbHint."
+        conversation += ChatTurn(role = "assistant", content = answer)
+        return ChatResponse(
+            answer = answer,
+            conversation = conversation.toList(),
+        )
+    }
+
+    override suspend fun acceptProfile(payload: ProfileActionRequest): ChatResponse {
+        return ChatResponse(
+            answer = "Mock profile saved for ${payload.userId}.",
+            conversation = listOf(ChatTurn(role = "assistant", content = "Profile accepted.")),
+        )
+    }
+
+    override suspend fun submitProvider(payload: ProfileActionRequest): ChatResponse {
+        return ChatResponse(
+            answer = "Mock provider listing submitted for ${payload.userId}.",
+            conversation = listOf(ChatTurn(role = "assistant", content = "Provider listing submitted.")),
+        )
+    }
+
+    override suspend fun getGroups(suburb: String?, userId: String?): List<Group> {
+        return groups
+            .filter { suburb.isNullOrBlank() || it.suburb.equals(suburb, ignoreCase = true) }
+            .map { group ->
+                val members = groupMembers[group.id].orEmpty()
+                val pending = groupPendingMembers[group.id].orEmpty()
+                group.copy(
+                    memberCount = members.size,
+                    membershipStatus = if (userId != null && userId in members) {
+                        "member"
+                    } else if (userId != null && userId in pending) {
+                        "pending"
+                    } else {
+                        "none"
+                    },
+                    isAdmin = userId != null && group.ownerUserId == userId,
+                    pendingRequestCount = if (userId != null && group.ownerUserId == userId) pending.size else 0,
+                )
+            }
+    }
+
+    override suspend fun createGroup(payload: GroupCreateRequest): Group {
+        val group = Group(
+            id = "group_${groupCounter++}",
+            name = payload.name,
+            suburb = payload.suburb,
+            memberCount = 1,
+            ownerUserId = payload.userId,
+            membershipStatus = "member",
+            isAdmin = true,
+        )
+        groups += group
+        groupMembers[group.id] = mutableSetOf(payload.userId)
+        groupPendingMembers[group.id] = mutableSetOf()
+        return group
+    }
+
+    override suspend fun joinGroup(groupId: String, payload: GroupJoinRequest): Group {
+        val pending = groupPendingMembers.getOrPut(groupId) { mutableSetOf() }
+        val members = groupMembers.getOrPut(groupId) { mutableSetOf() }
+        if (payload.userId !in members) {
+            pending += payload.userId
+        }
+        val group = groups.firstOrNull { it.id == groupId } ?: error("Group not found: $groupId")
+        return group.copy(
+            memberCount = members.size,
+            membershipStatus = if (payload.userId in members) "member" else "pending",
+            isAdmin = group.ownerUserId == payload.userId,
+            pendingRequestCount = if (group.ownerUserId == payload.userId) pending.size else 0,
+        )
+    }
+
+    override suspend fun createGroupInvite(payload: GroupInviteCreateRequest): GroupInvite {
+        val group = groups.firstOrNull { it.id == payload.groupId } ?: Group(
+            id = payload.groupId,
+            name = "Dog Park Group",
+            suburb = "Surry Hills",
+            memberCount = groupMembers[payload.groupId]?.size ?: 0,
+            official = false,
+            ownerUserId = payload.inviterUserId,
+        )
+        val token = "inv_mock_${Instant.now().toEpochMilli()}"
+        val invite = GroupInvite(
+            token = token,
+            groupId = group.id,
+            groupName = group.name,
+            suburb = group.suburb,
+            inviterUserId = payload.inviterUserId,
+            expiresAt = Instant.now().plus(48, ChronoUnit.HOURS).toString(),
+            inviteUrl = "barkwise://join?invite_token=$token&group_id=${group.id}",
+        )
+        groupInvites[token] = invite
+        return invite
+    }
+
+    override suspend fun resolveGroupInvite(token: String): GroupInvite {
+        return groupInvites[token] ?: error("Invite not found")
+    }
+
+    override suspend fun completeGroupOnboarding(payload: GroupOnboardingCompleteRequest): GroupOnboardingCompleteResponse {
+        val invite = groupInvites[payload.inviteToken] ?: error("Invite not found")
+        val userId = "user_join_${Instant.now().toEpochMilli().toString().takeLast(6)}"
+        val members = groupMembers.getOrPut(invite.groupId) { mutableSetOf() }
+        members += userId
+        val group = groups.firstOrNull { it.id == invite.groupId } ?: Group(
+            id = invite.groupId,
+            name = invite.groupName,
+            suburb = invite.suburb,
+            memberCount = members.size,
+            ownerUserId = invite.inviterUserId,
+        ).also { groups += it }
+        if (group != null) {
+            val idx = groups.indexOfFirst { it.id == group.id }
+            if (idx >= 0) {
+                groups[idx] = group.copy(memberCount = members.size)
+            } else {
+                groups += group.copy(memberCount = members.size)
+            }
+        }
+        var createdPostId: String? = null
+        if (payload.sharePhotoToGroup) {
+            createdPostId = "post_${postCounter++}"
+            posts.add(
+                0,
+                CommunityPost(
+                    id = createdPostId,
+                    type = "group_post",
+                    title = "Dog park check-in: ${payload.dogName}",
+                    body = "${payload.ownerName} joined ${invite.groupName} and shared a dog photo.",
+                    suburb = payload.suburb ?: invite.suburb,
+                    createdAt = Instant.now().toString(),
+                ),
+            )
+        }
+        return GroupOnboardingCompleteResponse(
+            userId = userId,
+            groupId = invite.groupId,
+            membershipStatus = "member",
+            createdPostId = createdPostId,
+        )
+    }
+
+    override suspend fun getGroupJoinRequests(
+        groupId: String,
+        requesterUserId: String,
+    ): List<GroupJoinRequestView> {
+        val group = groups.firstOrNull { it.id == groupId } ?: return emptyList()
+        if (group.ownerUserId != requesterUserId) return emptyList()
+        return groupPendingMembers[groupId].orEmpty().map { userId ->
+            GroupJoinRequestView(
+                groupId = groupId,
+                userId = userId,
+                status = "pending",
+            )
+        }
+    }
+
+    override suspend fun moderateGroupJoinRequest(
+        groupId: String,
+        payload: GroupJoinModerationRequest,
+    ): Group {
+        val group = groups.firstOrNull { it.id == groupId } ?: error("Group not found: $groupId")
+        if (group.ownerUserId != payload.requesterUserId) return group
+        val pending = groupPendingMembers.getOrPut(groupId) { mutableSetOf() }
+        val members = groupMembers.getOrPut(groupId) { mutableSetOf() }
+        pending.remove(payload.memberUserId)
+        if (payload.action == "approve") {
+            members += payload.memberUserId
+        }
+        return group.copy(
+            memberCount = members.size,
+            isAdmin = true,
+            membershipStatus = "member",
+            pendingRequestCount = pending.size,
+        )
+    }
+
+    override suspend fun getPosts(
+        suburb: String?,
+        userId: String?,
+        query: String?,
+        sortBy: String?,
+    ): List<CommunityPost> {
+        val filtered = posts.filter { post ->
+            val matchesSuburb = suburb.isNullOrBlank() || post.suburb.equals(suburb, ignoreCase = true)
+            val matchesQuery = query.isNullOrBlank() ||
+                post.title.contains(query, ignoreCase = true) ||
+                post.body.contains(query, ignoreCase = true)
+            matchesSuburb && matchesQuery
+        }
+        return when (sortBy) {
+            "newest" -> filtered.sortedByDescending { it.createdAt.orEmpty() }
+            else -> filtered
+        }
+    }
+
+    override suspend fun createPost(payload: CommunityPostCreate): CommunityPost {
+        val created = CommunityPost(
+            id = "post_${postCounter++}",
+            type = payload.type,
+            title = payload.title,
+            body = payload.body,
+            suburb = payload.suburb,
+            createdAt = Instant.now().toString(),
+        )
+        posts.add(0, created)
+        return created
+    }
+
+    override suspend fun getEvents(suburb: String?, userId: String?): List<CommunityEvent> {
+        return events
+            .filter { suburb.isNullOrBlank() || it.suburb.equals(suburb, ignoreCase = true) }
+            .map { event ->
+                val attendees = eventAttendees[event.id].orEmpty()
+                event.copy(
+                    attendeeCount = attendees.size,
+                    rsvpStatus = if (userId != null && userId in attendees) "attending" else "none",
+                )
+            }
+    }
+
+    override suspend fun createEvent(payload: CommunityEventCreateRequest): CommunityEvent {
+        val event = CommunityEvent(
+            id = "event_${eventCounter++}",
+            title = payload.title,
+            description = payload.description,
+            suburb = payload.suburb,
+            date = payload.date,
+            groupId = payload.groupId,
+            attendeeCount = 0,
+            createdBy = payload.userId,
+            status = if (payload.groupId == null) "approved" else "pending",
+        )
+        events.add(0, event)
+        return event
+    }
+
+    override suspend fun rsvpEvent(
+        eventId: String,
+        payload: CommunityEventRsvpRequest,
+    ): CommunityEvent {
+        val event = events.firstOrNull { it.id == eventId } ?: error("Event not found: $eventId")
+        val attendees = eventAttendees.getOrPut(eventId) { mutableSetOf() }
+        if (payload.status == "attending") {
+            attendees += payload.userId
+        } else {
+            attendees -= payload.userId
+        }
+        return event.copy(
+            attendeeCount = attendees.size,
+            rsvpStatus = if (payload.status == "attending") "attending" else "none",
+        )
+    }
+
+    override suspend fun approveEvent(eventId: String, requesterUserId: String): CommunityEvent {
+        val index = events.indexOfFirst { it.id == eventId }
+        if (index < 0) error("Event not found: $eventId")
+        val event = events[index]
+        if (event.createdBy != requesterUserId) return event
+        val approved = event.copy(status = "approved")
+        events[index] = approved
+        return approved
+    }
+
+    override suspend fun login(payload: AuthLoginRequest): AuthLoginResponse {
+        return AuthLoginResponse(
+            accessToken = "mock-token-${payload.userId}",
+            tokenType = "bearer",
+            userId = payload.userId,
+            expiresAt = Instant.now().plus(7, ChronoUnit.DAYS).toString(),
+        )
+    }
+
+    override suspend fun getNotifications(userId: String, unreadOnly: Boolean): List<AppNotification> {
+        return notifications.filter { notification ->
+            notification.userId == userId && (!unreadOnly || !notification.read)
+        }
+    }
+
+    override suspend fun registerDevice(payload: DeviceTokenRegisterRequest): Map<String, String> {
+        return mapOf(
+            "status" to "registered",
+            "user_id" to payload.userId,
+        )
+    }
+
+    override suspend fun markNotificationRead(notificationId: String, userId: String): AppNotification {
+        val index = notifications.indexOfFirst { it.id == notificationId && it.userId == userId }
+        if (index < 0) error("Notification not found: $notificationId")
+        val updated = notifications[index].copy(read = true)
+        notifications[index] = updated
+        return updated
+    }
+
+    private fun distanceKm(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+        val earthRadiusKm = 6371.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lng2 - lng1)
+        val a = sin(dLat / 2) * sin(dLat / 2) +
+            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+            sin(dLon / 2) * sin(dLon / 2)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return (earthRadiusKm * c * 10.0).toInt() / 10.0
+    }
+
+    companion object {
+        fun create(): ApiService = MockApiService()
+    }
+}

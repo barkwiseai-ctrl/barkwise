@@ -1,0 +1,12 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Android
+android/.gradle/
+android/local.properties
+android/**/build/
+
+# macOS
+.DS_Store

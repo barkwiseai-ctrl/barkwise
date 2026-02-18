@@ -1,0 +1,69 @@
+{
+  "buildCommand" : {
+    "command" : "build",
+    "skipDependencies" : false,
+    "style" : "buildOnly"
+  },
+  "configuredTargets" : [
+    {
+      "guid" : "05142d3c06534d8300ed75de3de0c485cd47a97d46b3a0735e6003fc03e1ecef"
+    }
+  ],
+  "containerPath" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/BarkWiseBeta.xcodeproj",
+  "continueBuildingAfterErrors" : false,
+  "dependencyScope" : "workspace",
+  "enableIndexBuildArena" : false,
+  "hideShellScriptEnvironment" : false,
+  "parameters" : {
+    "action" : "build",
+    "activeArchitecture" : "undefined_arch",
+    "activeRunDestination" : {
+      "disableOnlyActiveArch" : true,
+      "platform" : "iphoneos",
+      "sdk" : "iphoneos17.5",
+      "sdkVariant" : "iphoneos",
+      "supportedArchitectures" : [
+        "armv4t",
+        "armv5",
+        "armv6",
+        "armv7",
+        "armv7f",
+        "armv7s",
+        "armv7k",
+        "arm64",
+        "arm64e"
+      ],
+      "targetArchitecture" : "undefined_arch"
+    },
+    "arenaInfo" : {
+      "buildIntermediatesPath" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex",
+      "buildProductsPath" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Products",
+      "derivedDataPath" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived",
+      "indexDataStoreFolderPath" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Index.noindex/DataStore",
+      "indexEnableDataStore" : true,
+      "indexPCHPath" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Index.noindex/PrecompiledHeaders",
+      "pchPath" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/PrecompiledHeaders"
+    },
+    "configurationName" : "Debug",
+    "overrides" : {
+      "commandLine" : {
+        "table" : {
+          "CODE_SIGNING_ALLOWED" : "NO"
+        }
+      },
+      "synthesized" : {
+        "table" : {
+          "ACTION" : "build",
+          "ENABLE_PREVIEWS" : "NO",
+          "ENABLE_XOJIT_PREVIEWS" : "NO"
+        }
+      }
+    }
+  },
+  "schemeCommand" : "launch",
+  "showNonLoggedProgress" : true,
+  "useDryRun" : false,
+  "useImplicitDependencies" : true,
+  "useLegacyBuildLocations" : false,
+  "useParallelTargets" : true
+}

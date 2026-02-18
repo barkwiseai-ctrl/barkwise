@@ -1,0 +1,50 @@
+name: BarkWiseBeta
+options:
+  minimumXcodeGenVersion: 2.38.0
+  xcodeVersion: "15.4"
+  objectVersion: 56
+settings:
+  base:
+    SWIFT_VERSION: 5.10
+    IPHONEOS_DEPLOYMENT_TARGET: 17.0
+configs:
+  Debug: debug
+  Release: release
+targets:
+  BarkWiseBeta:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources
+    info:
+      path: Resources/Info.plist
+      properties:
+        API_BASE_URL: https://staging-api.barkwise.app/
+        APP_ENV: staging
+        UIRequiresFullScreen: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.barkwise.beta
+        PRODUCT_NAME: BarkWiseBeta
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        Release:
+          SWIFT_COMPILATION_MODE: wholemodule
+schemes:
+  BarkWiseBeta:
+    build:
+      targets:
+        BarkWiseBeta: all
+    run:
+      config: Debug
+    archive:
+      config: Release

@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: barkwise-backend-staging
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: AUTH_TOKEN_TTL_HOURS
+        value: "168"
+      - key: SERVICES_DB_PATH
+        value: /var/data/services.sqlite3
+      - key: MEMORY_DB_PATH
+        value: /var/data/memory.sqlite3
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: CORS_ORIGINS
+        value: https://app.barkwise.app
+      - key: TRUSTED_HOSTS
+        value: api.barkwise.app
+      - key: OPENAI_API_KEY
+        sync: false
+    disks:
+      - name: barkwise-data
+        mountPath: /var/data
+        sizeGB: 1

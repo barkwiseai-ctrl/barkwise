@@ -1,0 +1,128 @@
+{
+  "" : {
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBeta-master.dia",
+    "emit-module-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBeta-master-emit-module.d",
+    "emit-module-diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBeta-master-emit-module.dia",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBeta-master.swiftdeps"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/App/BarkWiseBetaApp.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBetaApp.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBetaApp.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBetaApp.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBetaApp.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBetaApp.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBetaApp.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBetaApp.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkWiseBetaApp~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Config/AppConfig.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppConfig.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppConfig.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppConfig.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppConfig.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppConfig.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppConfig.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppConfig.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppConfig~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Models/APIModels.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIModels.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIModels.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIModels.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIModels.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIModels.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIModels.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIModels.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIModels~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Models/AppState.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppState.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppState.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppState.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppState.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppState.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppState.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppState.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppState~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Networking/APIClient.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIClient.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIClient.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIClient.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIClient.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIClient.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIClient.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIClient.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/APIClient~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/ViewModels/AppViewModel.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppViewModel.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppViewModel.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppViewModel.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppViewModel.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppViewModel.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppViewModel.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppViewModel.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/AppViewModel~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Views/BarkAIView.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkAIView.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkAIView.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkAIView.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkAIView.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkAIView.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkAIView.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkAIView.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/BarkAIView~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Views/CommunityView.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/CommunityView.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/CommunityView.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/CommunityView.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/CommunityView.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/CommunityView.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/CommunityView.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/CommunityView.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/CommunityView~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Views/ContentView.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ContentView.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ContentView.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ContentView.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ContentView.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ContentView.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ContentView.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ContentView~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Views/LoginView.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/LoginView.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/LoginView.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/LoginView.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/LoginView.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/LoginView.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/LoginView.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/LoginView.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/LoginView~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Views/ProfileView.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ProfileView.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ProfileView.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ProfileView.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ProfileView.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ProfileView.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ProfileView.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ProfileView.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ProfileView~partial.swiftmodule"
+  },
+  "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/Sources/Views/ServicesView.swift" : {
+    "const-values" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ServicesView.swiftconstvalues",
+    "dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ServicesView.d",
+    "diagnostics" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ServicesView.dia",
+    "index-unit-output-path" : "/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ServicesView.o",
+    "llvm-bc" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ServicesView.bc",
+    "object" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ServicesView.o",
+    "swift-dependencies" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ServicesView.swiftdeps",
+    "swiftmodule" : "/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta/.derived/Build/Intermediates.noindex/BarkWiseBeta.build/Debug-iphoneos/BarkWiseBeta.build/Objects-normal/arm64/ServicesView~partial.swiftmodule"
+  }
+}

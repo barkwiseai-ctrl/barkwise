@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - AUTH_REQUIRED=false
+      - AUTH_SECRET=local-dev-secret-change-me
+      - AUTH_TOKEN_TTL_HOURS=24
+    volumes:
+      - ./backend/data:/app/data
