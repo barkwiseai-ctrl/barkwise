@@ -27,12 +27,36 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+Browser beta (for iPhone Safari + desktop):
+
+```bash
+open http://localhost:8000/web/
+```
+
+- Web client is served by the backend at `/web/` (no separate frontend build needed).
+- Sign in with any `user_id` and password `petsocial-demo`.
+- If backend auth is optional (`AUTH_REQUIRED=false`), the app still works without login token.
+
 Docker:
 
 ```bash
 cd /Users/yingxu/public-repos/pet-social-app
 docker compose up --build
 ```
+
+Railway (always-on web beta for iPhone testers):
+
+1. Deploy this repo root in Railway (it uses `/Users/yingxu/public-repos/pet-social-app/nixpacks.toml`).
+2. Set env vars:
+   - `AUTH_REQUIRED=true`
+   - `AUTH_SECRET=<random-secret>`
+   - `AUTH_TOKEN_TTL_HOURS=168`
+   - `OPENAI_API_KEY=<your-key>`
+   - `OPENAI_MODEL=gpt-4.1-mini`
+   - `CORS_ORIGINS=https://<your-service>.up.railway.app`
+   - `TRUSTED_HOSTS=<your-service>.up.railway.app,*.up.railway.app`
+3. Open and share:
+   - `https://<your-service>.up.railway.app/web/`
 
 Auth hardening controls:
 
@@ -73,6 +97,61 @@ cd /Users/yingxu/public-repos/pet-social-app/android
 ./gradlew :app:installDevDebug
 ./gradlew :app:installStagingDebug
 ./gradlew :app:installProdRelease
+```
+
+Share mock build by QR (Android):
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app
+./android/scripts/share_mock_qr.sh
+```
+
+- Builds and packages `BarkWise Dev` (`USE_MOCK_DATA=true`) with seeded interactive data.
+- Hosts a local install page and APK at `http://<your-lan-ip>:8787`.
+- Prints a QR URL and also saves a local QR PNG at `/Users/yingxu/public-repos/pet-social-app/android/share/mock/qr.png` when `curl` is available.
+- If your machine cannot bind `0.0.0.0` in restricted environments, set `BIND_HOST=127.0.0.1` explicitly.
+- For people outside your Wi-Fi, run with a public tunnel URL:
+
+```bash
+BASE_URL="https://your-public-url.example" START_SERVER=0 SKIP_BUILD=1 ./android/scripts/share_mock_qr.sh
+```
+
+One-command public tunnel (internet-share + QR):
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app
+./android/scripts/share_mock_public_tunnel.sh
+```
+
+- Auto-selects tunnel provider (`cloudflared`, then `ngrok`, then `localhost.run` via SSH).
+- Prints live public landing URL + direct APK URL + QR URL.
+- Saves public QR PNG to `/Users/yingxu/public-repos/pet-social-app/android/share/mock/qr-public.png`.
+- Validates that both the landing page and APK URL are reachable before announcing success.
+- Writes a copy-paste tester handoff note at `/Users/yingxu/public-repos/pet-social-app/android/share/mock/tester-instructions.txt`.
+- Keep terminal open while people download/install.
+
+Stable Railway installer (fixed URL + versioned APKs):
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app
+SKIP_BUILD=1 ./android/scripts/publish_staging_railway_installer.sh
+```
+
+- Installer page (stable): `https://barkwise-production.up.railway.app/install/`
+- Stable APK URL (always latest): `https://barkwise-production.up.railway.app/install/apk/barkwise-staging-latest.apk`
+- Versioned APK URL per release: `https://barkwise-production.up.railway.app/install/apk/releases/barkwise-staging-<version>.apk`
+- Release metadata:
+  - `/Users/yingxu/public-repos/pet-social-app/backend/app/web/install/apk/latest.json`
+  - `/Users/yingxu/public-repos/pet-social-app/backend/app/web/install/apk/releases.json`
+
+Typical release flow:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app
+./android/scripts/publish_staging_railway_installer.sh
+git add backend/app/web/install android/scripts/publish_staging_railway_installer.sh backend/app/main.py
+git commit -m "Publish staging APK <version>"
+git push
 ```
 
 ## iOS Beta Scaffold

@@ -1,7 +1,10 @@
 import os
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.routers import auth, chat, community, notifications, services
@@ -36,6 +39,23 @@ app.include_router(community.router)
 app.include_router(auth.router)
 app.include_router(notifications.router)
 
+web_dir = Path(__file__).parent / "web"
+if web_dir.exists():
+    app.mount("/web", StaticFiles(directory=web_dir, html=True), name="web")
+install_dir = web_dir / "install"
+if install_dir.exists():
+    app.mount("/install", StaticFiles(directory=install_dir, html=True), name="install")
+
+
+@app.get("/web")
+def web_root_redirect():
+    return RedirectResponse(url="/web/")
+
+
+@app.get("/install")
+def install_root_redirect():
+    return RedirectResponse(url="/install/")
+
 
 @app.get("/health")
 def health():
@@ -44,4 +64,9 @@ def health():
 
 @app.get("/ready")
 def ready():
-    return {"status": "ready"}
+    llm_configured = bool(chat.orchestrator.llm_available)
+    return {
+        "status": "ready",
+        "llm_configured": llm_configured,
+        "llm_mode": "openai" if llm_configured else "fallback",
+    }
