@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import time
@@ -17,6 +18,8 @@ try:
     from openai import OpenAI
 except Exception:  # pragma: no cover
     OpenAI = None
+
+logger = logging.getLogger(__name__)
 
 
 ALLOWED_INTENTS = {
@@ -150,14 +153,42 @@ class AIOrchestrator:
 
     def __init__(self) -> None:
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-        api_key = os.getenv("OPENAI_API_KEY", "")
+        api_key = self._load_openai_api_key()
         self.client = OpenAI(api_key=api_key) if api_key and OpenAI else None
+        self.llm_available = self.client is not None
+        if not self.llm_available:
+            logger.warning(
+                "LLM disabled: set OPENAI_API_KEY (or OPENAI_API_KEY_FILE) and ensure openai package is installed."
+            )
 
         default_db_path = str(Path(__file__).resolve().parents[2] / "data" / "memory.sqlite3")
         self.memory_store = MemoryStore(db_path=os.getenv("MEMORY_DB_PATH", default_db_path))
         self.sessions: Dict[str, SessionMemory] = {}
         self.skill_manifests = self._load_skill_manifests()
         self.rag_retriever = RagRetriever()
+
+    @staticmethod
+    def _normalize_env_value(value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {"'", '"'}:
+            normalized = normalized[1:-1].strip()
+        return normalized
+
+    def _load_openai_api_key(self) -> str:
+        raw_key = os.getenv("OPENAI_API_KEY", "")
+        api_key = self._normalize_env_value(raw_key)
+
+        if not api_key:
+            key_file = self._normalize_env_value(os.getenv("OPENAI_API_KEY_FILE", ""))
+            if key_file:
+                try:
+                    api_key = self._normalize_env_value(Path(key_file).read_text(encoding="utf-8"))
+                except OSError:
+                    logger.warning("OPENAI_API_KEY_FILE is set but unreadable.")
+
+        if api_key.lower() in {"replace-with-openai-key", "your-openai-api-key"}:
+            return ""
+        return api_key
 
     def handle_message(
         self,
@@ -180,6 +211,7 @@ class AIOrchestrator:
                 session=session,
                 message=message,
                 suburb=suburb,
+                user_id=user_id,
                 args={},
             )
             if listing_result.get("status") == "created":
@@ -491,7 +523,7 @@ class AIOrchestrator:
         active_skills = self._select_active_skills(message=message, session=session)
         if self._is_general_assistant_query(message.lower()):
             return {
-                "intent": "out_of_scope_non_pet",
+                "intent": "general_assistant_query",
                 "tools": [],
                 "suggested_profile": session.profile_memory or self._fallback_profile(message),
             }
@@ -550,7 +582,7 @@ class AIOrchestrator:
         text = message.lower()
         if self._is_general_assistant_query(text):
             return {
-                "intent": "out_of_scope_non_pet",
+                "intent": "general_assistant_query",
                 "tools": [],
                 "suggested_profile": self._fallback_profile(message),
             }
@@ -635,8 +667,7 @@ class AIOrchestrator:
         compact = [skill for skill in selected if skill]
         if compact:
             return compact
-        default_skill = self._skill_by_name("pet-owner-profile")
-        return [default_skill] if default_skill else []
+        return []
 
     def _skill_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         for skill in self.skill_manifests:
@@ -754,8 +785,30 @@ class AIOrchestrator:
         return any(trigger in text for trigger in triggers)
 
     def _is_profile_capture_request(self, text: str) -> bool:
-        profile_cues = ["my dog", "my cat", "pet name", "pet profile", "breed", "weight kg"]
-        return any(cue in text for cue in profile_cues)
+        explicit_profile_phrases = [
+            "pet profile",
+            "update my profile",
+            "update pet profile",
+            "pet name is",
+            "my dog's name is",
+            "my cats name is",
+            "my cat's name is",
+            "breed is",
+            "age is",
+            "years old",
+            "weight is",
+            "weighs",
+            "weight kg",
+        ]
+        if any(phrase in text for phrase in explicit_profile_phrases):
+            return True
+
+        # Only treat "my dog/my cat" as profile capture when structured profile fields are included.
+        has_pet_subject = "my dog" in text or "my cat" in text or "my pet" in text
+        has_profile_field = any(
+            token in text for token in ["name", "breed", "age", "year old", "years old", "weight", "kg", "suburb"]
+        )
+        return has_pet_subject and has_profile_field
 
     def _is_general_assistant_query(self, text: str) -> bool:
         normalized = re.sub(r"\s+", " ", text.strip().lower())
@@ -873,6 +926,7 @@ class AIOrchestrator:
                     session=session,
                     message=message,
                     suburb=args.get("suburb") or suburb,
+                    user_id=user_id,
                     args=args,
                 )
             elif name == "add_pet_owner_profile":
@@ -925,6 +979,7 @@ class AIOrchestrator:
         session: SessionMemory,
         message: str,
         suburb: Optional[str],
+        user_id: str,
         args: Dict[str, Any],
     ) -> Dict[str, Any]:
         extracted = self._extract_provider_fields_from_text(message=message, suburb=suburb)
@@ -1137,11 +1192,18 @@ class AIOrchestrator:
         locked_fields = [key for key, locked in session.field_locks.items() if locked]
 
         if self.client:
-            if intent in {"general_assistant_query", "out_of_scope_non_pet"}:
+            if intent == "out_of_scope_non_pet":
                 system_prompt = (
                     "You are BarkAI in a pet app. "
                     "If the query is out-of-scope for pets, respond with a short, kind refusal and redirect to pet help. "
                     "Do not answer non-pet topics directly."
+                )
+            elif intent == "general_assistant_query":
+                system_prompt = (
+                    "You are BarkAI. "
+                    "Answer broad general queries directly with concise, practical guidance. "
+                    "Follow tone_profile: if support_mode is true, use warm, supportive, non-clinical language. "
+                    "Use short readable paragraphs and avoid unnecessary jargon."
                 )
             else:
                 system_prompt = (
@@ -1188,8 +1250,17 @@ class AIOrchestrator:
                 pass
 
         intent = plan.get("intent", "general_pet_question")
-        if intent in {"general_assistant_query", "out_of_scope_non_pet"}:
+        if intent == "out_of_scope_non_pet":
             return self._non_pet_scope_message(message)
+        if intent == "general_assistant_query":
+            text = self._fallback_general_assistant_answer(message)
+            if tone_profile.get("support_mode"):
+                local_hint = tone_profile.get("local_context_hint", "")
+                prefix = "That sounds stressful. "
+                if local_hint:
+                    prefix = f"{prefix}{local_hint} "
+                return self._format_answer_paragraphs(f"{prefix}{text}")
+            return self._format_answer_paragraphs(text)
         if intent == "find_dog_walker":
             return "I found nearby dog walkers. Open Services to compare and request a booking."
         if intent == "find_groomer":
