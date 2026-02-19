@@ -15,16 +15,19 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 import java.time.LocalDate
 import kotlin.coroutines.resume
 
 class PetSocialRepository(
     private val api: ApiService,
     private val baseUrl: String,
+    private val fallbackBaseUrl: String?,
     private val mapsApiKey: String,
     context: Context,
 ) {
@@ -160,46 +163,82 @@ class PetSocialRepository(
         onDelta: (String) -> Unit,
     ): ChatResponse = withContext(Dispatchers.IO) {
         val payload = ChatRequest(userId = userId, message = message, suburb = suburb)
-        val body = json.encodeToString(payload).toRequestBody("application/json".toMediaType())
+        val streamFallbackBaseUrl = normalizeBaseUrl(fallbackBaseUrl, DEFAULT_API_BASE_URL)
+        val streamPrimaryBaseUrl = normalizeBaseUrl(baseUrl, streamFallbackBaseUrl)
+        val streamFallbackEnabled = streamFallbackBaseUrl != streamPrimaryBaseUrl
 
-        val request = Request.Builder()
-            .url("${baseUrl.trimEnd('/')}/chat/stream")
-            .post(body)
-            .build()
+        fun readStream(streamBaseUrl: String): ChatResponse {
+            val body = json.encodeToString(payload).toRequestBody("application/json".toMediaType())
+            val streamUrl = streamBaseUrl.toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.addPathSegment("chat")
+                ?.addPathSegment("stream")
+                ?.build()
+                ?: error("Invalid stream base URL: '$streamBaseUrl'")
 
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                error("Stream request failed: ${response.code}")
-            }
+            val request = Request.Builder()
+                .url(streamUrl)
+                .post(body)
+                .build()
 
-            val responseBody = response.body ?: error("Empty stream response")
-            var finalResponse: ChatResponse? = null
+            return httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    error("Stream request failed: ${response.code}")
+                }
 
-            responseBody.source().use { source ->
-                while (!source.exhausted()) {
-                    val line = source.readUtf8Line() ?: continue
-                    if (!line.startsWith("data: ")) continue
+                val responseBody = response.body ?: error("Empty stream response")
+                var finalResponse: ChatResponse? = null
 
-                    val data = line.removePrefix("data: ").trim()
-                    if (data == "[DONE]") break
+                responseBody.source().use { source ->
+                    while (!source.exhausted()) {
+                        val line = source.readUtf8Line() ?: continue
+                        if (!line.startsWith("data: ")) continue
 
-                    val event = json.parseToJsonElement(data).jsonObject
-                    when (event["type"]?.jsonPrimitive?.contentOrNull) {
-                        "delta" -> {
-                            val delta = event["delta"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                            onDelta(delta)
-                        }
+                        val data = line.removePrefix("data: ").trim()
+                        if (data == "[DONE]") break
 
-                        "final" -> {
-                            val finalElement = event["response"] ?: continue
-                            finalResponse = json.decodeFromJsonElement<ChatResponse>(finalElement)
+                        val event = json.parseToJsonElement(data).jsonObject
+                        when (event["type"]?.jsonPrimitive?.contentOrNull) {
+                            "delta" -> {
+                                val delta = event["delta"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                                onDelta(delta)
+                            }
+
+                            "final" -> {
+                                val finalElement = event["response"] ?: continue
+                                finalResponse = json.decodeFromJsonElement<ChatResponse>(finalElement)
+                            }
                         }
                     }
                 }
-            }
 
-            finalResponse ?: error("No final response from stream")
+                finalResponse ?: error("No final response from stream")
+            }
         }
+
+        return@withContext runCatching {
+            readStream(streamPrimaryBaseUrl)
+        }.recoverCatching { error ->
+            if (streamFallbackEnabled && error is IOException) {
+                readStream(streamFallbackBaseUrl)
+            } else {
+                throw error
+            }
+        }.getOrElse {
+            // Fallback keeps BarkAI usable in dev/mock mode and when stream endpoint is unavailable.
+            val fallback = api.chat(payload)
+            onDelta(fallback.answer)
+            fallback
+        }
+    }
+
+    private fun normalizeBaseUrl(candidate: String?, fallback: String): String {
+        val cleaned = candidate
+            ?.trim()
+            ?.trim('"')
+            ?.takeIf { it.isNotBlank() }
+            ?.let { value -> if (value.endsWith("/")) value else "$value/" }
+        return if (cleaned?.toHttpUrlOrNull() != null) cleaned else fallback
     }
 
     suspend fun acceptProfileCard(): ChatResponse = api.acceptProfile(ProfileActionRequest(userId = userId))
@@ -432,6 +471,7 @@ class PetSocialRepository(
     private companion object {
         const val CACHE_PREFS_NAME = "petsocial_cache"
         const val AUTH_TOKEN_KEY = "auth_token"
+        const val DEFAULT_API_BASE_URL = "https://api.barkwise.app/"
     }
 
     fun currentAuthToken(): String = authToken

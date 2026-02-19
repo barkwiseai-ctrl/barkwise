@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
@@ -11,6 +12,7 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
+import java.io.IOException
 
 interface ApiService {
     @GET("services/providers")
@@ -163,8 +165,26 @@ interface ApiService {
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
+        private const val DEFAULT_API_BASE_URL = "https://api.barkwise.app/"
 
-        fun create(baseUrl: String, authTokenProvider: (() -> String?)? = null): ApiService {
+        private fun normalizeBaseUrl(candidate: String?, fallback: String): String {
+            val cleaned = candidate
+                ?.trim()
+                ?.trim('"')
+                ?.takeIf { it.isNotBlank() }
+                ?.let { value -> if (value.endsWith("/")) value else "$value/" }
+            return if (cleaned?.toHttpUrlOrNull() != null) cleaned else fallback
+        }
+
+        fun create(
+            baseUrl: String,
+            authTokenProvider: (() -> String?)? = null,
+            fallbackBaseUrl: String? = null,
+        ): ApiService {
+            val resolvedFallbackBaseUrl = normalizeBaseUrl(fallbackBaseUrl, DEFAULT_API_BASE_URL)
+            val resolvedBaseUrl = normalizeBaseUrl(baseUrl, resolvedFallbackBaseUrl)
+            val primaryUrl = resolvedBaseUrl.toHttpUrlOrNull()
+            val fallbackUrl = resolvedFallbackBaseUrl.toHttpUrlOrNull()
             val authInterceptor = Interceptor { chain ->
                 val requestBuilder = chain.request().newBuilder()
                 val token = authTokenProvider?.invoke().orEmpty().trim()
@@ -173,11 +193,34 @@ interface ApiService {
                 }
                 chain.proceed(requestBuilder.build())
             }
+            val failoverInterceptor = Interceptor { chain ->
+                val request = chain.request()
+                try {
+                    chain.proceed(request)
+                } catch (error: IOException) {
+                    val primary = primaryUrl
+                    val fallback = fallbackUrl
+                    if (primary == null || fallback == null || request.url.host != primary.host) {
+                        throw error
+                    }
+                    val fallbackRequest = request.newBuilder()
+                        .url(
+                            request.url.newBuilder()
+                                .scheme(fallback.scheme)
+                                .host(fallback.host)
+                                .port(fallback.port)
+                                .build()
+                        )
+                        .build()
+                    chain.proceed(fallbackRequest)
+                }
+            }
             val client = OkHttpClient.Builder()
                 .addInterceptor(authInterceptor)
+                .addInterceptor(failoverInterceptor)
                 .build()
             val retrofit = Retrofit.Builder()
-                .baseUrl(baseUrl)
+                .baseUrl(resolvedBaseUrl)
                 .client(client)
                 .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
                 .build()

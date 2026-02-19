@@ -22,8 +22,10 @@ services:
       - key: CORS_ORIGINS
         value: https://app.barkwise.app
       - key: TRUSTED_HOSTS
-        value: api.barkwise.app
+        value: api.barkwise.app,*.onrender.com
       - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY_FILE
         sync: false
     disks:
       - name: barkwise-data
