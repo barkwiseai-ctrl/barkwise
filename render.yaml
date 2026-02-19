@@ -25,7 +25,7 @@ services:
         value: api.barkwise.app,*.onrender.com
       - key: OPENAI_API_KEY
         sync: false
-    disks:
-      - name: barkwise-data
-        mountPath: /var/data
-        sizeGB: 1
+    disk:
+      name: barkwise-data
+      mountPath: /var/data
+      sizeGB: 1
