@@ -191,6 +191,7 @@ private fun accountLabel(userId: String): String = when (userId) {
 
 private const val TEST_DOG_PARK_GROUP_ID = "g_user_dogpark_surry"
 private val ENABLE_TEST_SEED_DATA = BuildConfig.USE_MOCK_DATA
+private const val STAGING_TEST_SUBURB = "Sunshine West"
 
 private fun nextActionSwitchHint(
     targetUserId: String?,
@@ -281,20 +282,29 @@ class PetSocialViewModel(
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
     init {
+        if (isStagingTestBuild()) {
+            _uiState.value = _uiState.value.copy(
+                selectedSuburb = STAGING_TEST_SUBURB,
+                selectedRangeCenter = "manual",
+                selectedCategory = "grooming",
+                profileInfo = _uiState.value.profileInfo.copy(suburb = STAGING_TEST_SUBURB),
+            )
+        }
         repository.setActiveUser(_uiState.value.activeUserId)
     }
 
     fun loadHomeData(category: String? = _uiState.value.selectedCategory) {
         val state = _uiState.value
-        val suburb = state.selectedSuburb
+        val resolvedCategory = if (isStagingTestBuild()) "grooming" else category
+        val suburb = if (isStagingTestBuild()) STAGING_TEST_SUBURB else state.selectedSuburb
         val useCurrentLocation = state.selectedRangeCenter == "current" &&
             state.currentLatitude != null &&
             state.currentLongitude != null
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(loading = true, error = null, selectedCategory = category)
+            _uiState.value = _uiState.value.copy(loading = true, error = null, selectedCategory = resolvedCategory)
             runCatching {
                 val providers = repository.loadProviders(
-                    category = category,
+                    category = resolvedCategory,
                     suburb = suburb,
                     minRating = state.serviceMinRating?.toDouble(),
                     maxDistanceKm = state.serviceMaxDistanceKm?.toDouble(),
@@ -686,6 +696,14 @@ class PetSocialViewModel(
     }
 
     fun updateSuburb(suburb: String) {
+        if (isStagingTestBuild()) {
+            _uiState.value = _uiState.value.copy(
+                selectedSuburb = STAGING_TEST_SUBURB,
+                selectedRangeCenter = "manual",
+                profileInfo = _uiState.value.profileInfo.copy(suburb = STAGING_TEST_SUBURB),
+            )
+            return
+        }
         _uiState.value = _uiState.value.copy(
             selectedSuburb = suburb,
             selectedRangeCenter = "manual",
@@ -694,6 +712,18 @@ class PetSocialViewModel(
     }
 
     fun setDetectedLocation(snapshot: LocationSnapshot, applyAsSelected: Boolean) {
+        if (isStagingTestBuild()) {
+            _uiState.value = _uiState.value.copy(
+                selectedSuburb = STAGING_TEST_SUBURB,
+                selectedRangeCenter = "manual",
+                currentLocationSuburb = snapshot.suburb?.trim()?.ifBlank { null },
+                currentLatitude = snapshot.latitude,
+                currentLongitude = snapshot.longitude,
+                locationAutoDetected = true,
+                profileInfo = _uiState.value.profileInfo.copy(suburb = STAGING_TEST_SUBURB),
+            )
+            return
+        }
         val detectedSuburb = snapshot.suburb?.trim().orEmpty()
         if (!applyAsSelected && _uiState.value.locationAutoDetected) {
             _uiState.value = _uiState.value.copy(
@@ -720,6 +750,11 @@ class PetSocialViewModel(
     }
 
     fun setRangeCenterCurrent(enabled: Boolean) {
+        if (isStagingTestBuild()) {
+            _uiState.value = _uiState.value.copy(selectedRangeCenter = "manual")
+            loadHomeData(_uiState.value.selectedCategory)
+            return
+        }
         _uiState.value = _uiState.value.copy(
             selectedRangeCenter = if (enabled) "current" else "manual",
         )
@@ -727,6 +762,16 @@ class PetSocialViewModel(
     }
 
     fun saveProfileInfo(profileInfo: ProfileInfo) {
+        if (isStagingTestBuild()) {
+            _uiState.value = _uiState.value.copy(
+                profileInfo = profileInfo.copy(suburb = STAGING_TEST_SUBURB),
+                selectedSuburb = STAGING_TEST_SUBURB,
+                selectedRangeCenter = "manual",
+                toastMessage = "Profile updated",
+            )
+            loadHomeData(_uiState.value.selectedCategory)
+            return
+        }
         _uiState.value = _uiState.value.copy(
             profileInfo = profileInfo,
             selectedSuburb = profileInfo.suburb,
@@ -1263,6 +1308,8 @@ class PetSocialViewModel(
             repository.syncDevicePushToken()
         }
     }
+
+    private fun isStagingTestBuild(): Boolean = BuildConfig.ENVIRONMENT.equals("staging", ignoreCase = true)
 
     private fun applyChatResponse(response: ChatResponse, toast: String? = null) {
         val parsed = parseA2uiMessages(response.a2uiMessages)

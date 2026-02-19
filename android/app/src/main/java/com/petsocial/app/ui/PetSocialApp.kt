@@ -35,6 +35,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -83,12 +85,28 @@ private fun deepLinkInviteToken(deepLink: String?): String? {
 fun PetSocialApp(initialDeepLink: String? = null) {
     val context = LocalContext.current
     val baseUrl = BuildConfig.API_BASE_URL
+    val environmentLabel = remember {
+        when (BuildConfig.ENVIRONMENT.lowercase()) {
+            "dev" -> "[DEV]"
+            "staging" -> "[TEST]"
+            "prod" -> "[PROD]"
+            else -> "[${BuildConfig.ENVIRONMENT.uppercase()}]"
+        }
+    }
+    val fallbackBaseUrl = remember {
+        if (!BuildConfig.USE_MOCK_DATA && BuildConfig.ENVIRONMENT.lowercase() == "staging") {
+            BuildConfig.PRODUCTION_API_BASE_URL
+        } else {
+            null
+        }
+    }
     val api = remember {
         if (BuildConfig.USE_MOCK_DATA) {
             MockApiService.create()
         } else {
             ApiService.create(
                 baseUrl = baseUrl,
+                fallbackBaseUrl = fallbackBaseUrl,
                 authTokenProvider = {
                     context.getSharedPreferences("petsocial_cache", android.content.Context.MODE_PRIVATE)
                         .getString("auth_token", "")
@@ -96,7 +114,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
             )
         }
     }
-    val repository = remember { PetSocialRepository(api, baseUrl, BuildConfig.MAPS_API_KEY, context) }
+    val repository = remember { PetSocialRepository(api, baseUrl, fallbackBaseUrl, BuildConfig.MAPS_API_KEY, context) }
     val vm: PetSocialViewModel = viewModel(factory = PetSocialViewModelFactory(repository))
     val state by vm.uiState.collectAsStateWithLifecycle()
     var locationRetryKey by remember { mutableIntStateOf(0) }
@@ -118,7 +136,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
         if (LocationResolver.hasLocationPermission(context)) {
             val snapshot = LocationResolver.detectLocation(context)
             if (snapshot != null) {
-                vm.setDetectedLocation(snapshot = snapshot, applyAsSelected = true)
+                vm.setDetectedLocation(snapshot = snapshot, applyAsSelected = false)
             }
         } else {
             locationPermissionLauncher.launch(
@@ -135,7 +153,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
         if (LocationResolver.hasLocationPermission(context)) {
             val snapshot = LocationResolver.detectLocation(context)
             if (snapshot != null) {
-                vm.setDetectedLocation(snapshot = snapshot, applyAsSelected = state.selectedRangeCenter == "current")
+                vm.setDetectedLocation(snapshot = snapshot, applyAsSelected = false)
             }
         }
     }
@@ -218,23 +236,24 @@ fun PetSocialApp(initialDeepLink: String? = null) {
             HeroHeader(
                 compact = true,
                 rosterPet = state.headerRosterPet,
+                environmentLabel = environmentLabel,
             )
             if (state.selectedTab == AppTab.Services || state.selectedTab == AppTab.Community) {
                 SearchScopeBar(
                     selectedSuburb = state.selectedSuburb,
-                    homeSuburb = state.profileInfo.suburb,
-                    favoriteSuburbs = state.profileInfo.favoriteSuburbs,
                     selectedRangeKm = state.serviceMaxDistanceKm,
                     currentLocationSuburb = state.currentLocationSuburb,
                     isUsingCurrentLocation = state.selectedRangeCenter == "current",
-                    onSuburbSelect = { suburb ->
+                    showRangeSelector = state.selectedTab != AppTab.Services,
+                    suburbLocked = BuildConfig.ENVIRONMENT.lowercase() == "staging",
+                    onManualSuburbApply = { suburb ->
                         vm.updateSuburb(suburb)
                         vm.loadHomeData(state.selectedCategory)
                     },
                     onUseCurrentLocation = {
+                        vm.setRangeCenterCurrent(enabled = true)
                         if (LocationResolver.hasLocationPermission(context)) {
                             locationRetryKey += 1
-                            vm.setRangeCenterCurrent(enabled = true)
                         } else {
                             locationPermissionLauncher.launch(
                                 arrayOf(
@@ -245,7 +264,10 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         }
                     },
                     onUseManualCenter = { vm.setRangeCenterCurrent(enabled = false) },
-                    onRefreshLocation = { locationRetryKey += 1 },
+                    onRefreshLocation = {
+                        vm.setRangeCenterCurrent(enabled = true)
+                        locationRetryKey += 1
+                    },
                     onRangeSelect = { range ->
                         vm.updateServiceFilters(state.serviceMinRating, range)
                     },
@@ -474,6 +496,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
 private fun HeroHeader(
     compact: Boolean,
     rosterPet: PetRosterItem?,
+    environmentLabel: String,
 ) {
     Box(
         modifier = Modifier
@@ -503,7 +526,7 @@ private fun HeroHeader(
                         modifier = Modifier.size(if (compact) 28.dp else 42.dp),
                     )
                     Text(
-                        "BarkWise",
+                        "BarkWise $environmentLabel",
                         color = Color.White,
                         style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
                     )
@@ -526,31 +549,36 @@ private fun HeroHeader(
 @Composable
 private fun SearchScopeBar(
     selectedSuburb: String,
-    homeSuburb: String,
-    favoriteSuburbs: List<String>,
     selectedRangeKm: Int?,
     currentLocationSuburb: String?,
     isUsingCurrentLocation: Boolean,
-    onSuburbSelect: (String) -> Unit,
+    showRangeSelector: Boolean,
+    suburbLocked: Boolean,
+    onManualSuburbApply: (String) -> Unit,
     onUseCurrentLocation: () -> Unit,
     onUseManualCenter: () -> Unit,
     onRefreshLocation: () -> Unit,
     onRangeSelect: (Int?) -> Unit,
 ) {
-    val suburbOptions = buildList {
-        if (homeSuburb.isNotBlank()) add(homeSuburb.trim())
-        favoriteSuburbs.forEach { suburb ->
-            val cleaned = suburb.trim()
-            if (cleaned.isNotBlank()) add(cleaned)
-        }
-        val selected = selectedSuburb.trim()
-        if (selected.isNotBlank()) add(selected)
-    }.distinct()
+    var rangeMenuExpanded by remember { mutableStateOf(false) }
+    var manualSuburbInput by rememberSaveable { mutableStateOf(selectedSuburb) }
+    val selectedRangeLabel = selectedRangeKm?.let { "$it km" } ?: "Any range"
+
+    LaunchedEffect(selectedSuburb) {
+        manualSuburbInput = selectedSuburb
+    }
 
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text("Search scope", style = MaterialTheme.typography.labelMedium)
+        if (suburbLocked) {
+            Text(
+                text = "Suburb locked for testing: $selectedSuburb",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -559,6 +587,7 @@ private fun SearchScopeBar(
                 selected = !isUsingCurrentLocation,
                 onClick = onUseManualCenter,
                 label = { Text("Manual suburb") },
+                enabled = !suburbLocked,
             )
             FilterChip(
                 selected = isUsingCurrentLocation,
@@ -569,37 +598,65 @@ private fun SearchScopeBar(
                         else "Near $currentLocationSuburb",
                     )
                 },
+                enabled = !suburbLocked,
             )
             if (!currentLocationSuburb.isNullOrBlank()) {
                 FilterChip(
                     selected = false,
                     onClick = onRefreshLocation,
                     label = { Text("Refresh GPS") },
+                    enabled = !suburbLocked,
                 )
             }
         }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-        ) {
-            suburbOptions.forEach { suburb ->
-                FilterChip(
-                    selected = selectedSuburb == suburb,
-                    onClick = { onSuburbSelect(suburb) },
-                    label = { Text(suburb) },
-                )
+        if (!isUsingCurrentLocation && !suburbLocked) {
+            OutlinedTextField(
+                value = manualSuburbInput,
+                onValueChange = { manualSuburbInput = it },
+                label = { Text("Manual suburb") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                val trimmedInput = manualSuburbInput.trim()
+                TextButton(
+                    onClick = { onManualSuburbApply(trimmedInput) },
+                    enabled = trimmedInput.isNotBlank() && trimmedInput != selectedSuburb.trim(),
+                ) {
+                    Text("Apply suburb")
+                }
             }
         }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-        ) {
-            listOf<Int?>(null, 5, 10, 20, 50).forEach { range ->
-                FilterChip(
-                    selected = selectedRangeKm == range,
-                    onClick = { onRangeSelect(range) },
-                    label = { Text(range?.let { "$it km" } ?: "Any range") },
-                )
+        if (showRangeSelector) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Range", style = MaterialTheme.typography.labelMedium)
+                Box {
+                    FilterChip(
+                        selected = rangeMenuExpanded,
+                        onClick = { rangeMenuExpanded = true },
+                        label = { Text(selectedRangeLabel) },
+                    )
+                    DropdownMenu(
+                        expanded = rangeMenuExpanded,
+                        onDismissRequest = { rangeMenuExpanded = false },
+                    ) {
+                        listOf<Int?>(null, 5, 10, 20, 50).forEach { range ->
+                            DropdownMenuItem(
+                                text = { Text(range?.let { "$it km" } ?: "Any range") },
+                                onClick = {
+                                    onRangeSelect(range)
+                                    rangeMenuExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
             }
         }
     }
