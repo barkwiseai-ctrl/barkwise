@@ -574,6 +574,13 @@ class AIOrchestrator:
             profile = data.get("suggested_profile")
             if not isinstance(profile, dict):
                 data["suggested_profile"] = self._fallback_profile(message)
+            if (
+                data.get("intent") == "add_pet_owner_profile"
+                and not self._is_profile_capture_request(message.lower())
+                and self._is_pet_health_question(message.lower())
+            ):
+                data["intent"] = "general_pet_question"
+                data["tools"] = []
             return data
         except Exception:
             return self._heuristic_plan(message, suburb)
@@ -608,6 +615,12 @@ class AIOrchestrator:
             return {
                 "intent": "add_pet_owner_profile",
                 "tools": [{"name": "add_pet_owner_profile", "args": {"suburb": suburb}}],
+                "suggested_profile": self._fallback_profile(message),
+            }
+        if self._is_pet_health_question(text):
+            return {
+                "intent": "general_pet_question",
+                "tools": [],
                 "suggested_profile": self._fallback_profile(message),
             }
         if "lost" in text or "found" in text:
@@ -809,6 +822,32 @@ class AIOrchestrator:
             token in text for token in ["name", "breed", "age", "year old", "years old", "weight", "kg", "suburb"]
         )
         return has_pet_subject and has_profile_field
+
+    def _is_pet_health_question(self, text: str) -> bool:
+        if not any(token in text for token in ["my dog", "my cat", "my pet", "dog", "cat", "pet"]):
+            return False
+        health_tokens = [
+            "limp",
+            "limping",
+            "sick",
+            "vomit",
+            "vomiting",
+            "diarrhea",
+            "diarrhoea",
+            "itch",
+            "itchy",
+            "scratch",
+            "scratching",
+            "pain",
+            "injur",
+            "bleed",
+            "cough",
+            "letharg",
+            "not eating",
+            "won't eat",
+            "wont eat",
+        ]
+        return any(token in text for token in health_tokens)
 
     def _is_general_assistant_query(self, text: str) -> bool:
         normalized = re.sub(r"\s+", " ", text.strip().lower())
