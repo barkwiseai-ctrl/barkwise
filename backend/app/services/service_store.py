@@ -523,35 +523,43 @@ class ServiceStore:
                 owner_map = {row["provider_id"]: row["user_id"] for row in owner_rows}
 
         origin = self._resolve_origin(suburb=suburb, user_lat=user_lat, user_lng=user_lng)
-        result: List[ServiceProvider] = []
         query = (q or "").strip().lower()
-        for row in rows:
-            if category and row["category"] != category:
-                continue
-            if suburb and row["suburb"].lower() != suburb.lower():
-                continue
-            if min_rating is not None and float(row["rating"]) < min_rating:
-                continue
-            if query:
-                searchable = " ".join(
-                    [
-                        str(row["name"]),
-                        str(row["description"]),
-                        str(row["category"]),
-                        str(row["suburb"]),
-                    ]
-                ).lower()
-                if query not in searchable:
-                    continue
 
-            distance = None
-            if origin:
-                distance = self._haversine_km(origin[0], origin[1], float(row["latitude"]), float(row["longitude"]))
-                if max_distance_km is not None and distance > max_distance_km:
+        def collect(filter_suburb: bool) -> List[ServiceProvider]:
+            result: List[ServiceProvider] = []
+            for row in rows:
+                if category and row["category"] != category:
                     continue
+                if filter_suburb and suburb and row["suburb"].lower() != suburb.lower():
+                    continue
+                if min_rating is not None and float(row["rating"]) < min_rating:
+                    continue
+                if query:
+                    searchable = " ".join(
+                        [
+                            str(row["name"]),
+                            str(row["description"]),
+                            str(row["category"]),
+                            str(row["suburb"]),
+                        ]
+                    ).lower()
+                    if query not in searchable:
+                        continue
 
-            owner_user_id = owner_map.get(row["id"])
-            result.append(self._row_to_provider(row, distance_km=distance, owner_user_id=owner_user_id))
+                distance = None
+                if origin:
+                    distance = self._haversine_km(origin[0], origin[1], float(row["latitude"]), float(row["longitude"]))
+                    if max_distance_km is not None and distance > max_distance_km:
+                        continue
+
+                owner_user_id = owner_map.get(row["id"])
+                result.append(self._row_to_provider(row, distance_km=distance, owner_user_id=owner_user_id))
+            return result
+
+        # If a specific suburb has no providers, fall back to broader results instead of blank state.
+        result = collect(filter_suburb=bool(suburb))
+        if suburb and not result:
+            result = collect(filter_suburb=False)
 
         sort_key = (sort_by or "relevance").strip().lower()
         if sort_key == "distance":
