@@ -1,5 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
+import java.net.URI
+import org.gradle.api.GradleException
 
 plugins {
     id("com.android.application")
@@ -31,6 +33,38 @@ fun readStringConfig(project: Project, key: String, default: String): String {
     return (fromGradleProperty ?: fromEnv ?: fromLocalProperties ?: default).trim()
 }
 
+fun readApiBaseUrlConfig(project: Project, key: String, default: String): String {
+    val raw = readStringConfig(project, key, default).trim().trim('"')
+    val normalized = if (raw.endsWith("/")) raw else "$raw/"
+    val parsed = runCatching { URI(normalized) }.getOrNull()
+    val scheme = parsed?.scheme?.lowercase()
+    val host = parsed?.host
+    if ((scheme != "http" && scheme != "https") || host.isNullOrBlank() || host.any { it.isWhitespace() }) {
+        throw GradleException(
+            "Invalid $key value: '$raw'. Use a full URL like https://staging-api.barkwise.app/."
+        )
+    }
+    return normalized
+}
+
+fun readInstallPageUrlConfig(project: Project): String {
+    val fromGradleProperty = (project.findProperty("BARKWISE_INSTALL_PAGE_URL") as String?)?.trim()
+    val fromEnv = System.getenv("BARKWISE_INSTALL_PAGE_URL")?.trim()
+    val fromLocalProperties = readFromLocalProperties(project.rootDir, "BARKWISE_INSTALL_PAGE_URL")
+    val configured = fromGradleProperty ?: fromEnv ?: fromLocalProperties
+    if (!configured.isNullOrBlank()) return configured
+
+    val testerInstructions = project.rootDir.resolve("share/mock/tester-instructions.txt")
+    if (testerInstructions.exists()) {
+        val installUrl = testerInstructions.readLines()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
+        if (!installUrl.isNullOrBlank()) return installUrl
+    }
+
+    return "https://api.barkwise.app/web/"
+}
+
 android {
     namespace = "com.petsocial.app"
     compileSdk = 35
@@ -53,6 +87,10 @@ android {
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         val escapedMapsApiKey = mapsApiKey.replace("\"", "\\\"")
         buildConfigField("String", "MAPS_API_KEY", "\"$escapedMapsApiKey\"")
+        buildConfigField("String", "PRODUCTION_API_BASE_URL", "\"https://api.barkwise.app/\"")
+        val installPageUrl = readInstallPageUrlConfig(project)
+        val escapedInstallPageUrl = installPageUrl.replace("\"", "\\\"")
+        buildConfigField("String", "INSTALL_PAGE_URL", "\"$escapedInstallPageUrl\"")
     }
 
     buildTypes {
@@ -72,7 +110,7 @@ android {
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
             resValue("string", "app_name", "BarkWise Dev")
-            val devApiUrl = readStringConfig(project, "BARKWISE_DEV_API_BASE_URL", "http://10.0.2.2:8000/")
+            val devApiUrl = readApiBaseUrlConfig(project, "BARKWISE_DEV_API_BASE_URL", "http://10.0.2.2:8000/")
             val escapedUrl = devApiUrl.replace("\"", "\\\"")
             buildConfigField("String", "API_BASE_URL", "\"$escapedUrl\"")
             buildConfigField("Boolean", "USE_MOCK_DATA", "true")
@@ -83,7 +121,7 @@ android {
             applicationIdSuffix = ".staging"
             versionNameSuffix = "-staging"
             resValue("string", "app_name", "BarkWise (test)")
-            val stagingApiUrl = readStringConfig(project, "BARKWISE_STAGING_API_BASE_URL", "http://10.0.2.2:8000/")
+            val stagingApiUrl = readApiBaseUrlConfig(project, "BARKWISE_STAGING_API_BASE_URL", "http://10.0.2.2:8000/")
             val escapedUrl = stagingApiUrl.replace("\"", "\\\"")
             buildConfigField("String", "API_BASE_URL", "\"$escapedUrl\"")
             buildConfigField("Boolean", "USE_MOCK_DATA", "false")
@@ -92,7 +130,7 @@ android {
         create("prod") {
             dimension = "environment"
             resValue("string", "app_name", "BarkWise")
-            val prodApiUrl = readStringConfig(project, "BARKWISE_PROD_API_BASE_URL", "https://api.barkwise.app/")
+            val prodApiUrl = readApiBaseUrlConfig(project, "BARKWISE_PROD_API_BASE_URL", "https://api.barkwise.app/")
             val escapedUrl = prodApiUrl.replace("\"", "\\\"")
             buildConfigField("String", "API_BASE_URL", "\"$escapedUrl\"")
             buildConfigField("Boolean", "USE_MOCK_DATA", "false")
@@ -153,6 +191,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-maps:19.0.0")
     implementation("com.google.maps.android:maps-compose:6.4.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    testImplementation("junit:junit:4.13.2")
 }
 
 // Keep CLI/dev automation stable: map legacy debug task names to the dev flavor.

@@ -148,10 +148,18 @@ Typical release flow:
 
 ```bash
 cd /Users/yingxu/public-repos/pet-social-app
+./android/scripts/release_preflight.sh
 ./android/scripts/publish_staging_railway_installer.sh
 git add backend/app/web/install android/scripts/publish_staging_railway_installer.sh backend/app/main.py
 git commit -m "Publish staging APK <version>"
 git push
+```
+
+Optional preflight knobs:
+
+```bash
+RUN_SMOKE_HTTP=1 BASE_URL=http://localhost:8000 ./android/scripts/release_preflight.sh
+RUN_ANDROID_COMPILE=0 ./android/scripts/release_preflight.sh
 ```
 
 ## iOS Beta Scaffold

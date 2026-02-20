@@ -5,7 +5,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Pattern
 from uuid import uuid4
 
 from app.data import group_memberships, groups
@@ -35,6 +35,18 @@ ALLOWED_INTENTS = {
     "general_pet_question",
     "general_assistant_query",
     "out_of_scope_non_pet",
+}
+
+APP_ROUTE_INTENTS = {
+    "find_dog_walker",
+    "find_groomer",
+    "lost_found",
+    "community_discovery",
+    "weight_concern",
+    "provider_onboarding",
+    "add_service_listing",
+    "add_pet_owner_profile",
+    "manage_community_group",
 }
 
 TOOL_DEFS = [
@@ -117,6 +129,184 @@ class SessionMemory:
 
 PROFILE_KEYS = ["pet_name", "pet_type", "breed", "age_years", "weight_kg", "suburb"]
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
+BREED_GUIDES: Dict[str, Dict[str, Any]] = {
+    "cavalier king charles spaniel": {
+        "aliases": [
+            "cavalier king charles spaniel",
+            "cavalier king charles",
+            "king charles spaniel",
+            "king charles cavalier",
+            "king charles cavaliers",
+            "king charles cavelier",
+            "king charles caveliers",
+            "cavalier",
+            "cavaliers",
+            "cavelier",
+            "caveliers",
+        ],
+        "summary": (
+            "Cavalier King Charles Spaniels are affectionate, social companion dogs that usually do best close to their people. "
+            "They need moderate daily exercise, plus short training and enrichment sessions to stay calm and engaged. "
+            "Their silky coat and feathering need routine brushing, with regular ear and eye care. "
+            "Common health watch-outs include mitral valve disease, syringomyelia, patellar luxation, and eye conditions."
+        ),
+    },
+    "border collie": {
+        "aliases": ["border collie", "border collies"],
+        "summary": (
+            "Border Collies are highly intelligent, energetic herding dogs. "
+            "They usually need 1-2 hours of daily physical exercise plus mental work "
+            "(training, scent games, puzzle toys) to stay settled. "
+            "They are very trainable and thrive with clear structure, but can become frustrated "
+            "if under-stimulated. Their coat needs regular brushing, and common health checks include hips, eyes, and joint care. "
+            "They are best for owners who can provide consistent activity and engagement."
+        ),
+    },
+    "golden retriever": {
+        "aliases": ["golden retriever", "golden retrievers"],
+        "summary": (
+            "Golden Retrievers are social, friendly, and generally easy to train. "
+            "They need daily exercise, routine grooming (especially coat brushing), and weight management. "
+            "They are usually great family dogs when given regular activity and attention."
+        ),
+    },
+    "labrador": {
+        "aliases": ["labrador", "labradors", "labrador retriever", "labrador retrievers", "lab", "labs"],
+        "summary": (
+            "Labradors are active, food-motivated, and people-focused dogs. "
+            "They benefit from daily exercise, obedience basics, and portion control to prevent weight gain. "
+            "They are typically adaptable and do well with structured routines."
+        ),
+    },
+    "poodle": {
+        "aliases": ["poodle", "poodles"],
+        "summary": (
+            "Poodles are intelligent, trainable, and active. "
+            "They need both physical activity and mental stimulation, and their coat requires regular grooming. "
+            "They often do best with ongoing training and enrichment."
+        ),
+    },
+    "beagle": {
+        "aliases": ["beagle", "beagles"],
+        "summary": (
+            "Beagles are scent-driven, social hounds with strong curiosity. "
+            "They need secure environments, consistent recall training, and daily exercise. "
+            "They can be vocal and independent, so routine and patient training help."
+        ),
+    },
+}
+DEFAULT_RAG_TRIGGER_TERMS = (
+    "allergy",
+    "allergic reaction",
+    "anaphylaxis",
+    "arthritis",
+    "asthma",
+    "ataxia",
+    "autoimmune",
+    "bloat",
+    "bloated abdomen",
+    "blood in stool",
+    "blood in urine",
+    "bloody diarrhea",
+    "bloody diarrhoea",
+    "bronchitis",
+    "cancer",
+    "cardiomyopathy",
+    "cataract",
+    "chronic kidney disease",
+    "ckd",
+    "collapse",
+    "congestive heart failure",
+    "constipation",
+    "coughing",
+    "cushing",
+    "cushings",
+    "dehydration",
+    "dental disease",
+    "dermatitis",
+    "diabetes",
+    "diabetic ketoacidosis",
+    "diarrhea",
+    "diarrhoea",
+    "distemper",
+    "ear infection",
+    "eating less",
+    "endocrine",
+    "epilepsy",
+    "fever",
+    "fip",
+    "fiv",
+    "fleas allergy dermatitis",
+    "fracture",
+    "gastroenteritis",
+    "giardia",
+    "glaucoma",
+    "heart disease",
+    "heart murmur",
+    "heart failure",
+    "heartworm",
+    "heatstroke",
+    "hypoglycemia",
+    "hypoglycaemia",
+    "ibd",
+    "immune mediated",
+    "infection",
+    "inflamed gums",
+    "injury",
+    "intestinal blockage",
+    "ivdd",
+    "jaundice",
+    "kennel cough",
+    "kidney disease",
+    "lameness",
+    "leptospirosis",
+    "liver disease",
+    "loss of appetite",
+    "lyme disease",
+    "mast cell tumor",
+    "mast cell tumour",
+    "melena",
+    "meningitis",
+    "not eating",
+    "obstruction",
+    "otitis",
+    "pain",
+    "pancreatitis",
+    "parvo",
+    "parvovirus",
+    "periodontal disease",
+    "pneumonia",
+    "poison",
+    "poisoning",
+    "pyometra",
+    "rabies",
+    "renal failure",
+    "respiratory distress",
+    "roundworm",
+    "sepsis",
+    "seizure",
+    "seizures",
+    "shock",
+    "skin infection",
+    "stomatitis",
+    "straining to urinate",
+    "stroke",
+    "tapeworm",
+    "toxin",
+    "toxicity",
+    "tracheal collapse",
+    "trauma",
+    "tumour",
+    "urinary blockage",
+    "urinary obstruction",
+    "uti",
+    "vestibular disease",
+    "vomit",
+    "vomiting",
+    "weakness",
+    "worm infestation",
+    "tumor",
+)
 
 
 # Fallback manifests used when no SKILL.md files are found on disk.
@@ -166,6 +356,9 @@ class AIOrchestrator:
         self.sessions: Dict[str, SessionMemory] = {}
         self.skill_manifests = self._load_skill_manifests()
         self.rag_retriever = RagRetriever()
+        self.rag_trigger_terms = self._load_rag_trigger_terms()
+        self.rag_trigger_patterns = self._compile_rag_trigger_patterns(self.rag_trigger_terms)
+        self.rag_route_telemetry_enabled = self._read_bool_env("RAG_ROUTE_TELEMETRY_ENABLED", True)
 
     @staticmethod
     def _normalize_env_value(value: str) -> str:
@@ -196,6 +389,8 @@ class AIOrchestrator:
         user_id: str = "guest",
         suburb: Optional[str] = None,
     ) -> ChatResponse:
+        user_id = self._safe_text(user_id, default="guest", max_len=128)
+        message = self._safe_text(message, default="Hi", max_len=4000)
         session = self._get_session(user_id)
         self._append_turn(session, user_id, "user", message)
         self._update_profile_memory(session, message, suburb)
@@ -240,25 +435,44 @@ class AIOrchestrator:
             return self._attach_history_and_cards(response, session)
 
         plan = self._build_plan(message=message, suburb=suburb, session=session)
+        route = self._route_query(message=message, plan=plan)
         tool_results = self._execute_tools(
-            plan.get("tools", []),
+            tool_calls=plan.get("tools", []),
             message=message,
             suburb=suburb,
             session=session,
             user_id=user_id,
         )
-        rag_context = self.rag_retriever.build_context(
+        intent = str(plan.get("intent", "general_pet_question"))
+        if route["lane"] == "RAG":
+            rag_context = self.rag_retriever.build_context(
+                message=message,
+                suburb=suburb,
+                profile_memory=session.profile_memory,
+                intent=intent,
+                tool_results=tool_results,
+            )
+        else:
+            rag_context = {
+                "intent": intent,
+                "query": message.strip(),
+                "suburb": suburb,
+                "profile_summary": {},
+                "documents": [],
+            }
+        self._emit_route_telemetry(
+            user_id=user_id,
             message=message,
-            suburb=suburb,
-            profile_memory=session.profile_memory,
-            intent=str(plan.get("intent", "general_pet_question")),
-            tool_results=tool_results,
+            plan=plan,
+            route=route,
+            rag_context=rag_context,
         )
 
         answer = self._compose_answer(
             message=message,
             suburb=suburb,
             plan=plan,
+            route=route,
             tool_results=tool_results,
             session=session,
             rag_context=rag_context,
@@ -277,6 +491,87 @@ class AIOrchestrator:
         self._append_turn(session, user_id, "assistant", response.answer)
         self._persist_session_state(user_id, session)
         return self._attach_history_and_cards(response, session)
+
+    def _load_rag_trigger_terms(self) -> List[str]:
+        raw_terms = os.getenv("RAG_TRIGGER_TERMS", "")
+        if not raw_terms.strip():
+            parsed = [term.strip().lower() for term in DEFAULT_RAG_TRIGGER_TERMS]
+        else:
+            parsed = [term.strip().lower() for term in raw_terms.split(",")]
+        terms: List[str] = []
+        seen: set[str] = set()
+        for term in parsed:
+            if not term or term in seen:
+                continue
+            seen.add(term)
+            terms.append(term)
+        return terms
+
+    @staticmethod
+    def _read_bool_env(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+    def _compile_rag_trigger_patterns(self, terms: List[str]) -> List[Pattern[str]]:
+        patterns: List[Pattern[str]] = []
+        for term in terms:
+            escaped = re.escape(term)
+            escaped = escaped.replace(r"\ ", r"[\s\-]+")
+            pattern = re.compile(rf"(?<![a-z0-9]){escaped}(?![a-z0-9])")
+            patterns.append(pattern)
+        return patterns
+
+    def _matched_rag_trigger_terms(self, message: str) -> List[str]:
+        normalized = message.lower()
+        matches: List[str] = []
+        for term, pattern in zip(self.rag_trigger_terms, self.rag_trigger_patterns):
+            if pattern.search(normalized):
+                matches.append(term)
+        return matches
+
+    def _should_apply_rag(self, message: str) -> bool:
+        return bool(self._matched_rag_trigger_terms(message))
+
+    def _route_query(self, message: str, plan: Dict[str, Any]) -> Dict[str, Any]:
+        intent = str(plan.get("intent", "general_pet_question"))
+        tools = plan.get("tools", [])
+        has_tools = isinstance(tools, list) and len(tools) > 0
+        matched_terms = self._matched_rag_trigger_terms(message)
+        rag_triggered = bool(matched_terms)
+
+        if intent in APP_ROUTE_INTENTS or has_tools:
+            return {"lane": "APP", "reason": "intent_or_tools", "rag_triggered": rag_triggered, "matched_terms": []}
+        if rag_triggered:
+            return {"lane": "RAG", "reason": "trigger_terms", "rag_triggered": True, "matched_terms": matched_terms}
+        return {"lane": "GENERAL", "reason": "default_general_pet", "rag_triggered": False, "matched_terms": []}
+
+    def _emit_route_telemetry(
+        self,
+        *,
+        user_id: str,
+        message: str,
+        plan: Dict[str, Any],
+        route: Dict[str, Any],
+        rag_context: Dict[str, Any],
+    ) -> None:
+        if not self.rag_route_telemetry_enabled:
+            return
+        rag_docs = rag_context.get("documents", [])
+        rag_doc_count = len(rag_docs) if isinstance(rag_docs, list) else 0
+        payload = {
+            "user_id": user_id,
+            "message_length": len(message),
+            "intent": str(plan.get("intent", "general_pet_question")),
+            "has_tools": bool(plan.get("tools")),
+            "route_lane": route.get("lane", "GENERAL"),
+            "route_reason": route.get("reason", "unknown"),
+            "rag_triggered": bool(route.get("rag_triggered", False)),
+            "matched_terms": route.get("matched_terms", []),
+            "rag_doc_count": rag_doc_count,
+        }
+        logger.info("route_telemetry=%s", json.dumps(payload, sort_keys=True))
 
     def accept_profile(self, user_id: str) -> ChatResponse:
         session = self._get_session(user_id)
@@ -322,7 +617,7 @@ class AIOrchestrator:
             category=category,
             suburb=str(draft.get("suburb")),
             description=str(draft.get("description")),
-            price_from=int(draft.get("price_from", 30)),
+            price_from=self._safe_int(draft.get("price_from"), default=30, min_value=1, max_value=5000),
         )
 
         session.provider = ProviderOnboardingState()
@@ -388,15 +683,19 @@ class AIOrchestrator:
             provider=ProviderOnboardingState(
                 active=bool(provider_state.get("active", False)),
                 collected=provider_collected,
-                awaiting_field=provider_state.get("awaiting_field"),
+                awaiting_field=provider_state.get("awaiting_field")
+                if isinstance(provider_state.get("awaiting_field"), str)
+                else None,
             ),
         )
         self.sessions[user_id] = session
         return session
 
     def _append_turn(self, session: SessionMemory, user_id: str, role: str, content: str) -> None:
-        session.history.append({"role": role, "content": content})
-        self.memory_store.append_turn(user_id=user_id, role=role, content=content)
+        safe_role = role if role in {"user", "assistant"} else "assistant"
+        safe_content = self._safe_text(content, default="", max_len=4000)
+        session.history.append({"role": safe_role, "content": safe_content})
+        self.memory_store.append_turn(user_id=user_id, role=safe_role, content=safe_content)
 
     def _persist_session_state(self, user_id: str, session: SessionMemory) -> None:
         provider_state = {
@@ -419,9 +718,17 @@ class AIOrchestrator:
         ]
 
         suggestion = self._build_profile_suggestion(session)
-        if suggestion and not session.profile_accepted:
+        latest_user_message = next(
+            (turn["content"] for turn in reversed(history) if turn.get("role") == "user"),
+            "",
+        )
+        show_profile_card = (
+            suggestion
+            and not session.profile_accepted
+            and self._is_profile_capture_request(str(latest_user_message).lower())
+        )
+        if show_profile_card:
             response.profile_suggestion = suggestion
-            response.cta_chips.append(CtaChip(label="Accept Profile Card", action="accept_profile_card"))
             response.a2ui_messages.extend(self._a2ui_profile_messages(suggestion))
 
         if session.provider.active:
@@ -516,7 +823,7 @@ class AIOrchestrator:
             return "dog_walking"
         if field == "price_from":
             match = re.search(r"(\d+)", text)
-            return int(match.group(1)) if match else 30
+            return self._safe_int(match.group(1) if match else None, default=30, min_value=1, max_value=5000)
         return text
 
     def _build_plan(self, message: str, suburb: Optional[str], session: SessionMemory) -> Dict[str, Any]:
@@ -580,6 +887,8 @@ class AIOrchestrator:
                 and self._is_pet_health_question(message.lower())
             ):
                 data["intent"] = "general_pet_question"
+                data["tools"] = []
+            if data.get("intent") == "general_pet_question":
                 data["tools"] = []
             return data
         except Exception:
@@ -655,10 +964,7 @@ class AIOrchestrator:
             }
         return {
             "intent": "general_pet_question",
-            "tools": [
-                {"name": "search_services", "args": {"category": "dog_walking", "suburb": suburb, "limit": 2}},
-                {"name": "search_groups", "args": {"suburb": suburb, "limit": 2}},
-            ],
+            "tools": [],
             "suggested_profile": self._fallback_profile(message),
         }
 
@@ -860,6 +1166,9 @@ class AIOrchestrator:
         if normalized in {"thanks", "thank you", "ok", "okay", "cool"}:
             return False
 
+        if self._match_known_breed(normalized):
+            return False
+
         pet_keywords = [
             "pet",
             "dog",
@@ -950,45 +1259,58 @@ class AIOrchestrator:
             if not isinstance(args, dict):
                 args = {}
 
-            if name == "search_services":
-                results[name] = self._tool_search_services(
-                    category=args.get("category", "dog_walking"),
-                    suburb=args.get("suburb") or suburb,
-                    limit=args.get("limit", 3),
-                )
-            elif name == "search_groups":
-                results[name] = self._tool_search_groups(suburb=args.get("suburb") or suburb, limit=args.get("limit", 3))
-            elif name == "draft_lost_found":
-                results[name] = self._tool_draft_lost_found(message, suburb=args.get("suburb") or suburb)
-            elif name == "add_service_listing":
-                results[name] = self._tool_add_service_listing(
-                    session=session,
-                    message=message,
-                    suburb=args.get("suburb") or suburb,
-                    user_id=user_id,
-                    args=args,
-                )
-            elif name == "add_pet_owner_profile":
-                results[name] = self._tool_add_pet_owner_profile(
-                    session=session,
-                    message=message,
-                    suburb=args.get("suburb") or suburb,
-                    args=args,
-                )
-                self._persist_session_state(user_id, session)
-            elif name == "create_user_group":
-                results[name] = self._tool_create_user_group(
-                    message=message,
-                    suburb=args.get("suburb") or suburb,
-                    user_id=user_id,
-                    args=args,
-                )
-            elif name == "add_group_member":
-                results[name] = self._tool_add_group_member(
-                    message=message,
-                    user_id=user_id,
-                    args=args,
-                )
+            try:
+                if name == "search_services":
+                    category = self._safe_text(args.get("category"), default="dog_walking", max_len=32)
+                    if category not in {"dog_walking", "grooming"}:
+                        category = "dog_walking"
+                    limit = self._safe_int(args.get("limit"), default=3, min_value=1, max_value=10)
+                    results[name] = self._tool_search_services(
+                        category=category,
+                        suburb=args.get("suburb") or suburb,
+                        limit=limit,
+                    )
+                elif name == "search_groups":
+                    limit = self._safe_int(args.get("limit"), default=3, min_value=1, max_value=10)
+                    results[name] = self._tool_search_groups(
+                        suburb=args.get("suburb") or suburb,
+                        limit=limit,
+                    )
+                elif name == "draft_lost_found":
+                    results[name] = self._tool_draft_lost_found(message, suburb=args.get("suburb") or suburb)
+                elif name == "add_service_listing":
+                    results[name] = self._tool_add_service_listing(
+                        session=session,
+                        message=message,
+                        suburb=args.get("suburb") or suburb,
+                        user_id=user_id,
+                        args=args,
+                    )
+                elif name == "add_pet_owner_profile":
+                    results[name] = self._tool_add_pet_owner_profile(
+                        session=session,
+                        message=message,
+                        suburb=args.get("suburb") or suburb,
+                        args=args,
+                    )
+                    self._persist_session_state(user_id, session)
+                elif name == "create_user_group":
+                    results[name] = self._tool_create_user_group(
+                        message=message,
+                        suburb=args.get("suburb") or suburb,
+                        user_id=user_id,
+                        args=args,
+                    )
+                elif name == "add_group_member":
+                    results[name] = self._tool_add_group_member(
+                        message=message,
+                        user_id=user_id,
+                        args=args,
+                    )
+            except Exception:
+                logger.exception("Tool execution failed: %s", name)
+                if isinstance(name, str) and name:
+                    results[name] = {"status": "error", "message": "tool execution failed"}
         return results
 
     def _tool_search_services(self, category: str, suburb: Optional[str], limit: int) -> List[Dict[str, Any]]:
@@ -1048,7 +1370,7 @@ class AIOrchestrator:
             category=category,
             suburb=str(session.provider.collected.get("suburb")),
             description=str(session.provider.collected.get("description")),
-            price_from=int(session.provider.collected.get("price_from", 30)),
+            price_from=self._safe_int(session.provider.collected.get("price_from"), default=30, min_value=1, max_value=5000),
         )
         contact_name = str(session.provider.collected.get("contact_name", ""))
         session.provider = ProviderOnboardingState()
@@ -1072,6 +1394,8 @@ class AIOrchestrator:
                 continue
             session.profile_memory[key] = value
             session.field_locks[key] = True
+        # Auto-accept profile updates to avoid intrusive confirmation steps in normal chat.
+        session.profile_accepted = True
 
         suggestion = self._build_profile_suggestion(session)
         return {
@@ -1220,12 +1544,17 @@ class AIOrchestrator:
         message: str,
         suburb: Optional[str],
         plan: Dict[str, Any],
+        route: Dict[str, Any],
         tool_results: Dict[str, Any],
         session: SessionMemory,
         rag_context: Dict[str, Any],
     ) -> str:
         intent = plan.get("intent", "general_pet_question")
-        tone_profile = self._tone_profile(message=message, suburb=suburb, intent=intent)
+        breed_summary = self._known_breed_summary(message.lower())
+        if breed_summary:
+            return self._format_answer_paragraphs(breed_summary)
+        rag_related = route.get("lane") == "RAG"
+        tone_profile = self._tone_profile(message=message, suburb=suburb, intent=intent, rag_related=rag_related)
         known_fields = self._known_profile_fields(session.profile_memory)
         missing_fields = self._missing_profile_fields(session.profile_memory)
         locked_fields = [key for key, locked in session.field_locks.items() if locked]
@@ -1244,6 +1573,14 @@ class AIOrchestrator:
                     "Follow tone_profile: if support_mode is true, use warm, supportive, non-clinical language. "
                     "Use short readable paragraphs and avoid unnecessary jargon."
                 )
+            elif self._is_pet_health_question(message.lower()):
+                system_prompt = (
+                    "You are BarkAI, a pet-care assistant. "
+                    "Give practical triage-style guidance for symptom questions in concise steps. "
+                    "Do not diagnose. Focus on immediate safe actions, red flags, and when to see a vet. "
+                    "Do not include unrelated provider/community snippets unless directly relevant to the symptom. "
+                    "If tone_profile.rag_support_mode is true, start with one reassuring sentence, then prioritize the most relevant points from rag_context."
+                )
             else:
                 system_prompt = (
                     "You are a pet assistant in a mobile app. "
@@ -1252,11 +1589,17 @@ class AIOrchestrator:
                     "Use conversation memory context. "
                     "Ground factual or local details in rag_context when relevant, and do not invent specific provider/group/post names not present there. "
                     "Follow tone_profile: if support_mode is true, use warm, supportive, non-clinical language, open with empathy, and include local context only when natural. "
+                    "If tone_profile.rag_support_mode is true, start with one reassuring sentence, then prioritize the most relevant points from rag_context. "
                     "Never ask again for any profile field already known. "
                     "Only ask for at most one missing profile field if it is strictly needed for the user's current request. "
                     "If profile_accepted is true, do not ask profile collection questions unless the user explicitly asks to edit profile. "
                     "If a field is locked, it is forbidden to ask it again."
                 )
+            filtered_rag_context = (
+                {"summary": rag_context.get("summary", "")}
+                if self._is_pet_health_question(message.lower())
+                else rag_context
+            )
             payload = {
                 "message": message,
                 "suburb": suburb,
@@ -1269,7 +1612,9 @@ class AIOrchestrator:
                 "missing_profile_fields": missing_fields,
                 "locked_fields": locked_fields,
                 "tone_profile": tone_profile,
-                "rag_context": rag_context,
+                "route_lane": route.get("lane", "GENERAL"),
+                "route_reason": route.get("reason", "unknown"),
+                "rag_context": filtered_rag_context,
             }
             try:
                 response = self.client.responses.create(
@@ -1313,7 +1658,7 @@ class AIOrchestrator:
                 return f"I started your provider listing. Please share your {field} to continue."
             return "I can help you add your service listing. Share your business details to continue."
         if intent == "add_pet_owner_profile":
-            return "I updated your pet owner profile and prepared a card for your review."
+            return "I updated your pet profile details."
         if intent == "manage_community_group":
             created = tool_results.get("create_user_group", {})
             if isinstance(created, dict) and created.get("status") == "created":
@@ -1335,6 +1680,18 @@ class AIOrchestrator:
                 "I cannot diagnose in chat, but I can help with practical next steps: track body condition weekly, "
                 "maintain activity, and consult a vet if appetite or behavior changed."
             )
+        rag_fallback = self.rag_retriever.fallback_answer(
+            rag_context=rag_context,
+            support_mode=bool(tone_profile.get("support_mode")),
+        )
+        if rag_related and rag_fallback:
+            return rag_fallback
+        if self._is_pet_health_question(message.lower()):
+            return (
+                "I cannot diagnose in chat, but limping after a walk should be managed carefully. "
+                "Limit activity today, check the paw and nails for cuts or debris, and avoid human pain medications. "
+                "If limping is severe, there is swelling, or it lasts beyond 24 hours, contact a vet promptly."
+            )
         if tone_profile.get("support_mode"):
             local_hint = tone_profile.get("local_context_hint", "")
             suffix = f" {local_hint}" if local_hint else ""
@@ -1342,10 +1699,6 @@ class AIOrchestrator:
                 "I am sorry this feels stressful. You are not alone, and this is a common pet-care challenge."
                 f"{suffix} I can help you with a calm step-by-step plan."
             )
-        rag_fallback = self.rag_retriever.fallback_answer(
-            rag_context=rag_context,
-            support_mode=bool(tone_profile.get("support_mode")),
-        )
         if rag_fallback:
             return rag_fallback
         return "I can help with pet advice, local services, and community support."
@@ -1365,8 +1718,6 @@ class AIOrchestrator:
                 ctas.append(CtaChip(label="Open Services", action="open_services", payload={"category": category}))
             else:
                 ctas.append(CtaChip(label="Submit Provider Listing", action="submit_provider_listing"))
-        if intent == "add_pet_owner_profile":
-            ctas.append(CtaChip(label="Accept Profile Card", action="accept_profile_card"))
         if intent == "manage_community_group":
             ctas.append(CtaChip(label="Open Community", action="open_community"))
         if intent == "lost_found":
@@ -1404,7 +1755,8 @@ class AIOrchestrator:
         else:
             # Support compact patterns like "my dog Milo" or "this is Milo"
             alt_name_match = re.search(r"(?:my\s+(?:dog|cat|pet)\s+|this\s+is\s+)([A-Za-z]{2,})", message, re.I)
-            if alt_name_match and alt_name_match.group(1).lower() not in {"dog", "cat", "pet"}:
+            invalid_name_tokens = {"dog", "cat", "pet", "is", "has", "was", "the", "a", "an", "my"}
+            if alt_name_match and alt_name_match.group(1).lower() not in invalid_name_tokens:
                 profile["pet_name"] = alt_name_match.group(1)
                 session.field_locks["pet_name"] = True
 
@@ -1530,40 +1882,9 @@ class AIOrchestrator:
         text = re.sub(r"\s+", " ", message.strip())
         lower = text.lower()
 
-        breed_guides: Dict[str, str] = {
-            "border collie": (
-                "Border Collies are highly intelligent, energetic herding dogs. "
-                "They usually need 1-2 hours of daily physical exercise plus mental work "
-                "(training, scent games, puzzle toys) to stay settled. "
-                "They are very trainable and thrive with clear structure, but can become frustrated "
-                "if under-stimulated. Their coat needs regular brushing, and common health checks include hips, eyes, and joint care. "
-                "They are best for owners who can provide consistent activity and engagement."
-            ),
-            "golden retriever": (
-                "Golden Retrievers are social, friendly, and generally easy to train. "
-                "They need daily exercise, routine grooming (especially coat brushing), and weight management. "
-                "They are usually great family dogs when given regular activity and attention."
-            ),
-            "labrador": (
-                "Labradors are active, food-motivated, and people-focused dogs. "
-                "They benefit from daily exercise, obedience basics, and portion control to prevent weight gain. "
-                "They are typically adaptable and do well with structured routines."
-            ),
-            "poodle": (
-                "Poodles are intelligent, trainable, and active. "
-                "They need both physical activity and mental stimulation, and their coat requires regular grooming. "
-                "They often do best with ongoing training and enrichment."
-            ),
-            "beagle": (
-                "Beagles are scent-driven, social hounds with strong curiosity. "
-                "They need secure environments, consistent recall training, and daily exercise. "
-                "They can be vocal and independent, so routine and patient training help."
-            ),
-        }
-
-        for breed, summary in breed_guides.items():
-            if breed in lower:
-                return summary
+        breed_answer = self._known_breed_summary(lower)
+        if breed_answer:
+            return breed_answer
 
         topic_match = re.search(r"(?:tell me about|what is|explain)\s+(.+)", lower)
         if topic_match:
@@ -1591,6 +1912,27 @@ class AIOrchestrator:
             "Ask me a topic and I will provide a concise explanation plus practical next steps."
         )
 
+    def _known_breed_summary(self, text: str) -> Optional[str]:
+        if any(token in text for token in ["vaccine", "vaccination", "booster", "immunization", "shot", "shots"]):
+            return None
+        matched_breed = self._match_known_breed(text)
+        if not matched_breed:
+            return None
+        entry = BREED_GUIDES.get(matched_breed, {})
+        summary = str(entry.get("summary", "")).strip()
+        return summary or None
+
+    def _match_known_breed(self, text: str) -> Optional[str]:
+        normalized = re.sub(r"\s+", " ", text.strip().lower())
+        for breed, entry in BREED_GUIDES.items():
+            aliases = entry.get("aliases", [])
+            for alias in aliases:
+                escaped = re.escape(str(alias).strip().lower()).replace(r"\ ", r"[\s\-]+")
+                pattern = re.compile(rf"(?<![a-z0-9]){escaped}(?![a-z0-9])")
+                if pattern.search(normalized):
+                    return breed
+        return None
+
     def _non_pet_scope_message(self, message: str) -> str:
         topic = "that topic"
         cleaned = re.sub(r"\s+", " ", message.strip())
@@ -1604,7 +1946,7 @@ class AIOrchestrator:
             "I am best with pet care, pet behavior, local walkers or groomers, bookings, and community pet support."
         )
 
-    def _tone_profile(self, message: str, suburb: Optional[str], intent: str) -> Dict[str, Any]:
+    def _tone_profile(self, message: str, suburb: Optional[str], intent: str, rag_related: bool = False) -> Dict[str, Any]:
         text = message.lower()
         support_markers = [
             "scared",
@@ -1636,6 +1978,7 @@ class AIOrchestrator:
 
         return {
             "support_mode": support_mode,
+            "rag_support_mode": support_mode and rag_related,
             "style": "supportive_non_clinical" if support_mode else "direct_practical",
             "local_context_hint": local_context_hint,
         }
@@ -1733,9 +2076,40 @@ class AIOrchestrator:
         unique: List[CtaChip] = []
         seen: set[tuple[str, str]] = set()
         for cta in ctas:
-            key = (cta.action, json.dumps(cta.payload, sort_keys=True))
+            try:
+                payload_key = json.dumps(cta.payload, sort_keys=True)
+            except TypeError:
+                payload_key = str(cta.payload)
+            key = (cta.action, payload_key)
             if key in seen:
                 continue
             seen.add(key)
             unique.append(cta)
         return unique
+
+    def _safe_text(self, value: Any, default: str = "", max_len: int = 512) -> str:
+        if value is None:
+            return default
+        text = str(value).strip()
+        if not text:
+            return default
+        if len(text) > max_len:
+            return text[:max_len]
+        return text
+
+    def _safe_int(
+        self,
+        value: Any,
+        default: int,
+        min_value: Optional[int] = None,
+        max_value: Optional[int] = None,
+    ) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = default
+        if min_value is not None and parsed < min_value:
+            parsed = min_value
+        if max_value is not None and parsed > max_value:
+            parsed = max_value
+        return parsed
