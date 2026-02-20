@@ -5,8 +5,15 @@ __pycache__/
 
 # Android
 android/.gradle/
+android/.kotlin/
 android/local.properties
 android/**/build/
+android/share/
 
 # macOS
 .DS_Store
+
+# Local runtime data
+backend/data/*.sqlite3
+backend/data/*.sqlite3-shm
+backend/data/*.sqlite3-wal
