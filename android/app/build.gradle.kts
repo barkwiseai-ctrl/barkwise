@@ -192,6 +192,10 @@ dependencies {
     implementation("com.google.maps.android:maps-compose:6.4.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
 // Keep CLI/dev automation stable: map legacy debug task names to the dev flavor.

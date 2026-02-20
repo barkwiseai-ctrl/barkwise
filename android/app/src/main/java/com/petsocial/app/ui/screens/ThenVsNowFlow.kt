@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -60,13 +61,18 @@ private enum class ThenVsNowStep {
 @Composable
 fun ThenVsNowFlow(
     onClose: () -> Unit,
+    initialPetName: String = "Milo",
+    initialBirthdayInput: String = "",
+    initialThenPhotoUri: String? = null,
+    initialNowPhotoUri: String? = null,
+    generationStepDelayMs: Long = 850,
 ) {
     val context = LocalContext.current
     var step by rememberSaveable { mutableStateOf(ThenVsNowStep.Hook) }
-    var petName by rememberSaveable { mutableStateOf("Milo") }
-    var birthdayInput by rememberSaveable { mutableStateOf("") }
-    var thenPhotoUri by rememberSaveable { mutableStateOf<String?>(null) }
-    var nowPhotoUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var petName by rememberSaveable { mutableStateOf(initialPetName) }
+    var birthdayInput by rememberSaveable { mutableStateOf(initialBirthdayInput) }
+    var thenPhotoUri by rememberSaveable { mutableStateOf(initialThenPhotoUri) }
+    var nowPhotoUri by rememberSaveable { mutableStateOf(initialNowPhotoUri) }
     var weightThenInput by rememberSaveable { mutableStateOf("") }
     var weightNowInput by rememberSaveable { mutableStateOf("") }
     var selectedMilestone by rememberSaveable { mutableStateOf("responds to sit consistently") }
@@ -109,11 +115,11 @@ fun ThenVsNowFlow(
     LaunchedEffect(step) {
         if (step == ThenVsNowStep.Generating) {
             processingMessageIndex = 0
-            delay(850)
+            delay(generationStepDelayMs)
             processingMessageIndex = 1
-            delay(850)
+            delay(generationStepDelayMs)
             processingMessageIndex = 2
-            delay(850)
+            delay(generationStepDelayMs)
             step = ThenVsNowStep.Result
         }
     }
@@ -176,7 +182,9 @@ fun ThenVsNowFlow(
                             Text("Est. time: 45-60 seconds", style = MaterialTheme.typography.labelMedium)
                             Button(
                                 onClick = { step = ThenVsNowStep.Inputs },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("then_vs_now_create_card_button"),
                             ) {
                                 Text("Create my card")
                             }
@@ -261,7 +269,9 @@ fun ThenVsNowFlow(
                             }
                             Button(
                                 onClick = ::startGenerate,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("then_vs_now_generate_card_button"),
                             ) {
                                 Text("Generate card")
                             }
@@ -276,6 +286,7 @@ fun ThenVsNowFlow(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .testTag("then_vs_now_generating_state")
                                 .padding(20.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -293,6 +304,7 @@ fun ThenVsNowFlow(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .testTag("then_vs_now_result_state")
                                 .padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
@@ -360,7 +372,9 @@ fun ThenVsNowFlow(
                                     }
                                     context.startActivity(Intent.createChooser(shareIntent, "Share to Stories"))
                                 },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("then_vs_now_share_button"),
                             ) {
                                 Text("Share to Stories")
                             }
