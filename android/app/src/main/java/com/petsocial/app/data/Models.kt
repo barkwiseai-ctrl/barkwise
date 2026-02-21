@@ -22,6 +22,10 @@ data class ServiceProvider(
     @SerialName("owner_user_id") val ownerUserId: String? = null,
     @SerialName("owner_label") val ownerLabel: String? = null,
     val status: String = "active",
+    @SerialName("response_time_minutes") val responseTimeMinutes: Int? = null,
+    @SerialName("local_bookers_this_month") val localBookersThisMonth: Int = 0,
+    @SerialName("shared_group_bookers") val sharedGroupBookers: Int = 0,
+    @SerialName("social_proof") val socialProof: List<String> = emptyList(),
 )
 
 @Serializable
@@ -74,6 +78,57 @@ data class CancelServiceProviderRequest(
 @Serializable
 data class RestoreServiceProviderRequest(
     @SerialName("user_id") val userId: String,
+)
+
+@Serializable
+data class ServiceQuoteRequestCreate(
+    @SerialName("user_id") val userId: String,
+    val category: String,
+    val suburb: String,
+    @SerialName("preferred_window") val preferredWindow: String,
+    @SerialName("pet_details") val petDetails: String,
+    val note: String = "",
+)
+
+@Serializable
+data class ServiceQuoteProviderResponseRequest(
+    @SerialName("actor_user_id") val actorUserId: String,
+    @SerialName("provider_id") val providerId: String,
+    val decision: String,
+    val message: String = "",
+)
+
+@Serializable
+data class ServiceQuoteTarget(
+    @SerialName("provider_id") val providerId: String,
+    @SerialName("provider_name") val providerName: String,
+    @SerialName("owner_user_id") val ownerUserId: String,
+    val status: String,
+    @SerialName("response_message") val responseMessage: String = "",
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("responded_at") val respondedAt: String? = null,
+    @SerialName("reminder_15_sent") val reminder15Sent: Boolean = false,
+    @SerialName("reminder_60_sent") val reminder60Sent: Boolean = false,
+)
+
+@Serializable
+data class ServiceQuoteRequest(
+    val id: String,
+    @SerialName("user_id") val userId: String,
+    val category: String,
+    val suburb: String,
+    @SerialName("preferred_window") val preferredWindow: String,
+    @SerialName("pet_details") val petDetails: String,
+    val note: String = "",
+    val status: String,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+@Serializable
+data class ServiceQuoteRequestView(
+    @SerialName("quote_request") val quoteRequest: ServiceQuoteRequest,
+    val targets: List<ServiceQuoteTarget>,
 )
 
 @Serializable

@@ -341,6 +341,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         onSortByChange = vm::updateServicesSortBy,
                         onFilterChange = vm::updateServiceFilters,
                         onCreateService = { vm.switchTab(AppTab.Profile) },
+                        onRequestQuote = vm::requestQuote,
                         onBook = vm::requestBooking,
                         onViewDetails = vm::loadProviderDetails,
                         onLoadAvailability = vm::loadAvailability,

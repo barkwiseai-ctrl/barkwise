@@ -53,6 +53,15 @@ interface ApiService {
         @Body payload: RestoreServiceProviderRequest,
     ): ServiceProvider
 
+    @POST("services/quotes/request")
+    suspend fun requestQuote(@Body payload: ServiceQuoteRequestCreate): ServiceQuoteRequestView
+
+    @POST("services/quotes/{quoteRequestId}/respond")
+    suspend fun respondQuoteRequest(
+        @Path("quoteRequestId") quoteRequestId: String,
+        @Body payload: ServiceQuoteProviderResponseRequest,
+    ): ServiceQuoteRequestView
+
     @GET("services/providers/{providerId}/availability")
     suspend fun getProviderAvailability(
         @Path("providerId") providerId: String,

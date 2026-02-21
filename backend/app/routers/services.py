@@ -13,6 +13,9 @@ from app.models import (
     ProviderBlackout,
     ProviderBlackoutRequest,
     ServiceAvailabilitySlot,
+    ServiceQuoteProviderResponseRequest,
+    ServiceQuoteRequestCreate,
+    ServiceQuoteRequestView,
     ServiceProviderCancelRequest,
     ServiceProvider,
     ServiceProviderCreateRequest,
@@ -42,6 +45,18 @@ def _raise_service_http_error(exc: ServiceStoreError) -> None:
     raise HTTPException(status_code=400, detail=str(exc))
 
 
+def _dispatch_quote_reminders() -> None:
+    reminders = service_store.dispatch_quote_reminders()
+    for reminder in reminders:
+        notification_store.create(
+            user_id=str(reminder["owner_user_id"]),
+            title="Quote request reminder",
+            body=f"Please respond to quote request for {reminder['provider_name']} ({reminder['elapsed_minutes']}m).",
+            category="booking",
+            deep_link=f"quote:{reminder['quote_request_id']}",
+        )
+
+
 @router.get("/providers", response_model=list[ServiceProvider])
 def list_providers(
     category: Optional[str] = Query(default=None),
@@ -55,6 +70,7 @@ def list_providers(
     q: Optional[str] = Query(default=None),
     sort_by: str = Query(default="relevance"),
 ):
+    _dispatch_quote_reminders()
     try:
         return service_store.list_providers(
             category=category,
@@ -68,6 +84,61 @@ def list_providers(
             q=q,
             sort_by=sort_by,
         )
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.post("/quotes/request", response_model=ServiceQuoteRequestView)
+def request_quote(
+    request: ServiceQuoteRequestCreate,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=request.user_id, authorization=authorization)
+    try:
+        quote_request, targets = service_store.create_quote_request(
+            user_id=request.user_id,
+            category=request.category,
+            suburb=request.suburb,
+            preferred_window=request.preferred_window,
+            pet_details=request.pet_details,
+            note=request.note,
+        )
+        for target in targets:
+            notification_store.create(
+                user_id=target.owner_user_id,
+                title="New quote request",
+                body=f"{quote_request.category.replace('_', ' ')} in {quote_request.suburb} ({quote_request.preferred_window})",
+                category="booking",
+                deep_link=f"quote:{quote_request.id}",
+            )
+        return ServiceQuoteRequestView(quote_request=quote_request, targets=targets)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.post("/quotes/{quote_request_id}/respond", response_model=ServiceQuoteRequestView)
+def respond_quote_request(
+    quote_request_id: str,
+    request: ServiceQuoteProviderResponseRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=request.actor_user_id, authorization=authorization)
+    try:
+        updated_request, targets = service_store.respond_quote_request(
+            quote_request_id=quote_request_id,
+            provider_id=request.provider_id,
+            actor_user_id=request.actor_user_id,
+            decision=request.decision,
+            message=request.message,
+        )
+        notification_store.create(
+            user_id=updated_request.user_id,
+            title="Quote response received",
+            body=f"A provider {request.decision} your quote request in {updated_request.suburb}.",
+            category="booking",
+            deep_link=f"quote:{updated_request.id}",
+        )
+        return ServiceQuoteRequestView(quote_request=updated_request, targets=targets)
     except ServiceStoreError as exc:
         _raise_service_http_error(exc)
 
@@ -206,6 +277,7 @@ def list_bookings(
     user_id: Optional[str] = Query(default=None),
     role: Optional[str] = Query(default=None),
 ):
+    _dispatch_quote_reminders()
     try:
         return service_store.list_bookings(user_id=user_id, role=role)
     except ServiceStoreError as exc:

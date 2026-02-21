@@ -424,6 +424,38 @@ class PetSocialRepository(
         )
     )
 
+    suspend fun requestServiceQuote(
+        category: String,
+        suburb: String,
+        preferredWindow: String,
+        petDetails: String,
+        note: String,
+    ): ServiceQuoteRequestView = api.requestQuote(
+        ServiceQuoteRequestCreate(
+            userId = userId,
+            category = category,
+            suburb = suburb,
+            preferredWindow = preferredWindow,
+            petDetails = petDetails,
+            note = note,
+        ),
+    )
+
+    suspend fun respondServiceQuote(
+        quoteRequestId: String,
+        providerId: String,
+        decision: String,
+        message: String = "",
+    ): ServiceQuoteRequestView = api.respondQuoteRequest(
+        quoteRequestId = quoteRequestId,
+        payload = ServiceQuoteProviderResponseRequest(
+            actorUserId = userId,
+            providerId = providerId,
+            decision = decision,
+            message = message,
+        ),
+    )
+
     suspend fun createBookingHold(
         providerId: String,
         date: String,

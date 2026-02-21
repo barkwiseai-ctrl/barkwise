@@ -27,6 +27,14 @@ class MockApiService private constructor() : ApiService {
             longitude = 151.2106,
             ownerUserId = "user_1",
             ownerLabel = "Sesame",
+            responseTimeMinutes = 18,
+            localBookersThisMonth = 14,
+            sharedGroupBookers = 5,
+            socialProof = listOf(
+                "Used by 14 pet owners in Surry Hills this month",
+                "5 members from your groups booked this provider",
+                "Typically responds in about 18 min",
+            ),
         ),
         ServiceProvider(
             id = "provider_2",
@@ -45,6 +53,14 @@ class MockApiService private constructor() : ApiService {
             longitude = 151.2219,
             ownerUserId = "user_1",
             ownerLabel = "Sesame",
+            responseTimeMinutes = 31,
+            localBookersThisMonth = 9,
+            sharedGroupBookers = 3,
+            socialProof = listOf(
+                "Used by 9 pet owners in Darlinghurst this month",
+                "3 members from your groups booked this provider",
+                "Typically responds in about 31 min",
+            ),
         ),
         ServiceProvider(
             id = "provider_3",
@@ -63,6 +79,14 @@ class MockApiService private constructor() : ApiService {
             longitude = 151.2048,
             ownerUserId = "user_4",
             ownerLabel = "Tommy",
+            responseTimeMinutes = 22,
+            localBookersThisMonth = 11,
+            sharedGroupBookers = 4,
+            socialProof = listOf(
+                "Used by 11 pet owners in Redfern this month",
+                "4 members from your groups booked this provider",
+                "Typically responds in about 22 min",
+            ),
         ),
         ServiceProvider(
             id = "provider_4",
@@ -81,8 +105,17 @@ class MockApiService private constructor() : ApiService {
             longitude = 151.2101,
             ownerUserId = "user_4",
             ownerLabel = "Tommy",
+            responseTimeMinutes = 44,
+            localBookersThisMonth = 7,
+            sharedGroupBookers = 2,
+            socialProof = listOf(
+                "Used by 7 pet owners in Surry Hills this month",
+                "2 members from your groups booked this provider",
+                "Typically responds in about 44 min",
+            ),
         ),
     )
+    private val quoteRequests = mutableMapOf<String, ServiceQuoteRequestView>()
     private val reviewsByProvider = mutableMapOf(
         "provider_1" to mutableListOf(
             Review("review_1", "provider_1", "Sam", 5, "Excellent groom. Coat came back fluffy and even."),
@@ -172,6 +205,7 @@ class MockApiService private constructor() : ApiService {
     private var eventCounter = 2
     private var groupCounter = 3
     private var blackoutCounter = 1
+    private var quoteCounter = 1
 
     override suspend fun getProviders(
         category: String?,
@@ -309,6 +343,139 @@ class MockApiService private constructor() : ApiService {
         }
         providers[index] = providers[index].copy(status = "active")
         return providers[index]
+    }
+
+    override suspend fun requestQuote(payload: ServiceQuoteRequestCreate): ServiceQuoteRequestView {
+        val preferredSuburbMatches = providers
+            .asSequence()
+            .filter { it.status == "active" }
+            .filter { it.category == payload.category }
+            .filter { it.ownerUserId != payload.userId }
+            .filter { it.suburb.equals(payload.suburb, ignoreCase = true) }
+            .toList()
+        val fallbackMatches = providers
+            .asSequence()
+            .filter { it.status == "active" }
+            .filter { it.category == payload.category }
+            .filter { it.ownerUserId != payload.userId }
+            .toList()
+        val selected = (preferredSuburbMatches.ifEmpty { fallbackMatches }).take(3)
+        if (selected.isEmpty()) error("No matching providers found")
+
+        val now = Instant.now()
+        val quoteId = "quote_${quoteCounter++}"
+        val targets = selected.map { provider ->
+            ServiceQuoteTarget(
+                providerId = provider.id,
+                providerName = provider.name,
+                ownerUserId = provider.ownerUserId.orEmpty(),
+                status = "pending",
+                responseMessage = "",
+                createdAt = now.toString(),
+                respondedAt = null,
+                reminder15Sent = false,
+                reminder60Sent = false,
+            )
+        }
+        val requestView = ServiceQuoteRequestView(
+            quoteRequest = ServiceQuoteRequest(
+                id = quoteId,
+                userId = payload.userId,
+                category = payload.category,
+                suburb = payload.suburb,
+                preferredWindow = payload.preferredWindow,
+                petDetails = payload.petDetails,
+                note = payload.note,
+                status = "pending",
+                createdAt = now.toString(),
+                updatedAt = now.toString(),
+            ),
+            targets = targets,
+        )
+        quoteRequests[quoteId] = requestView
+        targets.forEach { target ->
+            notifications.add(
+                0,
+                AppNotification(
+                    id = "notif_quote_${Instant.now().toEpochMilli()}_${target.providerId}",
+                    userId = target.ownerUserId,
+                    title = "New quote request",
+                    body = "${payload.category.replace("_", " ")} in ${payload.suburb} (${payload.preferredWindow})",
+                    category = "booking",
+                    read = false,
+                    createdAt = Instant.now().toString(),
+                    deepLink = "quote:$quoteId",
+                ),
+            )
+        }
+        return requestView
+    }
+
+    override suspend fun respondQuoteRequest(
+        quoteRequestId: String,
+        payload: ServiceQuoteProviderResponseRequest,
+    ): ServiceQuoteRequestView {
+        val existing = quoteRequests[quoteRequestId] ?: error("Quote request not found")
+        val target = existing.targets.firstOrNull { it.providerId == payload.providerId }
+            ?: error("Quote target not found")
+        if (target.ownerUserId != payload.actorUserId) error("Only listing owner can respond to this quote")
+        if (target.status != "pending") error("Quote target already responded")
+
+        val now = Instant.now()
+        val updatedTarget = target.copy(
+            status = payload.decision,
+            responseMessage = payload.message,
+            respondedAt = now.toString(),
+        )
+        val updatedTargets = existing.targets.map { row ->
+            if (row.providerId == payload.providerId) updatedTarget else row
+        }
+        val nextStatus = when {
+            updatedTargets.all { it.status == "declined" } -> "closed"
+            updatedTargets.any { it.status == "accepted" || it.status == "declined" } -> "responded"
+            else -> "pending"
+        }
+        val updatedView = ServiceQuoteRequestView(
+            quoteRequest = existing.quoteRequest.copy(
+                status = nextStatus,
+                updatedAt = now.toString(),
+            ),
+            targets = updatedTargets,
+        )
+        quoteRequests[quoteRequestId] = updatedView
+
+        val elapsedMinutes = runCatching {
+            val created = Instant.parse(existing.quoteRequest.createdAt)
+            val delta = ChronoUnit.MINUTES.between(created, now).toInt()
+            if (delta < 1) 1 else delta
+        }.getOrDefault(1)
+        val providerIndex = providers.indexOfFirst { it.id == payload.providerId }
+        if (providerIndex >= 0) {
+            val current = providers[providerIndex]
+            providers[providerIndex] = current.copy(
+                responseTimeMinutes = elapsedMinutes,
+                socialProof = buildSocialProof(
+                    suburb = current.suburb,
+                    localBookers = current.localBookersThisMonth,
+                    sharedGroupBookers = current.sharedGroupBookers,
+                    responseTimeMinutes = elapsedMinutes,
+                ),
+            )
+        }
+        notifications.add(
+            0,
+            AppNotification(
+                id = "notif_quote_resp_${Instant.now().toEpochMilli()}",
+                userId = existing.quoteRequest.userId,
+                title = "Quote response received",
+                body = "A provider ${payload.decision} your quote request in ${existing.quoteRequest.suburb}.",
+                category = "booking",
+                read = false,
+                createdAt = now.toString(),
+                deepLink = "quote:${existing.quoteRequest.id}",
+            ),
+        )
+        return updatedView
     }
 
     override suspend fun getProviderAvailability(providerId: String, date: String): List<ServiceAvailabilitySlot> {
@@ -749,6 +916,19 @@ class MockApiService private constructor() : ApiService {
             sin(dLon / 2) * sin(dLon / 2)
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return (earthRadiusKm * c * 10.0).toInt() / 10.0
+    }
+
+    private fun buildSocialProof(
+        suburb: String,
+        localBookers: Int,
+        sharedGroupBookers: Int,
+        responseTimeMinutes: Int?,
+    ): List<String> {
+        val lines = mutableListOf<String>()
+        if (localBookers > 0) lines += "Used by $localBookers pet owners in $suburb this month"
+        if (sharedGroupBookers > 0) lines += "$sharedGroupBookers members from your groups booked this provider"
+        if (responseTimeMinutes != null) lines += "Typically responds in about $responseTimeMinutes min"
+        return lines
     }
 
     companion object {

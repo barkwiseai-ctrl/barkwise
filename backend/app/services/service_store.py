@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
+from app.data import group_memberships
 from app.models import (
     Booking,
     BookingHold,
@@ -20,6 +21,8 @@ from app.models import (
     ProviderBlackoutRequest,
     Review,
     ServiceAvailabilitySlot,
+    ServiceQuoteRequest,
+    ServiceQuoteTarget,
     ServiceProvider,
 )
 
@@ -199,8 +202,42 @@ class ServiceStore:
                     )
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS quote_requests (
+                        id TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        suburb TEXT NOT NULL,
+                        preferred_window TEXT NOT NULL,
+                        pet_details TEXT NOT NULL,
+                        note TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS quote_request_targets (
+                        id TEXT PRIMARY KEY,
+                        quote_request_id TEXT NOT NULL,
+                        provider_id TEXT NOT NULL,
+                        owner_user_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        response_message TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        responded_at TEXT,
+                        reminder_15_sent INTEGER NOT NULL DEFAULT 0,
+                        reminder_60_sent INTEGER NOT NULL DEFAULT 0
+                    )
+                    """
+                )
                 self._ensure_column(conn, "bookings", "owner_user_id", "TEXT NOT NULL DEFAULT 'guest_user'")
                 self._ensure_column(conn, "providers", "status", "TEXT NOT NULL DEFAULT 'active'")
+                self._ensure_column(conn, "quote_request_targets", "reminder_15_sent", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "quote_request_targets", "reminder_60_sent", "INTEGER NOT NULL DEFAULT 0")
                 conn.commit()
                 conn.execute("UPDATE availability_slots SET is_booked = 0")
                 conn.commit()
@@ -598,7 +635,18 @@ class ServiceStore:
         row: sqlite3.Row,
         distance_km: Optional[float] = None,
         owner_user_id: Optional[str] = None,
+        response_time_minutes: Optional[int] = None,
+        local_bookers_this_month: int = 0,
+        shared_group_bookers: int = 0,
     ) -> ServiceProvider:
+        social_proof: List[str] = []
+        if local_bookers_this_month > 0:
+            social_proof.append(f"Used by {local_bookers_this_month} pet owners in {row['suburb']} this month")
+        if shared_group_bookers > 0:
+            social_proof.append(f"{shared_group_bookers} members from your groups booked this provider")
+        if response_time_minutes is not None:
+            social_proof.append(f"Typically responds in about {response_time_minutes} min")
+
         return ServiceProvider(
             id=row["id"],
             name=row["name"],
@@ -616,7 +664,79 @@ class ServiceStore:
             owner_user_id=owner_user_id,
             owner_label=ACCOUNT_LABELS.get(owner_user_id, owner_user_id),
             status=row["status"] or "active",
+            response_time_minutes=response_time_minutes,
+            local_bookers_this_month=local_bookers_this_month,
+            shared_group_bookers=shared_group_bookers,
+            social_proof=social_proof,
         )
+
+    def _compute_provider_response_times(self, conn: sqlite3.Connection) -> Dict[str, int]:
+        rows = conn.execute(
+            """
+            SELECT provider_id, AVG((julianday(responded_at) - julianday(created_at)) * 24 * 60) AS avg_minutes
+            FROM quote_request_targets
+            WHERE responded_at IS NOT NULL
+            GROUP BY provider_id
+            """
+        ).fetchall()
+        response_minutes: Dict[str, int] = {}
+        for row in rows:
+            minutes = row["avg_minutes"]
+            if minutes is None:
+                continue
+            response_minutes[str(row["provider_id"])] = max(1, int(round(float(minutes))))
+        return response_minutes
+
+    def _compute_local_bookers_this_month(self, conn: sqlite3.Connection) -> Dict[str, int]:
+        month_start = date.today().replace(day=1).isoformat()
+        rows = conn.execute(
+            """
+            SELECT provider_id, COUNT(DISTINCT owner_user_id) AS owner_count
+            FROM bookings
+            WHERE booking_date >= ?
+              AND status NOT IN ('provider_declined', 'cancelled_by_owner', 'cancelled_by_provider')
+            GROUP BY provider_id
+            """,
+            (month_start,),
+        ).fetchall()
+        return {str(row["provider_id"]): int(row["owner_count"]) for row in rows}
+
+    def _compute_shared_group_bookers(
+        self,
+        conn: sqlite3.Connection,
+        viewer_user_id: Optional[str],
+    ) -> Dict[str, int]:
+        if not viewer_user_id:
+            return {}
+
+        group_map: Dict[str, Set[str]] = {}
+        for record in group_memberships:
+            if record.status != "member":
+                continue
+            group_map.setdefault(record.user_id, set()).add(record.group_id)
+
+        viewer_groups = group_map.get(viewer_user_id, set())
+        if not viewer_groups:
+            return {}
+
+        rows = conn.execute(
+            """
+            SELECT provider_id, owner_user_id
+            FROM bookings
+            WHERE status NOT IN ('provider_declined', 'cancelled_by_owner', 'cancelled_by_provider')
+            """
+        ).fetchall()
+
+        shared_counts: Dict[str, Set[str]] = {}
+        for row in rows:
+            booking_owner = str(row["owner_user_id"])
+            owner_groups = group_map.get(booking_owner, set())
+            if not owner_groups or viewer_groups.isdisjoint(owner_groups):
+                continue
+            provider_id = str(row["provider_id"])
+            shared_counts.setdefault(provider_id, set()).add(booking_owner)
+
+        return {provider_id: len(owner_ids) for provider_id, owner_ids in shared_counts.items()}
 
     def list_providers(
         self,
@@ -644,6 +764,9 @@ class ServiceStore:
                 rows = conn.execute("SELECT * FROM providers").fetchall()
                 owner_rows = conn.execute("SELECT provider_id, user_id FROM provider_owners").fetchall()
                 owner_map = {row["provider_id"]: row["user_id"] for row in owner_rows}
+                response_time_map = self._compute_provider_response_times(conn)
+                local_bookers_map = self._compute_local_bookers_this_month(conn)
+                shared_group_bookers_map = self._compute_shared_group_bookers(conn, viewer_user_id=user_id)
 
         origin = self._resolve_origin(suburb=suburb, user_lat=user_lat, user_lng=user_lng)
         query = (q or "").strip().lower()
@@ -681,7 +804,17 @@ class ServiceStore:
                     if max_distance_km is not None and distance > max_distance_km:
                         continue
 
-                result.append(self._row_to_provider(row, distance_km=distance, owner_user_id=owner_user_id))
+                provider_id = str(row["id"])
+                result.append(
+                    self._row_to_provider(
+                        row,
+                        distance_km=distance,
+                        owner_user_id=owner_user_id,
+                        response_time_minutes=response_time_map.get(provider_id),
+                        local_bookers_this_month=local_bookers_map.get(provider_id, 0),
+                        shared_group_bookers=shared_group_bookers_map.get(provider_id, 0),
+                    )
+                )
             return result
 
         # If a specific suburb has no providers, fall back to broader results instead of blank state.
@@ -716,6 +849,303 @@ class ServiceStore:
                     (provider_id,),
                 ).fetchall()
         return [str(row["user_id"]) for row in rows if row["user_id"]]
+
+    def _quote_request_from_row(self, row: sqlite3.Row) -> ServiceQuoteRequest:
+        return ServiceQuoteRequest(
+            id=row["id"],
+            user_id=row["user_id"],
+            category=row["category"],
+            suburb=row["suburb"],
+            preferred_window=row["preferred_window"],
+            pet_details=row["pet_details"],
+            note=row["note"],
+            status=row["status"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _quote_targets_for_request(self, conn: sqlite3.Connection, quote_request_id: str) -> List[ServiceQuoteTarget]:
+        rows = conn.execute(
+            """
+            SELECT t.*, p.name AS provider_name
+            FROM quote_request_targets t
+            JOIN providers p ON p.id = t.provider_id
+            WHERE t.quote_request_id = ?
+            ORDER BY t.created_at ASC
+            """,
+            (quote_request_id,),
+        ).fetchall()
+        return [
+            ServiceQuoteTarget(
+                provider_id=row["provider_id"],
+                provider_name=row["provider_name"],
+                owner_user_id=row["owner_user_id"],
+                status=row["status"],
+                response_message=row["response_message"] or "",
+                created_at=row["created_at"],
+                responded_at=row["responded_at"],
+                reminder_15_sent=bool(row["reminder_15_sent"]),
+                reminder_60_sent=bool(row["reminder_60_sent"]),
+            )
+            for row in rows
+        ]
+
+    def _refresh_quote_request_status(self, conn: sqlite3.Connection, quote_request_id: str) -> None:
+        targets = conn.execute(
+            """
+            SELECT status
+            FROM quote_request_targets
+            WHERE quote_request_id = ?
+            """,
+            (quote_request_id,),
+        ).fetchall()
+        statuses = [str(row["status"]) for row in targets]
+        if not statuses:
+            next_status = "closed"
+        elif any(status in {"accepted", "declined"} for status in statuses):
+            if all(status == "declined" for status in statuses):
+                next_status = "closed"
+            else:
+                next_status = "responded"
+        else:
+            next_status = "pending"
+
+        conn.execute(
+            """
+            UPDATE quote_requests
+            SET status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (next_status, datetime.utcnow().isoformat(), quote_request_id),
+        )
+
+    def create_quote_request(
+        self,
+        *,
+        user_id: str,
+        category: str,
+        suburb: str,
+        preferred_window: str,
+        pet_details: str,
+        note: str = "",
+        max_targets: int = 3,
+    ) -> Tuple[ServiceQuoteRequest, List[ServiceQuoteTarget]]:
+        cleaned_suburb = suburb.strip()
+        cleaned_window = preferred_window.strip()
+        cleaned_pet_details = pet_details.strip()
+        if category not in {"dog_walking", "grooming"}:
+            raise ServiceStoreValidationError("Invalid category. Allowed: dog_walking, grooming")
+        if not cleaned_suburb:
+            raise ServiceStoreValidationError("Suburb is required")
+        if not cleaned_window:
+            raise ServiceStoreValidationError("Preferred time window is required")
+        if not cleaned_pet_details:
+            raise ServiceStoreValidationError("Pet details are required")
+
+        now_iso = datetime.utcnow().isoformat()
+        quote_request_id = f"qr_{uuid4().hex[:8]}"
+        with self._lock:
+            with self._connect() as conn:
+                provider_rows = conn.execute(
+                    """
+                    SELECT p.id, p.name, po.user_id AS owner_user_id
+                    FROM providers p
+                    JOIN provider_owners po ON po.provider_id = p.id
+                    WHERE p.status = 'active'
+                      AND p.category = ?
+                      AND p.suburb = ?
+                      AND po.user_id != ?
+                    ORDER BY p.rating DESC, p.review_count DESC
+                    LIMIT 20
+                    """,
+                    (category, cleaned_suburb, user_id),
+                ).fetchall()
+                if not provider_rows:
+                    provider_rows = conn.execute(
+                        """
+                        SELECT p.id, p.name, po.user_id AS owner_user_id
+                        FROM providers p
+                        JOIN provider_owners po ON po.provider_id = p.id
+                        WHERE p.status = 'active'
+                          AND p.category = ?
+                          AND po.user_id != ?
+                        ORDER BY p.rating DESC, p.review_count DESC
+                        LIMIT 20
+                        """,
+                        (category, user_id),
+                    ).fetchall()
+                if not provider_rows:
+                    raise ServiceStoreNotFoundError("No matching providers found")
+
+                selected = provider_rows[:max_targets]
+                conn.execute(
+                    """
+                    INSERT INTO quote_requests (
+                        id, user_id, category, suburb, preferred_window, pet_details, note, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        quote_request_id,
+                        user_id,
+                        category,
+                        cleaned_suburb,
+                        cleaned_window,
+                        cleaned_pet_details,
+                        note.strip(),
+                        "pending",
+                        now_iso,
+                        now_iso,
+                    ),
+                )
+                for row in selected:
+                    conn.execute(
+                        """
+                        INSERT INTO quote_request_targets (
+                            id, quote_request_id, provider_id, owner_user_id, status, response_message, created_at, responded_at, reminder_15_sent, reminder_60_sent
+                        ) VALUES (?, ?, ?, ?, 'pending', '', ?, NULL, 0, 0)
+                        """,
+                        (
+                            f"qrt_{uuid4().hex[:10]}",
+                            quote_request_id,
+                            row["id"],
+                            row["owner_user_id"],
+                            now_iso,
+                        ),
+                    )
+                conn.commit()
+
+                request_row = conn.execute("SELECT * FROM quote_requests WHERE id = ?", (quote_request_id,)).fetchone()
+                targets = self._quote_targets_for_request(conn, quote_request_id=quote_request_id)
+        if not request_row:
+            raise ServiceStoreNotFoundError("Quote request not found after create")
+        return self._quote_request_from_row(request_row), targets
+
+    def respond_quote_request(
+        self,
+        *,
+        quote_request_id: str,
+        provider_id: str,
+        actor_user_id: str,
+        decision: str,
+        message: str = "",
+    ) -> Tuple[ServiceQuoteRequest, List[ServiceQuoteTarget]]:
+        if decision not in {"accepted", "declined"}:
+            raise ServiceStoreValidationError("Invalid decision. Allowed: accepted, declined")
+
+        with self._lock:
+            with self._connect() as conn:
+                request_row = conn.execute(
+                    "SELECT * FROM quote_requests WHERE id = ?",
+                    (quote_request_id,),
+                ).fetchone()
+                if not request_row:
+                    raise ServiceStoreNotFoundError("Quote request not found")
+
+                target_row = conn.execute(
+                    """
+                    SELECT *
+                    FROM quote_request_targets
+                    WHERE quote_request_id = ? AND provider_id = ?
+                    """,
+                    (quote_request_id, provider_id),
+                ).fetchone()
+                if not target_row:
+                    raise ServiceStoreNotFoundError("Quote target not found")
+                if str(target_row["owner_user_id"]) != actor_user_id:
+                    raise ServiceStorePermissionError("Only listing owner can respond to this quote")
+
+                if str(target_row["status"]) in {"accepted", "declined"}:
+                    raise ServiceStoreConflictError("Quote target already responded")
+
+                now_iso = datetime.utcnow().isoformat()
+                conn.execute(
+                    """
+                    UPDATE quote_request_targets
+                    SET status = ?, response_message = ?, responded_at = ?
+                    WHERE quote_request_id = ? AND provider_id = ?
+                    """,
+                    (decision, message.strip(), now_iso, quote_request_id, provider_id),
+                )
+                self._refresh_quote_request_status(conn, quote_request_id)
+                conn.commit()
+
+                updated_request_row = conn.execute(
+                    "SELECT * FROM quote_requests WHERE id = ?",
+                    (quote_request_id,),
+                ).fetchone()
+                targets = self._quote_targets_for_request(conn, quote_request_id=quote_request_id)
+
+        if not updated_request_row:
+            raise ServiceStoreNotFoundError("Quote request not found after response")
+        return self._quote_request_from_row(updated_request_row), targets
+
+    def dispatch_quote_reminders(self) -> List[Dict[str, Any]]:
+        reminders: List[Dict[str, Any]] = []
+        now = datetime.utcnow()
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT t.quote_request_id, t.provider_id, t.owner_user_id, t.created_at, t.reminder_15_sent, t.reminder_60_sent, p.name AS provider_name
+                    FROM quote_request_targets t
+                    JOIN providers p ON p.id = t.provider_id
+                    WHERE t.status = 'pending'
+                      AND t.responded_at IS NULL
+                    """
+                ).fetchall()
+                for row in rows:
+                    created_at_raw = str(row["created_at"])
+                    try:
+                        created_at = datetime.fromisoformat(created_at_raw)
+                    except ValueError:
+                        continue
+                    elapsed_minutes = int(max(0, (now - created_at).total_seconds() // 60))
+                    send_60 = elapsed_minutes >= 60 and not bool(row["reminder_60_sent"])
+                    send_15 = elapsed_minutes >= 15 and not bool(row["reminder_15_sent"])
+                    reminder_tier: Optional[str] = None
+                    if send_60:
+                        reminder_tier = "60m"
+                        conn.execute(
+                            """
+                            UPDATE quote_request_targets
+                            SET reminder_60_sent = 1, reminder_15_sent = 1
+                            WHERE quote_request_id = ? AND provider_id = ?
+                            """,
+                            (row["quote_request_id"], row["provider_id"]),
+                        )
+                    elif send_15:
+                        reminder_tier = "15m"
+                        conn.execute(
+                            """
+                            UPDATE quote_request_targets
+                            SET reminder_15_sent = 1
+                            WHERE quote_request_id = ? AND provider_id = ?
+                            """,
+                            (row["quote_request_id"], row["provider_id"]),
+                        )
+
+                    if reminder_tier:
+                        reminders.append(
+                            {
+                                "quote_request_id": row["quote_request_id"],
+                                "provider_id": row["provider_id"],
+                                "provider_name": row["provider_name"],
+                                "owner_user_id": row["owner_user_id"],
+                                "elapsed_minutes": elapsed_minutes,
+                                "tier": reminder_tier,
+                            }
+                        )
+                conn.commit()
+        return reminders
+
+    def get_quote_request(self, quote_request_id: str) -> Tuple[ServiceQuoteRequest, List[ServiceQuoteTarget]]:
+        with self._lock:
+            with self._connect() as conn:
+                request_row = conn.execute("SELECT * FROM quote_requests WHERE id = ?", (quote_request_id,)).fetchone()
+                if not request_row:
+                    raise ServiceStoreNotFoundError("Quote request not found")
+                targets = self._quote_targets_for_request(conn, quote_request_id=quote_request_id)
+        return self._quote_request_from_row(request_row), targets
 
     def get_provider_details(self, provider_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:

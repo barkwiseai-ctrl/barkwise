@@ -278,6 +278,14 @@ private fun ensureSeedProviders(
             longitude = 151.2111,
             ownerUserId = "user_1",
             ownerLabel = "Sesame",
+            responseTimeMinutes = 16,
+            localBookersThisMonth = 12,
+            sharedGroupBookers = 4,
+            socialProof = listOf(
+                "Used by 12 pet owners in $suburb this month",
+                "4 members from your groups booked this provider",
+                "Typically responds in about 16 min",
+            ),
         ),
         ServiceProvider(
             id = "seed_svc_2",
@@ -294,6 +302,14 @@ private fun ensureSeedProviders(
             longitude = 151.2040,
             ownerUserId = "user_3",
             ownerLabel = "Anika",
+            responseTimeMinutes = 24,
+            localBookersThisMonth = 9,
+            sharedGroupBookers = 3,
+            socialProof = listOf(
+                "Used by 9 pet owners in $suburb this month",
+                "3 members from your groups booked this provider",
+                "Typically responds in about 24 min",
+            ),
         ),
         ServiceProvider(
             id = "seed_svc_3",
@@ -310,6 +326,14 @@ private fun ensureSeedProviders(
             longitude = 151.1742,
             ownerUserId = "user_4",
             ownerLabel = "Tommy",
+            responseTimeMinutes = 33,
+            localBookersThisMonth = 7,
+            sharedGroupBookers = 2,
+            socialProof = listOf(
+                "Used by 7 pet owners in $suburb this month",
+                "2 members from your groups booked this provider",
+                "Typically responds in about 33 min",
+            ),
         ),
     )
     return if (category.isNullOrBlank()) {
@@ -1380,6 +1404,38 @@ class PetSocialViewModel(
                     loadAvailability(providerId, date)
                 }
                 .onFailure { error -> _uiState.value = _uiState.value.copy(error = error.message, loading = false) }
+        }
+    }
+
+    fun requestQuote(category: String, preferredWindow: String, petDetails: String, note: String) {
+        val state = _uiState.value
+        val cleanedCategory = category.trim()
+        val cleanedWindow = preferredWindow.trim()
+        val cleanedPetDetails = petDetails.trim()
+        if (cleanedCategory.isBlank() || cleanedWindow.isBlank() || cleanedPetDetails.isBlank()) {
+            _uiState.value = _uiState.value.copy(toastMessage = "Complete category, preferred window, and pet details")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            runCatching {
+                repository.requestServiceQuote(
+                    category = cleanedCategory,
+                    suburb = state.selectedSuburb,
+                    preferredWindow = cleanedWindow,
+                    petDetails = cleanedPetDetails,
+                    note = note.trim(),
+                )
+            }.onSuccess { result ->
+                val targetCount = result.targets.size
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    toastMessage = "Quote sent to $targetCount provider(s). +1 Local Scout XP",
+                )
+                loadHomeData(_uiState.value.selectedCategory)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+            }
         }
     }
 

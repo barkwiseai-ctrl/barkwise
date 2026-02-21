@@ -23,6 +23,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -85,6 +86,7 @@ fun ServicesScreen(
     onSortByChange: (String) -> Unit,
     onFilterChange: (Float?, Int?) -> Unit,
     onCreateService: () -> Unit,
+    onRequestQuote: (category: String, preferredWindow: String, petDetails: String, note: String) -> Unit,
     onBook: (providerId: String, date: String, timeSlot: String, note: String) -> Unit,
     onViewDetails: (String) -> Unit,
     onLoadAvailability: (providerId: String, date: String) -> Unit,
@@ -108,6 +110,7 @@ fun ServicesScreen(
             onSortByChange = onSortByChange,
             onFilterChange = onFilterChange,
             onCreateService = onCreateService,
+            onRequestQuote = onRequestQuote,
             onViewDetails = onViewDetails,
         )
     } else {
@@ -140,6 +143,7 @@ private fun ServicesListPage(
     onSortByChange: (String) -> Unit,
     onFilterChange: (Float?, Int?) -> Unit,
     onCreateService: () -> Unit,
+    onRequestQuote: (category: String, preferredWindow: String, petDetails: String, note: String) -> Unit,
     onViewDetails: (String) -> Unit,
 ) {
     val categories = listOf(
@@ -159,6 +163,26 @@ private fun ServicesListPage(
     val activeFilterCount = listOf(minRating != null, maxDistanceKm != null, sortBy != "relevance").count { it }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val fastResponderCount = providers.count { provider ->
+        val responseTime = provider.responseTimeMinutes ?: return@count false
+        responseTime <= 30
+    }
+    val groupTrustedCount = providers.count { provider -> provider.sharedGroupBookers > 0 }
+    val localFavoriteCount = providers.count { provider -> provider.localBookersThisMonth >= 5 }
+    val challengeScore = (fastResponderCount * 2) + groupTrustedCount + localFavoriteCount
+    val challengeGoal = maxOf(6, minOf(18, providers.size * 3))
+    val challengeProgress = if (challengeGoal == 0) 0f else challengeScore.toFloat() / challengeGoal.toFloat()
+    var quoteCategory by rememberSaveable(selectedCategory) {
+        mutableStateOf(
+            when (selectedCategory) {
+                "dog_walking", "grooming" -> selectedCategory
+                else -> "dog_walking"
+            },
+        )
+    }
+    var quoteWindow by rememberSaveable { mutableStateOf("Weekday mornings") }
+    var quotePetDetails by rememberSaveable { mutableStateOf("") }
+    var quoteNote by rememberSaveable { mutableStateOf("") }
     val listHasScrolled by remember {
         derivedStateOf {
             listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 20
@@ -193,6 +217,95 @@ private fun ServicesListPage(
                 )
                 OutlinedButton(onClick = onCreateService) {
                     Text("Create listing")
+                }
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("Neighborhood momentum", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "$challengeScore / $challengeGoal trust points",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+                LinearProgressIndicator(
+                    progress = { challengeProgress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Fast responders: $fastResponderCount · Group-trusted: $groupTrustedCount · Local favorites: $localFavoriteCount",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Request quote from top 3 providers", style = MaterialTheme.typography.titleSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = quoteCategory == "dog_walking",
+                        onClick = { quoteCategory = "dog_walking" },
+                        label = { Text("Dog Walking") },
+                        enabled = !loading,
+                    )
+                    FilterChip(
+                        selected = quoteCategory == "grooming",
+                        onClick = { quoteCategory = "grooming" },
+                        label = { Text("Grooming") },
+                        enabled = !loading,
+                    )
+                }
+                OutlinedTextField(
+                    value = quoteWindow,
+                    onValueChange = { quoteWindow = it },
+                    label = { Text("Preferred window") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = !loading,
+                )
+                OutlinedTextField(
+                    value = quotePetDetails,
+                    onValueChange = { quotePetDetails = it },
+                    label = { Text("Pet details") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !loading,
+                    minLines = 2,
+                )
+                OutlinedTextField(
+                    value = quoteNote,
+                    onValueChange = { quoteNote = it },
+                    label = { Text("Extra note (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !loading,
+                    minLines = 2,
+                )
+                OutlinedButton(
+                    onClick = {
+                        onRequestQuote(
+                            quoteCategory,
+                            quoteWindow,
+                            quotePetDetails,
+                            quoteNote,
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !loading,
+                ) {
+                    Text("Send quote request")
                 }
             }
         }
@@ -603,6 +716,51 @@ private fun ProviderCard(
                 Text(
                     String.format(Locale.getDefault(), "%.1f km away", distance),
                     style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
+                provider.responseTimeMinutes?.let { responseTime ->
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    ) {
+                        Text(
+                            text = "Responds in ~$responseTime min",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+                if (provider.localBookersThisMonth >= 5) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    ) {
+                        Text(
+                            text = "Local favorite",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+                if (provider.sharedGroupBookers > 0) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                    ) {
+                        Text(
+                            text = "Group-trusted",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+            provider.socialProof.take(3).forEach { socialProofLine ->
+                Text(
+                    text = "• $socialProofLine",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Text(provider.description, style = MaterialTheme.typography.bodyMedium)

@@ -20,6 +20,10 @@ class ServiceProvider(BaseModel):
     owner_user_id: Optional[str] = None
     owner_label: Optional[str] = None
     status: Literal["active", "cancelled"] = "active"
+    response_time_minutes: Optional[int] = None
+    local_bookers_this_month: int = 0
+    shared_group_bookers: int = 0
+    social_proof: list[str] = Field(default_factory=list)
 
 
 class Review(BaseModel):
@@ -66,6 +70,52 @@ class ServiceProviderCancelRequest(BaseModel):
 
 class ServiceProviderRestoreRequest(BaseModel):
     user_id: str
+
+
+class ServiceQuoteRequestCreate(BaseModel):
+    user_id: str
+    category: Literal["dog_walking", "grooming"]
+    suburb: str
+    preferred_window: str
+    pet_details: str
+    note: str = ""
+
+
+class ServiceQuoteProviderResponseRequest(BaseModel):
+    actor_user_id: str
+    provider_id: str
+    decision: Literal["accepted", "declined"]
+    message: str = ""
+
+
+class ServiceQuoteTarget(BaseModel):
+    provider_id: str
+    provider_name: str
+    owner_user_id: str
+    status: Literal["pending", "accepted", "declined"]
+    response_message: str = ""
+    created_at: str
+    responded_at: Optional[str] = None
+    reminder_15_sent: bool = False
+    reminder_60_sent: bool = False
+
+
+class ServiceQuoteRequest(BaseModel):
+    id: str
+    user_id: str
+    category: Literal["dog_walking", "grooming"]
+    suburb: str
+    preferred_window: str
+    pet_details: str
+    note: str = ""
+    status: Literal["pending", "responded", "closed"] = "pending"
+    created_at: str
+    updated_at: str
+
+
+class ServiceQuoteRequestView(BaseModel):
+    quote_request: ServiceQuoteRequest
+    targets: list[ServiceQuoteTarget]
 
 
 class BookingRequest(BaseModel):

@@ -1,11 +1,14 @@
 import os
+import sqlite3
 import sys
+from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.main import app
+from app.services.service_store import service_store
 
 client = TestClient(app)
 
@@ -244,3 +247,181 @@ def test_notifications_flow():
 
     list_response = client.get("/notifications", params={"user_id": "user_1"})
     assert list_response.status_code == 200
+
+
+def test_quote_request_creates_targets_and_provider_notifications():
+    requester_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert requester_login.status_code == 200
+    requester_token = requester_login.json()["access_token"]
+
+    create = client.post(
+        "/services/quotes/request",
+        json={
+            "user_id": "user_2",
+            "category": "dog_walking",
+            "suburb": "Surry Hills",
+            "preferred_window": "Weekday mornings",
+            "pet_details": "1 adult labrador, leash trained",
+            "note": "Need recurring weekdays",
+        },
+        headers={"Authorization": f"Bearer {requester_token}"},
+    )
+    assert create.status_code == 200
+    payload = create.json()
+    assert payload["quote_request"]["status"] == "pending"
+    assert len(payload["targets"]) >= 1
+    assert len(payload["targets"]) <= 3
+
+    first_target_owner = payload["targets"][0]["owner_user_id"]
+    owner_notifications = client.get("/notifications", params={"user_id": first_target_owner})
+    assert owner_notifications.status_code == 200
+    assert any(item["deep_link"] == f"quote:{payload['quote_request']['id']}" for item in owner_notifications.json())
+
+
+def test_quote_response_updates_response_time_metric():
+    requester_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert requester_login.status_code == 200
+    requester_token = requester_login.json()["access_token"]
+
+    create = client.post(
+        "/services/quotes/request",
+        json={
+            "user_id": "user_2",
+            "category": "grooming",
+            "suburb": "Surry Hills",
+            "preferred_window": "Saturday 10:00-12:00",
+            "pet_details": "Toy cavoodle, anxious at dryers",
+            "note": "Looking for gentle handling",
+        },
+        headers={"Authorization": f"Bearer {requester_token}"},
+    )
+    assert create.status_code == 200
+    payload = create.json()
+    quote_id = payload["quote_request"]["id"]
+    first_target = payload["targets"][0]
+
+    owner_user_id = first_target["owner_user_id"]
+    owner_login = client.post("/auth/login", json={"user_id": owner_user_id, "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_token = owner_login.json()["access_token"]
+
+    respond = client.post(
+        f"/services/quotes/{quote_id}/respond",
+        json={
+            "actor_user_id": owner_user_id,
+            "provider_id": first_target["provider_id"],
+            "decision": "accepted",
+            "message": "Can do this slot.",
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert respond.status_code == 200
+    assert respond.json()["quote_request"]["status"] in {"responded", "closed"}
+
+    providers = client.get("/services/providers", params={"suburb": "Surry Hills"})
+    assert providers.status_code == 200
+    matched = next((item for item in providers.json() if item["id"] == first_target["provider_id"]), None)
+    assert matched is not None
+    assert matched["response_time_minutes"] is not None
+
+
+def test_quote_reminder_dispatch_at_15_minutes():
+    requester_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert requester_login.status_code == 200
+    requester_token = requester_login.json()["access_token"]
+
+    create = client.post(
+        "/services/quotes/request",
+        json={
+            "user_id": "user_2",
+            "category": "dog_walking",
+            "suburb": "Surry Hills",
+            "preferred_window": "Any weekday evening",
+            "pet_details": "Medium-size rescue, gentle temperament",
+            "note": "",
+        },
+        headers={"Authorization": f"Bearer {requester_token}"},
+    )
+    assert create.status_code == 200
+    payload = create.json()
+    quote_id = payload["quote_request"]["id"]
+    target = payload["targets"][0]
+
+    old_timestamp = (datetime.utcnow() - timedelta(minutes=20)).isoformat()
+    with sqlite3.connect(service_store.db_path) as conn:
+        conn.execute(
+            """
+            UPDATE quote_request_targets
+            SET created_at = ?, reminder_15_sent = 0, reminder_60_sent = 0
+            WHERE quote_request_id = ? AND provider_id = ?
+            """,
+            (old_timestamp, quote_id, target["provider_id"]),
+        )
+        conn.commit()
+
+    trigger = client.get("/services/providers", params={"suburb": "Surry Hills"})
+    assert trigger.status_code == 200
+
+    owner_notifications = client.get("/notifications", params={"user_id": target["owner_user_id"]})
+    assert owner_notifications.status_code == 200
+    assert any(
+        item["title"] == "Quote request reminder" and item["deep_link"] == f"quote:{quote_id}"
+        for item in owner_notifications.json()
+    )
+
+
+def test_quote_reminder_60_minutes_sent_once_without_late_15_minute_duplicate():
+    requester_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert requester_login.status_code == 200
+    requester_token = requester_login.json()["access_token"]
+
+    create = client.post(
+        "/services/quotes/request",
+        json={
+            "user_id": "user_2",
+            "category": "dog_walking",
+            "suburb": "Surry Hills",
+            "preferred_window": "Weekend mornings",
+            "pet_details": "Senior mixed breed, calm and social",
+            "note": "",
+        },
+        headers={"Authorization": f"Bearer {requester_token}"},
+    )
+    assert create.status_code == 200
+    payload = create.json()
+    quote_id = payload["quote_request"]["id"]
+    target = payload["targets"][0]
+
+    old_timestamp = (datetime.utcnow() - timedelta(minutes=70)).isoformat()
+    with sqlite3.connect(service_store.db_path) as conn:
+        conn.execute(
+            """
+            UPDATE quote_request_targets
+            SET created_at = ?, reminder_15_sent = 0, reminder_60_sent = 0
+            WHERE quote_request_id = ? AND provider_id = ?
+            """,
+            (old_timestamp, quote_id, target["provider_id"]),
+        )
+        conn.commit()
+
+    trigger_first = client.get("/services/providers", params={"suburb": "Surry Hills"})
+    assert trigger_first.status_code == 200
+    first_notifications = client.get("/notifications", params={"user_id": target["owner_user_id"]})
+    assert first_notifications.status_code == 200
+    first_count = sum(
+        1
+        for item in first_notifications.json()
+        if item["title"] == "Quote request reminder" and item["deep_link"] == f"quote:{quote_id}"
+    )
+    assert first_count == 1
+
+    trigger_second = client.get("/services/providers", params={"suburb": "Surry Hills"})
+    assert trigger_second.status_code == 200
+    second_notifications = client.get("/notifications", params={"user_id": target["owner_user_id"]})
+    assert second_notifications.status_code == 200
+    second_count = sum(
+        1
+        for item in second_notifications.json()
+        if item["title"] == "Quote request reminder" and item["deep_link"] == f"quote:{quote_id}"
+    )
+    assert second_count == 1
