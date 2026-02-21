@@ -27,6 +27,13 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+Internal RAG eval (LLM mode when key is present, fallback smoke mode otherwise):
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app/backend
+python3 scripts/rag_internal_eval.py --allow-fallback --json-out /tmp/rag-eval.json
+```
+
 Browser beta (for iPhone Safari + desktop):
 
 ```bash

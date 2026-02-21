@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.data import community_events, community_posts, groups
@@ -8,6 +9,35 @@ from app.services.service_store import service_store
 
 class RagRetriever:
     """Local lexical retriever for BarkAI grounding context."""
+
+    SOURCE_BASE_BOOSTS: Dict[str, float] = {
+        "knowledge_base": 0.25,
+        "provider": 0.10,
+        "group": 0.05,
+        "community_post": 0.05,
+        "community_event": 0.05,
+    }
+    TOKEN_NORMALIZATION: Dict[str, str] = {
+        "vaccines": "vaccine",
+        "vaccination": "vaccine",
+        "vaccinations": "vaccine",
+        "puppies": "puppy",
+        "dogs": "dog",
+        "vomiting": "vomit",
+        "diarrhoea": "diarrhea",
+        "parvovirus": "parvo",
+        "toxic": "toxin",
+        "poisoning": "poison",
+        "groomers": "grooming",
+        "walkers": "walking",
+    }
+    SOURCE_CAPS: Dict[str, int] = {
+        "knowledge_base": 3,
+        "provider": 2,
+        "group": 2,
+        "community_post": 2,
+        "community_event": 2,
+    }
 
     def build_context(
         self,
@@ -36,10 +66,29 @@ class RagRetriever:
                 boosted.append((score, doc))
             scored = boosted
 
+        intent_boosted: List[Tuple[float, Dict[str, Any]]] = []
+        health_risk_query = self._is_health_risk_query(query_tokens)
+        for score, doc in scored:
+            source = str(doc.get("source", ""))
+            score += self._intent_source_boost(intent=intent, source=source)
+            score += self.SOURCE_BASE_BOOSTS.get(source, 0.0)
+            if health_risk_query:
+                if source == "knowledge_base":
+                    score += 0.85
+                elif source in {"community_post", "community_event", "group"}:
+                    score -= 0.20
+                elif source == "provider":
+                    score -= 0.05
+            intent_boosted.append((score, doc))
+        scored = intent_boosted
+
         scored.sort(key=lambda item: item[0], reverse=True)
-        top_docs = [doc for score, doc in scored if score > 0][:6]
+        top_docs = self._select_top_docs(scored)
         if not top_docs:
-            top_docs = [doc for _, doc in self._retrieve_provider_docs(query_tokens=set(), suburb=suburb)[:2]]
+            if intent in {"general_pet_question", "weight_concern", "lost_found"}:
+                top_docs = []
+            else:
+                top_docs = [doc for _, doc in self._retrieve_provider_docs(query_tokens=set(), suburb=suburb)[:2]]
 
         profile_summary = {
             key: value
@@ -54,6 +103,58 @@ class RagRetriever:
             "profile_summary": profile_summary,
             "documents": top_docs,
         }
+
+    def _intent_source_boost(self, intent: str, source: str) -> float:
+        if intent in {"general_pet_question", "weight_concern"} and source == "knowledge_base":
+            return 0.35
+        if intent in {"find_dog_walker", "find_groomer", "add_service_listing"} and source == "provider":
+            return 0.35
+        if intent == "community_discovery" and source in {"group", "community_post", "community_event"}:
+            return 0.25
+        if intent == "lost_found" and source in {"community_post", "group"}:
+            return 0.25
+        return 0.0
+
+    def _is_health_risk_query(self, query_tokens: Set[str]) -> bool:
+        risk_tokens = {
+            "parvo",
+            "poison",
+            "toxin",
+            "vomit",
+            "seizure",
+            "bloody",
+            "fever",
+            "dehydration",
+            "diarrhea",
+            "lethargy",
+            "vaccine",
+            "rabies",
+        }
+        return len(query_tokens.intersection(risk_tokens)) > 0
+
+    def _select_top_docs(self, scored: List[Tuple[float, Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        selected: List[Dict[str, Any]] = []
+        seen_keys: Set[str] = set()
+        source_counts: Dict[str, int] = {}
+
+        for score, doc in scored:
+            if score <= 0:
+                continue
+            source = str(doc.get("source", "")).strip()
+            doc_id = str(doc.get("id", "")).strip()
+            dedupe_key = f"{source}:{doc_id}"
+            if dedupe_key in seen_keys:
+                continue
+            cap = self.SOURCE_CAPS.get(source, 2)
+            if source_counts.get(source, 0) >= cap:
+                continue
+            seen_keys.add(dedupe_key)
+            source_counts[source] = source_counts.get(source, 0) + 1
+            selected.append(doc)
+            if len(selected) >= 6:
+                break
+
+        return selected
 
     def fallback_answer(
         self,
@@ -91,7 +192,7 @@ class RagRetriever:
         query_tokens: Set[str],
         intent: str,
     ) -> List[Tuple[float, Dict[str, Any]]]:
-        if intent not in {"general_pet_question", "weight_concern", "lost_found"}:
+        if intent not in {"general_pet_question", "general_assistant_query", "weight_concern", "lost_found"}:
             return []
 
         scored: List[Tuple[float, Dict[str, Any]]] = []
@@ -118,8 +219,6 @@ class RagRetriever:
             topics_text = " ".join(str(topic) for topic in topics)
             doc_tokens = self._rag_tokens(f"{title} {topics_text} {content}")
             score = self._rag_overlap_score(query_tokens=query_tokens, doc_tokens=doc_tokens)
-            if intent == "general_pet_question":
-                score += 0.35
             if any(topic in query_tokens for topic in priority_tokens):
                 score += 0.2
             if score <= 0:
@@ -220,6 +319,7 @@ class RagRetriever:
             score = self._rag_overlap_score(query_tokens=query_tokens, doc_tokens=doc_tokens)
             if suburb and post.suburb.lower() == suburb.lower():
                 score += 0.15
+            score += self._recency_boost(post.created_at)
             if score <= 0 and query_tokens:
                 continue
             scored.append(
@@ -249,6 +349,7 @@ class RagRetriever:
             score = self._rag_overlap_score(query_tokens=query_tokens, doc_tokens=doc_tokens)
             if suburb and event.suburb.lower() == suburb.lower():
                 score += 0.15
+            score += self._recency_boost(event.date)
             if score <= 0 and query_tokens:
                 continue
             scored.append(
@@ -313,8 +414,22 @@ class RagRetriever:
             "where",
             "why",
             "who",
+            "dog",
+            "dogs",
+            "pet",
+            "pets",
         }
-        return {token for token in raw_tokens if token not in stop_words}
+        cleaned: Set[str] = set()
+        for token in raw_tokens:
+            if token in stop_words:
+                continue
+            normalized_token = self.TOKEN_NORMALIZATION.get(token, token)
+            if normalized_token.endswith("s") and len(normalized_token) >= 5:
+                singular = normalized_token[:-1]
+                if singular:
+                    normalized_token = singular
+            cleaned.add(normalized_token)
+        return cleaned
 
     def _rag_overlap_score(self, query_tokens: Set[str], doc_tokens: Set[str]) -> float:
         if not doc_tokens:
@@ -326,3 +441,19 @@ class RagRetriever:
             return 0.0
         return overlap / max(1.0, len(query_tokens) ** 0.5)
 
+    def _recency_boost(self, iso_datetime: str) -> float:
+        try:
+            parsed = datetime.fromisoformat(iso_datetime.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            age_days = max(0.0, (now - parsed).total_seconds() / 86400.0)
+        except Exception:
+            return 0.0
+        if age_days <= 3:
+            return 0.20
+        if age_days <= 10:
+            return 0.10
+        if age_days <= 30:
+            return 0.05
+        return 0.0

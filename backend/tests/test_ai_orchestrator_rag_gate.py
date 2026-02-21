@@ -159,6 +159,17 @@ def test_route_query_uses_rag_lane_for_triggered_general_question():
     assert "parvo" in route["matched_terms"]
 
 
+def test_route_query_uses_rag_lane_for_vaccine_question():
+    orchestrator = AIOrchestrator()
+    route = orchestrator._route_query(
+        message="What vaccines should my puppy get?",
+        plan={"intent": "general_pet_question", "tools": []},
+    )
+    assert route["lane"] == "RAG"
+    assert route["rag_triggered"] is True
+    assert "vaccine" in route["matched_terms"] or "vaccines" in route["matched_terms"]
+
+
 def test_route_query_uses_general_lane_without_trigger_or_tools():
     orchestrator = AIOrchestrator()
     route = orchestrator._route_query(
