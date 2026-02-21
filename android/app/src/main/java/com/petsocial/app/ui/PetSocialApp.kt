@@ -389,6 +389,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         onApproveJoinRequest = vm::approveNextJoinRequest,
                         onRejectJoinRequest = vm::rejectNextJoinRequest,
                         onApproveEvent = vm::approveEvent,
+                        onLogCleanupCheckIn = vm::logGroupCleanupCheckIn,
                     )
 
                     AppTab.Messages -> MessagesScreen(

@@ -116,6 +116,11 @@ class MockApiService private constructor() : ApiService {
         ),
     )
     private val quoteRequests = mutableMapOf<String, ServiceQuoteRequestView>()
+    private val vetProfiles = mutableMapOf<String, VetCoachProfile>()
+    private val providerVetVerifications = mutableMapOf<String, VetGroomerVerification>()
+    private val groupBadges = mutableMapOf<String, MutableSet<String>>()
+    private val groupMemberRewardPoints = mutableMapOf<Pair<String, String>, MutableMap<String, Int>>()
+    private val groupChallengeContributions = mutableMapOf<Triple<String, String, String>, Int>()
     private val reviewsByProvider = mutableMapOf(
         "provider_1" to mutableListOf(
             Review("review_1", "provider_1", "Sam", 5, "Excellent groom. Coat came back fluffy and even."),
@@ -206,6 +211,8 @@ class MockApiService private constructor() : ApiService {
     private var groupCounter = 3
     private var blackoutCounter = 1
     private var quoteCounter = 1
+    private var vetCoachSessionCounter = 1
+    private var vetVerificationCounter = 1
 
     override suspend fun getProviders(
         category: String?,
@@ -243,9 +250,10 @@ class MockApiService private constructor() : ApiService {
             .filter { maxDistanceKm == null || (it.distanceKm ?: 0.0) <= maxDistanceKm }
             .toList()
         return when (sortBy) {
-            "rating_desc" -> filtered.sortedByDescending { it.rating }
-            "price_asc" -> filtered.sortedBy { it.priceFrom }
-            "distance_asc" -> filtered.sortedBy { it.distanceKm ?: Double.MAX_VALUE }
+            "rating" -> filtered.sortedByDescending { it.rating }
+            "price_low" -> filtered.sortedBy { it.priceFrom }
+            "price_high" -> filtered.sortedByDescending { it.priceFrom }
+            "distance" -> filtered.sortedBy { it.distanceKm ?: Double.MAX_VALUE }
             else -> filtered
         }
     }
@@ -452,13 +460,23 @@ class MockApiService private constructor() : ApiService {
         val providerIndex = providers.indexOfFirst { it.id == payload.providerId }
         if (providerIndex >= 0) {
             val current = providers[providerIndex]
+            val sprintStats = computeQuoteSprintStats(providerId = payload.providerId)
             providers[providerIndex] = current.copy(
                 responseTimeMinutes = elapsedMinutes,
+                quoteResponseRatePct = sprintStats.responseRatePct,
+                quoteResponseStreak = sprintStats.responseStreak,
+                quoteSprintTier = sprintStats.tier,
                 socialProof = buildSocialProof(
                     suburb = current.suburb,
                     localBookers = current.localBookersThisMonth,
                     sharedGroupBookers = current.sharedGroupBookers,
                     responseTimeMinutes = elapsedMinutes,
+                    quoteSprintTier = sprintStats.tier,
+                    quoteResponseRatePct = sprintStats.responseRatePct,
+                    quoteResponseStreak = sprintStats.responseStreak,
+                    vetChecked = current.vetChecked,
+                    vetCheckedUntil = current.vetCheckedUntil,
+                    highlightedVetUntil = current.highlightedVetUntil,
                 ),
             )
         }
@@ -476,6 +494,146 @@ class MockApiService private constructor() : ApiService {
             ),
         )
         return updatedView
+    }
+
+    override suspend fun getVetCoachProfile(userId: String): VetCoachProfile {
+        if (!isVetUser(userId)) error("Only verified vets can access coach profile")
+        return ensureVetProfile(userId)
+    }
+
+    override suspend fun submitVetCoachSession(payload: VetCoachSessionRequest): VetCoachSessionResult {
+        if (!isVetUser(payload.actorUserId)) error("Only verified vets can submit coach sessions")
+        val existing = ensureVetProfile(payload.actorUserId)
+        val minutesEarned = maxOf(1, ((payload.durationMinutes * (0.6 + payload.qualityScore))).toInt())
+        val updated = existing.copy(
+            spotlightMinutes = existing.spotlightMinutes + minutesEarned,
+            coachingMinutes = existing.coachingMinutes + payload.durationMinutes,
+            coachingSessions = existing.coachingSessions + 1,
+            coachQualityScore = if (existing.coachingSessions <= 0) {
+                payload.qualityScore
+            } else {
+                ((existing.coachQualityScore * existing.coachingSessions) + payload.qualityScore) /
+                    (existing.coachingSessions + 1)
+            },
+            badgeTier = resolveVetBadgeTier(
+                sessions = existing.coachingSessions + 1,
+                qualityScore = if (existing.coachingSessions <= 0) {
+                    payload.qualityScore
+                } else {
+                    ((existing.coachQualityScore * existing.coachingSessions) + payload.qualityScore) /
+                        (existing.coachingSessions + 1)
+                },
+            ),
+        )
+        vetProfiles[payload.actorUserId] = updated
+        return VetCoachSessionResult(
+            sessionId = "mock_vcs_${vetCoachSessionCounter++}",
+            minutesEarned = minutesEarned,
+            profile = updated,
+        )
+    }
+
+    override suspend fun activateVetSpotlight(payload: VetSpotlightActivateRequest): VetSpotlightActivationResult {
+        if (!isVetUser(payload.actorUserId)) error("Only verified vets can activate spotlight")
+        val existing = ensureVetProfile(payload.actorUserId)
+        if (existing.spotlightMinutes < payload.minutes) error("Insufficient spotlight minutes")
+        val now = Instant.now()
+        val currentUntil = existing.highlightedUntil
+            ?.let { runCatching { Instant.parse(it) }.getOrNull() }
+            ?.takeIf { it.isAfter(now) }
+            ?: now
+        val nextUntil = currentUntil.plus(payload.minutes.toLong(), ChronoUnit.MINUTES)
+        val updated = existing.copy(
+            spotlightMinutes = existing.spotlightMinutes - payload.minutes,
+            highlightedUntil = nextUntil.toString(),
+        )
+        vetProfiles[payload.actorUserId] = updated
+        providers.replaceAll { provider ->
+            if (provider.ownerUserId == payload.actorUserId) {
+                provider.copy(
+                    highlightedVet = provider.ownerLabel ?: payload.actorUserId,
+                    highlightedVetUntil = nextUntil.toString(),
+                    socialProof = buildSocialProof(
+                        suburb = provider.suburb,
+                        localBookers = provider.localBookersThisMonth,
+                        sharedGroupBookers = provider.sharedGroupBookers,
+                        responseTimeMinutes = provider.responseTimeMinutes,
+                        quoteSprintTier = provider.quoteSprintTier,
+                        quoteResponseRatePct = provider.quoteResponseRatePct,
+                        quoteResponseStreak = provider.quoteResponseStreak,
+                        vetChecked = provider.vetChecked,
+                        vetCheckedUntil = provider.vetCheckedUntil,
+                        highlightedVetUntil = nextUntil.toString(),
+                    ),
+                )
+            } else {
+                provider
+            }
+        }
+        return VetSpotlightActivationResult(
+            minutesSpent = payload.minutes,
+            profile = updated,
+        )
+    }
+
+    override suspend fun verifyGroomerByVet(
+        providerId: String,
+        payload: VetGroomerVerificationRequest,
+    ): VetGroomerVerificationResult {
+        if (!isVetUser(payload.actorUserId)) error("Only verified vets can review groomers")
+        val providerIndex = providers.indexOfFirst { it.id == providerId }
+        if (providerIndex < 0) error("Provider not found")
+        val provider = providers[providerIndex]
+        if (provider.category != "grooming") error("Vet verification is only available for grooming providers")
+        if (provider.ownerUserId == payload.actorUserId) error("Vets cannot verify their own listing")
+
+        val now = Instant.now()
+        val validUntil = if (payload.decision == "approved") now.plus(90, ChronoUnit.DAYS).toString() else null
+        val spotlightMinutesEarned = if (payload.decision == "approved") {
+            12 + (payload.confidenceScore * 8).toInt()
+        } else {
+            4 + (payload.confidenceScore * 4).toInt()
+        }
+        val verification = VetGroomerVerification(
+            id = "mock_vver_${vetVerificationCounter++}",
+            providerId = providerId,
+            vetUserId = payload.actorUserId,
+            decision = payload.decision,
+            confidenceScore = payload.confidenceScore,
+            note = payload.note,
+            createdAt = now.toString(),
+            validUntil = validUntil,
+            spotlightMinutesEarned = spotlightMinutesEarned,
+        )
+        providerVetVerifications[providerId] = verification
+
+        val profile = ensureVetProfile(payload.actorUserId)
+        val updatedProfile = profile.copy(spotlightMinutes = profile.spotlightMinutes + spotlightMinutesEarned)
+        vetProfiles[payload.actorUserId] = updatedProfile
+
+        val updatedProvider = provider.copy(
+            vetChecked = payload.decision == "approved",
+            vetCheckedUntil = validUntil,
+            vetCheckedBy = payload.actorUserId,
+            socialProof = buildSocialProof(
+                suburb = provider.suburb,
+                localBookers = provider.localBookersThisMonth,
+                sharedGroupBookers = provider.sharedGroupBookers,
+                responseTimeMinutes = provider.responseTimeMinutes,
+                quoteSprintTier = provider.quoteSprintTier,
+                quoteResponseRatePct = provider.quoteResponseRatePct,
+                quoteResponseStreak = provider.quoteResponseStreak,
+                vetChecked = payload.decision == "approved",
+                vetCheckedUntil = validUntil,
+                highlightedVetUntil = provider.highlightedVetUntil,
+            ),
+        )
+        providers[providerIndex] = updatedProvider
+        return VetGroomerVerificationResult(
+            verification = verification,
+            provider = updatedProvider,
+            vetProfile = updatedProfile,
+        )
     }
 
     override suspend fun getProviderAvailability(providerId: String, date: String): List<ServiceAvailabilitySlot> {
@@ -639,7 +797,8 @@ class MockApiService private constructor() : ApiService {
             .map { group ->
                 val members = groupMembers[group.id].orEmpty()
                 val pending = groupPendingMembers[group.id].orEmpty()
-                group.copy(
+                decorateGroupForUser(
+                    group = group.copy(
                     memberCount = members.size,
                     membershipStatus = if (userId != null && userId in members) {
                         "member"
@@ -650,6 +809,8 @@ class MockApiService private constructor() : ApiService {
                     },
                     isAdmin = userId != null && group.ownerUserId == userId,
                     pendingRequestCount = if (userId != null && group.ownerUserId == userId) pending.size else 0,
+                    ),
+                    userId = userId,
                 )
             }
     }
@@ -667,7 +828,9 @@ class MockApiService private constructor() : ApiService {
         groups += group
         groupMembers[group.id] = mutableSetOf(payload.userId)
         groupPendingMembers[group.id] = mutableSetOf()
-        return group
+        ensureChallenges(group)
+        rewardPoints(group.id, payload.userId)
+        return decorateGroupForUser(group, payload.userId)
     }
 
     override suspend fun joinGroup(groupId: String, payload: GroupJoinRequest): Group {
@@ -677,11 +840,61 @@ class MockApiService private constructor() : ApiService {
             pending += payload.userId
         }
         val group = groups.firstOrNull { it.id == groupId } ?: error("Group not found: $groupId")
-        return group.copy(
+        if (payload.userId in members) {
+            applyGroupGrowthReward(groupId = groupId, contributorUserId = payload.userId, memberAddedUserId = payload.userId, contributionCount = 1)
+        }
+        return decorateGroupForUser(group.copy(
             memberCount = members.size,
             membershipStatus = if (payload.userId in members) "member" else "pending",
             isAdmin = group.ownerUserId == payload.userId,
             pendingRequestCount = if (group.ownerUserId == payload.userId) pending.size else 0,
+        ), payload.userId)
+    }
+
+    override suspend fun getGroupChallenges(groupId: String, userId: String?): List<GroupChallengeView> {
+        val group = groups.firstOrNull { it.id == groupId } ?: error("Group not found: $groupId")
+        val challenges = ensureChallenges(group)
+        return challenges.map { challenge ->
+            GroupChallengeView(
+                challenge = challenge,
+                myContributionCount = groupChallengeContributions[Triple(groupId, challenge.type, userId.orEmpty())] ?: 0,
+            )
+        }
+    }
+
+    override suspend fun participateGroupChallenge(
+        groupId: String,
+        payload: GroupChallengeParticipationRequest,
+    ): GroupChallengeParticipationResult {
+        val group = groups.firstOrNull { it.id == groupId } ?: error("Group not found: $groupId")
+        val members = groupMembers[groupId].orEmpty()
+        if (payload.userId !in members) error("Only members can contribute to group challenges")
+        val challenges = ensureChallenges(group)
+        val challenge = challenges.firstOrNull { it.type == payload.challengeType }
+            ?: error("Challenge not found")
+        val contributionKey = Triple(groupId, payload.challengeType, payload.userId)
+        val previousContribution = groupChallengeContributions[contributionKey] ?: 0
+        groupChallengeContributions[contributionKey] = previousContribution + payload.contributionCount
+        rewardPoints(groupId, payload.userId)[payload.challengeType] =
+            (rewardPoints(groupId, payload.userId)[payload.challengeType] ?: 0) + payload.contributionCount
+
+        val refreshed = ensureChallenges(group).first { it.id == challenge.id }
+        val unlockedBadges = mutableListOf<String>()
+        if (refreshed.status == "completed") {
+            val badge = if (refreshed.type == "pack_builder") "Pack Builder" else "Clean Park Collective"
+            val set = groupBadges.getOrPut(groupId) { mutableSetOf() }
+            if (set.add(badge)) {
+                unlockedBadges += badge
+            }
+        }
+        val myContributionCount = groupChallengeContributions[contributionKey] ?: 0
+        val rewardUnlocked = unlockedBadges.isNotEmpty() || (myContributionCount > 0 && myContributionCount % 5 == 0)
+        return GroupChallengeParticipationResult(
+            challenge = refreshed,
+            myContributionCount = myContributionCount,
+            contributionCount = payload.contributionCount,
+            rewardUnlocked = rewardUnlocked,
+            unlockedBadges = unlockedBadges,
         )
     }
 
@@ -732,6 +945,12 @@ class MockApiService private constructor() : ApiService {
                 groups += group.copy(memberCount = members.size)
             }
         }
+        applyGroupGrowthReward(
+            groupId = invite.groupId,
+            contributorUserId = invite.inviterUserId,
+            memberAddedUserId = userId,
+            contributionCount = 1,
+        )
         var createdPostId: String? = null
         if (payload.sharePhotoToGroup) {
             createdPostId = "post_${postCounter++}"
@@ -781,13 +1000,19 @@ class MockApiService private constructor() : ApiService {
         pending.remove(payload.memberUserId)
         if (payload.action == "approve") {
             members += payload.memberUserId
+            applyGroupGrowthReward(
+                groupId = groupId,
+                contributorUserId = payload.requesterUserId,
+                memberAddedUserId = payload.memberUserId,
+                contributionCount = 1,
+            )
         }
-        return group.copy(
+        return decorateGroupForUser(group.copy(
             memberCount = members.size,
             isAdmin = true,
             membershipStatus = "member",
             pendingRequestCount = pending.size,
-        )
+        ), payload.requesterUserId)
     }
 
     override suspend fun getPosts(
@@ -907,6 +1132,187 @@ class MockApiService private constructor() : ApiService {
         return updated
     }
 
+    private data class QuoteSprintStats(
+        val responseRatePct: Int,
+        val responseStreak: Int,
+        val tier: String,
+    )
+
+    private fun isVetUser(userId: String): Boolean {
+        val normalized = userId.lowercase()
+        return userId in setOf("user_1", "user_3") || normalized.startsWith("vet_") || normalized.endsWith("_vet")
+    }
+
+    private fun ensureVetProfile(userId: String): VetCoachProfile {
+        return vetProfiles.getOrPut(userId) {
+            VetCoachProfile(
+                userId = userId,
+                spotlightMinutes = 0,
+                coachingMinutes = 0,
+                coachingSessions = 0,
+                coachQualityScore = 0.0,
+                highlightedUntil = null,
+                badgeTier = "none",
+            )
+        }
+    }
+
+    private fun resolveVetBadgeTier(sessions: Int, qualityScore: Double): String = when {
+        sessions >= 20 && qualityScore >= 0.90 -> "platinum"
+        sessions >= 10 && qualityScore >= 0.85 -> "gold"
+        sessions >= 5 && qualityScore >= 0.75 -> "silver"
+        sessions >= 2 && qualityScore >= 0.60 -> "bronze"
+        else -> "none"
+    }
+
+    private fun computeQuoteSprintStats(providerId: String): QuoteSprintStats {
+        val targets = quoteRequests.values
+            .flatMap { it.targets }
+            .filter { it.providerId == providerId }
+        if (targets.isEmpty()) {
+            return QuoteSprintStats(responseRatePct = 0, responseStreak = 0, tier = "none")
+        }
+        val sorted = targets.sortedByDescending { it.createdAt }
+        val responded = sorted.count { it.status == "accepted" || it.status == "declined" || it.respondedAt != null }
+        val rate = ((responded.toDouble() / sorted.size.toDouble()) * 100).toInt().coerceIn(0, 100)
+        var streak = 0
+        for (target in sorted) {
+            if (target.status == "accepted" || target.status == "declined" || target.respondedAt != null) {
+                streak += 1
+            } else {
+                break
+            }
+        }
+        val avgResponseMins = sorted.mapNotNull { target ->
+            val respondedAt = target.respondedAt ?: return@mapNotNull null
+            val created = runCatching { Instant.parse(target.createdAt) }.getOrNull() ?: return@mapNotNull null
+            val respondedTs = runCatching { Instant.parse(respondedAt) }.getOrNull() ?: return@mapNotNull null
+            ChronoUnit.MINUTES.between(created, respondedTs).toInt().coerceAtLeast(1)
+        }.let { values ->
+            if (values.isEmpty()) null else values.sum() / values.size
+        }
+        val tier = when {
+            sorted.size < 3 -> "none"
+            rate >= 95 && (avgResponseMins ?: 999) <= 15 && streak >= 5 -> "platinum"
+            rate >= 90 && (avgResponseMins ?: 999) <= 20 && streak >= 3 -> "gold"
+            rate >= 75 && (avgResponseMins ?: 999) <= 35 -> "silver"
+            rate >= 60 && (avgResponseMins ?: 999) <= 60 -> "bronze"
+            else -> "none"
+        }
+        return QuoteSprintStats(responseRatePct = rate, responseStreak = streak, tier = tier)
+    }
+
+    private fun rewardPoints(groupId: String, userId: String): MutableMap<String, Int> {
+        return groupMemberRewardPoints.getOrPut(groupId to userId) {
+            mutableMapOf("pack_builder" to 0, "clean_park_streak" to 0)
+        }
+    }
+
+    private fun groupCooperativeScore(groupId: String): Int {
+        return groupMemberRewardPoints.entries
+            .filter { entry -> entry.key.first == groupId }
+            .sumOf { entry -> entry.value.values.sum() }
+    }
+
+    private fun contributionSum(groupId: String, challengeType: String): Int {
+        return groupChallengeContributions
+            .filter { entry -> entry.key.first == groupId && entry.key.second == challengeType }
+            .values
+            .sum()
+    }
+
+    private fun ensureChallenges(group: Group): List<GroupChallenge> {
+        val effectiveMemberCount = groupMembers[group.id]?.size ?: group.memberCount
+        val weekCycle = "${LocalDate.now().year}W${LocalDate.now().dayOfYear / 7}"
+        val monthCycle = "${LocalDate.now().year}${"%02d".format(LocalDate.now().monthValue)}"
+        val monthStart = LocalDate.now().withDayOfMonth(1)
+        val monthEnd = monthStart.plusMonths(1)
+        val weekStart = LocalDate.now().minusDays(LocalDate.now().dayOfWeek.value.toLong() - 1)
+        val weekEnd = weekStart.plusDays(7)
+
+        fun build(
+            challengeType: String,
+            cycle: String,
+            title: String,
+            description: String,
+            rewardLabel: String,
+            targetCount: Int,
+            startAt: String,
+            endAt: String,
+        ): GroupChallenge {
+            val progress = contributionSum(group.id, challengeType)
+            return GroupChallenge(
+                id = "mock_gc_${challengeType}_${group.id}_$cycle",
+                groupId = group.id,
+                type = challengeType,
+                title = title,
+                description = description,
+                targetCount = targetCount,
+                progressCount = progress,
+                status = if (progress >= targetCount) "completed" else "active",
+                rewardLabel = rewardLabel,
+                startAt = startAt,
+                endAt = endAt,
+            )
+        }
+
+        val packBuilder = build(
+            challengeType = "pack_builder",
+            cycle = monthCycle,
+            title = "Pack Builder",
+            description = "Grow the group together by welcoming new members.",
+            rewardLabel = "Group badge: Pack Builder",
+            targetCount = maxOf(5, minOf(30, effectiveMemberCount / 4 + 3)),
+            startAt = monthStart.toString(),
+            endAt = monthEnd.toString(),
+        )
+        val cleanPark = build(
+            challengeType = "clean_park_streak",
+            cycle = weekCycle,
+            title = "Clean Park Streak",
+            description = "Log cleanup check-ins to keep local parks clean.",
+            rewardLabel = "Group badge: Clean Park Collective",
+            targetCount = maxOf(8, minOf(40, effectiveMemberCount / 3 + 6)),
+            startAt = weekStart.toString(),
+            endAt = weekEnd.toString(),
+        )
+        return listOf(packBuilder, cleanPark)
+    }
+
+    private fun decorateGroupForUser(group: Group, userId: String?): Group {
+        val points = userId?.let { rewardPoints(group.id, it) }
+        val badges = groupBadges[group.id].orEmpty().sorted()
+        return group.copy(
+            groupBadges = badges,
+            cooperativeScore = groupCooperativeScore(group.id),
+            myPackBuilderPoints = points?.get("pack_builder") ?: 0,
+            myCleanParkPoints = points?.get("clean_park_streak") ?: 0,
+        )
+    }
+
+    private fun applyGroupGrowthReward(
+        groupId: String,
+        contributorUserId: String?,
+        memberAddedUserId: String?,
+        contributionCount: Int,
+    ) {
+        if (contributorUserId != null) {
+            val key = Triple(groupId, "pack_builder", contributorUserId)
+            groupChallengeContributions[key] = (groupChallengeContributions[key] ?: 0) + contributionCount
+            rewardPoints(groupId, contributorUserId)["pack_builder"] =
+                (rewardPoints(groupId, contributorUserId)["pack_builder"] ?: 0) + contributionCount
+        }
+        if (memberAddedUserId != null) {
+            rewardPoints(groupId, memberAddedUserId)["pack_builder"] =
+                (rewardPoints(groupId, memberAddedUserId)["pack_builder"] ?: 0) + 1
+        }
+        val group = groups.firstOrNull { it.id == groupId } ?: return
+        val packChallenge = ensureChallenges(group).firstOrNull { it.type == "pack_builder" } ?: return
+        if (packChallenge.status == "completed") {
+            groupBadges.getOrPut(groupId) { mutableSetOf() }.add("Pack Builder")
+        }
+    }
+
     private fun distanceKm(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
         val earthRadiusKm = 6371.0
         val dLat = Math.toRadians(lat2 - lat1)
@@ -923,11 +1329,24 @@ class MockApiService private constructor() : ApiService {
         localBookers: Int,
         sharedGroupBookers: Int,
         responseTimeMinutes: Int?,
+        quoteSprintTier: String = "none",
+        quoteResponseRatePct: Int = 0,
+        quoteResponseStreak: Int = 0,
+        vetChecked: Boolean = false,
+        vetCheckedUntil: String? = null,
+        highlightedVetUntil: String? = null,
     ): List<String> {
         val lines = mutableListOf<String>()
+        if (vetChecked && !vetCheckedUntil.isNullOrBlank()) {
+            lines += "Vet-checked until ${vetCheckedUntil.take(10)}"
+        }
+        if (quoteSprintTier != "none") {
+            lines += "Quote Sprint ${quoteSprintTier.replaceFirstChar { it.uppercase() }} • $quoteResponseRatePct% response rate • $quoteResponseStreak streak"
+        }
         if (localBookers > 0) lines += "Used by $localBookers pet owners in $suburb this month"
         if (sharedGroupBookers > 0) lines += "$sharedGroupBookers members from your groups booked this provider"
         if (responseTimeMinutes != null) lines += "Typically responds in about $responseTimeMinutes min"
+        if (!highlightedVetUntil.isNullOrBlank()) lines += "Highlighted vet owner until ${highlightedVetUntil.take(10)}"
         return lines
     }
 

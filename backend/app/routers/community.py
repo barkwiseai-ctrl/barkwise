@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Dict, Optional, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -16,6 +16,10 @@ from app.models import (
     EventRsvpRecord,
     Group,
     GroupAddMemberRequest,
+    GroupChallenge,
+    GroupChallengeParticipationRequest,
+    GroupChallengeParticipationResult,
+    GroupChallengeView,
     GroupCreateRequest,
     GroupJoinModerationRequest,
     GroupJoinRecord,
@@ -32,6 +36,162 @@ from app.services.notification_store import notification_store
 
 router = APIRouter(prefix="/community", tags=["community"])
 INVITE_TTL_HOURS = 48
+GROUP_BADGES: Dict[str, set[str]] = {}
+GROUP_CHALLENGES: Dict[str, GroupChallenge] = {}
+GROUP_CHALLENGE_CONTRIBUTIONS: Dict[Tuple[str, str], int] = {}
+GROUP_MEMBER_REWARD_POINTS: Dict[Tuple[str, str], Dict[str, int]] = {}
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _month_cycle_bounds(now: datetime) -> Tuple[datetime, datetime, str]:
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    cycle = start.strftime("%Y%m")
+    return start, end, cycle
+
+
+def _week_cycle_bounds(now: datetime) -> Tuple[datetime, datetime, str]:
+    monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = monday + timedelta(days=7)
+    iso = monday.isocalendar()
+    cycle = f"{iso.year}W{iso.week:02d}"
+    return monday, end, cycle
+
+
+def _challenge_id(group_id: str, challenge_type: str, cycle: str) -> str:
+    return f"gc_{challenge_type}_{group_id}_{cycle}"
+
+
+def _challenge_template(group: Group, challenge_type: str) -> Tuple[str, str, int, str]:
+    if challenge_type == "pack_builder":
+        target = max(5, min(30, group.member_count // 4 + 3))
+        return (
+            "Pack Builder",
+            "Grow your local pack together. Every new approved member helps.",
+            target,
+            "Group badge: Pack Builder",
+        )
+    target = max(8, min(40, group.member_count // 3 + 6))
+    return (
+        "Clean Park Streak",
+        "Log cleanup check-ins as a group. Team progress unlocks shared rewards.",
+        target,
+        "Group badge: Clean Park Collective",
+    )
+
+
+def _sum_challenge_progress(challenge_id: str) -> int:
+    return sum(value for (cid, _), value in GROUP_CHALLENGE_CONTRIBUTIONS.items() if cid == challenge_id)
+
+
+def _ensure_group_challenge(group: Group, challenge_type: str) -> GroupChallenge:
+    now = _utc_now()
+    if challenge_type == "pack_builder":
+        start_at, end_at, cycle = _month_cycle_bounds(now)
+    else:
+        start_at, end_at, cycle = _week_cycle_bounds(now)
+    challenge_id = _challenge_id(group.id, challenge_type, cycle)
+    existing = GROUP_CHALLENGES.get(challenge_id)
+    if existing:
+        existing.progress_count = _sum_challenge_progress(existing.id)
+        existing.status = "completed" if existing.progress_count >= existing.target_count else "active"
+        return existing
+
+    title, description, target_count, reward_label = _challenge_template(group, challenge_type)
+    challenge = GroupChallenge(
+        id=challenge_id,
+        group_id=group.id,
+        type=challenge_type,  # type: ignore[arg-type]
+        title=title,
+        description=description,
+        target_count=target_count,
+        progress_count=0,
+        status="active",
+        reward_label=reward_label,
+        start_at=start_at.isoformat().replace("+00:00", "Z"),
+        end_at=end_at.isoformat().replace("+00:00", "Z"),
+    )
+    GROUP_CHALLENGES[challenge_id] = challenge
+    return challenge
+
+
+def _active_group_challenges(group: Group) -> list[GroupChallenge]:
+    pack = _ensure_group_challenge(group, "pack_builder")
+    clean = _ensure_group_challenge(group, "clean_park_streak")
+    return [pack, clean]
+
+
+def _reward_points(group_id: str, user_id: str) -> Dict[str, int]:
+    return GROUP_MEMBER_REWARD_POINTS.setdefault((group_id, user_id), {"pack_builder": 0, "clean_park": 0})
+
+
+def _group_cooperative_score(group_id: str) -> int:
+    total = 0
+    for (member_group_id, _), points in GROUP_MEMBER_REWARD_POINTS.items():
+        if member_group_id != group_id:
+            continue
+        total += points.get("pack_builder", 0) + points.get("clean_park", 0)
+    return total
+
+
+def _group_badges(group_id: str) -> list[str]:
+    return sorted(GROUP_BADGES.get(group_id, set()))
+
+
+def _build_group_view(group: Group, user_id: Optional[str]) -> GroupView:
+    _active_group_challenges(group)
+    if user_id:
+        points = _reward_points(group.id, user_id)
+        pack_points = points.get("pack_builder", 0)
+        clean_points = points.get("clean_park", 0)
+    else:
+        pack_points = 0
+        clean_points = 0
+    return GroupView(
+        id=group.id,
+        name=group.name,
+        suburb=group.suburb,
+        member_count=group.member_count,
+        official=group.official,
+        owner_user_id=group.owner_user_id,
+        membership_status=_membership_status(group.id, user_id),
+        is_admin=_is_group_admin(group, user_id),
+        pending_request_count=_pending_count(group.id),
+        group_badges=_group_badges(group.id),
+        cooperative_score=_group_cooperative_score(group.id),
+        my_pack_builder_points=pack_points,
+        my_clean_park_points=clean_points,
+    )
+
+
+def _apply_group_growth_reward(
+    *,
+    group: Group,
+    contributor_user_id: Optional[str],
+    member_added_user_id: Optional[str],
+    contribution_count: int = 1,
+) -> None:
+    challenge = _ensure_group_challenge(group, "pack_builder")
+    before_status = challenge.status
+    if contributor_user_id:
+        key = (challenge.id, contributor_user_id)
+        GROUP_CHALLENGE_CONTRIBUTIONS[key] = GROUP_CHALLENGE_CONTRIBUTIONS.get(key, 0) + contribution_count
+        contributor_points = _reward_points(group.id, contributor_user_id)
+        contributor_points["pack_builder"] += contribution_count
+    if member_added_user_id:
+        newcomer_points = _reward_points(group.id, member_added_user_id)
+        newcomer_points["pack_builder"] += 1
+
+    challenge.progress_count = _sum_challenge_progress(challenge.id)
+    challenge.status = "completed" if challenge.progress_count >= challenge.target_count else "active"
+    if before_status != "completed" and challenge.status == "completed":
+        GROUP_BADGES.setdefault(group.id, set()).add("Pack Builder")
 
 
 def _normalize_suburb(suburb: str) -> str:
@@ -42,6 +202,7 @@ def ensure_official_group(suburb: str) -> Group:
     normalized = _normalize_suburb(suburb)
     existing = next((g for g in groups if g.official and g.suburb.lower() == normalized.lower()), None)
     if existing:
+        _active_group_challenges(existing)
         return existing
 
     group = Group(
@@ -52,11 +213,15 @@ def ensure_official_group(suburb: str) -> Group:
         official=True,
     )
     groups.append(group)
+    _active_group_challenges(group)
     return group
 
 
 for suburb in KNOWN_SUBURBS:
     ensure_official_group(suburb)
+
+for seeded_group in groups:
+    _active_group_challenges(seeded_group)
 
 
 def _membership_status(group_id: str, user_id: Optional[str]) -> str:
@@ -105,25 +270,14 @@ def list_groups(
     if suburb:
         result = [g for g in result if g.suburb.lower() == suburb.lower()]
 
-    ranked = [
-        GroupView(
-            id=g.id,
-            name=g.name,
-            suburb=g.suburb,
-            member_count=g.member_count,
-            official=g.official,
-            owner_user_id=g.owner_user_id,
-            membership_status=_membership_status(g.id, user_id),
-            is_admin=_is_group_admin(g, user_id),
-            pending_request_count=_pending_count(g.id),
-        )
-        for g in result
-    ]
+    ranked = [_build_group_view(g, user_id=user_id) for g in result]
     ranked.sort(
         key=lambda g: (
             1 if g.membership_status == "member" else 0,
             1 if g.membership_status == "pending" else 0,
             1 if g.official else 0,
+            len(g.group_badges),
+            g.cooperative_score,
             g.member_count,
         ),
         reverse=True,
@@ -208,6 +362,12 @@ def complete_group_onboarding(payload: GroupOnboardingCompleteRequest):
     group_memberships.append(GroupJoinRecord(group_id=group_id, user_id=new_user_id, status=membership_status))
     if membership_status == "member":
         group.member_count += 1
+        _apply_group_growth_reward(
+            group=group,
+            contributor_user_id=invite.get("inviter_user_id"),
+            member_added_user_id=new_user_id,
+            contribution_count=1,
+        )
 
     created_post_id: Optional[str] = None
     if payload.share_photo_to_group:
@@ -226,6 +386,23 @@ def complete_group_onboarding(payload: GroupOnboardingCompleteRequest):
             created_at=created_at,
         )
         community_posts.insert(0, post)
+
+    inviter_user_id = invite.get("inviter_user_id")
+    if inviter_user_id:
+        notification_store.create(
+            user_id=inviter_user_id,
+            title="Pack Builder progress",
+            body=f"A new member joined {group.name}. Challenge progress increased.",
+            category="community",
+            deep_link=f"group:{group.id}",
+        )
+    notification_store.create(
+        user_id=new_user_id,
+        title="Welcome reward unlocked",
+        body=f"You earned Pack Builder points by joining {group.name}.",
+        category="community",
+        deep_link=f"group:{group.id}",
+    )
 
     return GroupOnboardingCompleteResponse(
         user_id=new_user_id,
@@ -262,13 +439,9 @@ def create_group(payload: GroupCreateRequest, authorization: Optional[str] = Hea
     )
     groups.append(group)
     group_memberships.append(GroupJoinRecord(group_id=group.id, user_id=payload.user_id, status="member"))
-
-    return GroupView(
-        **group.model_dump(),
-        membership_status="member",
-        is_admin=True,
-        pending_request_count=_pending_count(group.id),
-    )
+    _active_group_challenges(group)
+    _reward_points(group.id, payload.user_id)
+    return _build_group_view(group, user_id=payload.user_id)
 
 
 @router.post("/groups/{group_id}/join", response_model=GroupView)
@@ -279,25 +452,36 @@ def apply_join_group(group_id: str, payload: GroupJoinRequest, authorization: Op
         raise HTTPException(status_code=404, detail="Group not found")
 
     existing = next((m for m in group_memberships if m.group_id == group_id and m.user_id == payload.user_id), None)
+    created_membership = False
     if existing:
         status = existing.status
     else:
+        created_membership = True
         status = "member" if group.official else "pending"
         group_memberships.append(GroupJoinRecord(group_id=group_id, user_id=payload.user_id, status=status))
         if status == "member":
             group.member_count += 1
+            _apply_group_growth_reward(
+                group=group,
+                contributor_user_id=payload.user_id,
+                member_added_user_id=payload.user_id,
+                contribution_count=1,
+            )
 
-    view = GroupView(
-        **group.model_dump(),
-        membership_status=status,
-        is_admin=_is_group_admin(group, payload.user_id),
-        pending_request_count=_pending_count(group.id),
-    )
+    view = _build_group_view(group, user_id=payload.user_id)
     if status == "pending" and group.owner_user_id and group.owner_user_id != payload.user_id:
         notification_store.create(
             user_id=group.owner_user_id,
             title="New group join request",
             body=f"{payload.user_id} requested to join {group.name}",
+            category="community",
+            deep_link=f"group:{group.id}",
+        )
+    if created_membership and status == "member":
+        notification_store.create(
+            user_id=payload.user_id,
+            title="Pack Builder points earned",
+            body=f"You helped grow {group.name}.",
             category="community",
             deep_link=f"group:{group.id}",
         )
@@ -318,13 +502,14 @@ def add_member(group_id: str, payload: GroupAddMemberRequest, authorization: Opt
     if not existing:
         group_memberships.append(GroupJoinRecord(group_id=group_id, user_id=payload.member_user_id, status="member"))
         group.member_count += 1
+        _apply_group_growth_reward(
+            group=group,
+            contributor_user_id=payload.requester_user_id,
+            member_added_user_id=payload.member_user_id,
+            contribution_count=1,
+        )
 
-    return GroupView(
-        **group.model_dump(),
-        membership_status=_membership_status(group.id, payload.requester_user_id),
-        is_admin=_is_group_admin(group, payload.requester_user_id),
-        pending_request_count=_pending_count(group.id),
-    )
+    return _build_group_view(group, user_id=payload.requester_user_id)
 
 
 @router.get("/groups/{group_id}/join-requests", response_model=list[GroupJoinRequestView])
@@ -370,15 +555,16 @@ def moderate_join_request(
     if payload.action == "approve":
         record.status = "member"
         group.member_count += 1
+        _apply_group_growth_reward(
+            group=group,
+            contributor_user_id=payload.requester_user_id,
+            member_added_user_id=payload.member_user_id,
+            contribution_count=1,
+        )
     else:
         group_memberships.remove(record)
 
-    view = GroupView(
-        **group.model_dump(),
-        membership_status=_membership_status(group.id, payload.requester_user_id),
-        is_admin=True,
-        pending_request_count=_pending_count(group.id),
-    )
+    view = _build_group_view(group, user_id=payload.requester_user_id)
     notification_store.create(
         user_id=payload.member_user_id,
         title="Group request updated",
@@ -387,6 +573,99 @@ def moderate_join_request(
         deep_link=f"group:{group.id}",
     )
     return view
+
+
+@router.get("/groups/{group_id}/challenges", response_model=list[GroupChallengeView])
+def list_group_challenges(
+    group_id: str,
+    user_id: Optional[str] = Query(default=None),
+):
+    group = next((g for g in groups if g.id == group_id), None)
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    challenges = _active_group_challenges(group)
+    views: list[GroupChallengeView] = []
+    for challenge in challenges:
+        my_contribution_count = GROUP_CHALLENGE_CONTRIBUTIONS.get((challenge.id, user_id), 0) if user_id else 0
+        views.append(
+            GroupChallengeView(
+                challenge=challenge,
+                my_contribution_count=my_contribution_count,
+            )
+        )
+    views.sort(key=lambda row: row.challenge.type)
+    return views
+
+
+@router.post("/groups/{group_id}/challenges/participate", response_model=GroupChallengeParticipationResult)
+def participate_group_challenge(
+    group_id: str,
+    payload: GroupChallengeParticipationRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=payload.user_id, authorization=authorization)
+    group = next((g for g in groups if g.id == group_id), None)
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    if _membership_status(group_id=group_id, user_id=payload.user_id) != "member":
+        raise HTTPException(status_code=403, detail="Only members can contribute to group challenges")
+
+    challenge = _ensure_group_challenge(group, payload.challenge_type)
+    if challenge.status == "completed":
+        return GroupChallengeParticipationResult(
+            challenge=challenge,
+            my_contribution_count=GROUP_CHALLENGE_CONTRIBUTIONS.get((challenge.id, payload.user_id), 0),
+            contribution_count=0,
+            reward_unlocked=False,
+            unlocked_badges=[],
+        )
+
+    key = (challenge.id, payload.user_id)
+    previous_contribution = GROUP_CHALLENGE_CONTRIBUTIONS.get(key, 0)
+    GROUP_CHALLENGE_CONTRIBUTIONS[key] = previous_contribution + payload.contribution_count
+
+    points = _reward_points(group.id, payload.user_id)
+    if payload.challenge_type == "pack_builder":
+        points["pack_builder"] += payload.contribution_count
+    else:
+        points["clean_park"] += payload.contribution_count
+
+    challenge.progress_count = _sum_challenge_progress(challenge.id)
+    before_completed = challenge.status == "completed"
+    challenge.status = "completed" if challenge.progress_count >= challenge.target_count else "active"
+
+    unlocked_badges: list[str] = []
+    if not before_completed and challenge.status == "completed":
+        badge = "Pack Builder" if challenge.type == "pack_builder" else "Clean Park Collective"
+        GROUP_BADGES.setdefault(group.id, set()).add(badge)
+        unlocked_badges.append(badge)
+        if group.owner_user_id and group.owner_user_id != payload.user_id:
+            notification_store.create(
+                user_id=group.owner_user_id,
+                title="Group challenge completed",
+                body=f"{group.name} completed {challenge.title}.",
+                category="community",
+                deep_link=f"group:{group.id}",
+            )
+
+    my_contribution_count = GROUP_CHALLENGE_CONTRIBUTIONS.get(key, 0)
+    reward_unlocked = bool(unlocked_badges) or (my_contribution_count > 0 and my_contribution_count % 5 == 0)
+    if reward_unlocked:
+        notification_store.create(
+            user_id=payload.user_id,
+            title="Community reward unlocked",
+            body=f"You earned recognition in {challenge.title}.",
+            category="community",
+            deep_link=f"group:{group.id}",
+        )
+    return GroupChallengeParticipationResult(
+        challenge=challenge,
+        my_contribution_count=my_contribution_count,
+        contribution_count=payload.contribution_count,
+        reward_unlocked=reward_unlocked,
+        unlocked_badges=unlocked_badges,
+    )
 
 
 @router.get("/posts")

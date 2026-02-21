@@ -425,3 +425,200 @@ def test_quote_reminder_60_minutes_sent_once_without_late_15_minute_duplicate():
         if item["title"] == "Quote request reminder" and item["deep_link"] == f"quote:{quote_id}"
     )
     assert second_count == 1
+
+
+def test_vet_coach_session_and_spotlight_activation():
+    vet_login = client.post("/auth/login", json={"user_id": "user_1", "password": "petsocial-demo"})
+    assert vet_login.status_code == 200
+    vet_token = vet_login.json()["access_token"]
+
+    before_profile = client.get(
+        "/services/vet-coach/profile",
+        params={"user_id": "user_1"},
+        headers={"Authorization": f"Bearer {vet_token}"},
+    )
+    assert before_profile.status_code == 200
+    before_minutes = int(before_profile.json()["spotlight_minutes"])
+
+    session = client.post(
+        "/services/vet-coach/sessions",
+        json={
+            "actor_user_id": "user_1",
+            "duration_minutes": 20,
+            "quality_score": 0.9,
+            "topic": "Dermatitis triage prompts",
+            "note": "Added caution guidance for persistent itch",
+        },
+        headers={"Authorization": f"Bearer {vet_token}"},
+    )
+    assert session.status_code == 200
+    session_payload = session.json()
+    assert session_payload["minutes_earned"] > 0
+    assert session_payload["profile"]["spotlight_minutes"] >= before_minutes + session_payload["minutes_earned"]
+
+    activate = client.post(
+        "/services/vet-coach/spotlight/activate",
+        json={
+            "actor_user_id": "user_1",
+            "minutes": 10,
+        },
+        headers={"Authorization": f"Bearer {vet_token}"},
+    )
+    assert activate.status_code == 200
+    activated_profile = activate.json()["profile"]
+    assert activated_profile["highlighted_until"] is not None
+
+
+def test_vet_verify_groomer_sets_vet_checked_tag():
+    vet_login = client.post("/auth/login", json={"user_id": "user_1", "password": "petsocial-demo"})
+    assert vet_login.status_code == 200
+    vet_token = vet_login.json()["access_token"]
+
+    verify = client.post(
+        "/services/providers/svc_3/vet-verify",
+        json={
+            "actor_user_id": "user_1",
+            "decision": "approved",
+            "confidence_score": 0.9,
+            "note": "Strong hygiene process and stress-aware handling",
+        },
+        headers={"Authorization": f"Bearer {vet_token}"},
+    )
+    assert verify.status_code == 200
+    payload = verify.json()
+    assert payload["verification"]["decision"] == "approved"
+    assert payload["verification"]["spotlight_minutes_earned"] > 0
+    assert payload["provider"]["vet_checked"] is True
+    assert payload["provider"]["vet_checked_by"] == "user_1"
+    assert payload["provider"]["vet_checked_until"] is not None
+
+    providers = client.get("/services/providers", params={"suburb": "Redfern"})
+    assert providers.status_code == 200
+    verified_provider = next((item for item in providers.json() if item["id"] == "svc_3"), None)
+    assert verified_provider is not None
+    assert verified_provider["vet_checked"] is True
+
+
+def test_quote_sprint_metrics_surface_for_responding_provider():
+    provider_login = client.post("/auth/login", json={"user_id": "user_4", "password": "petsocial-demo"})
+    assert provider_login.status_code == 200
+    provider_token = provider_login.json()["access_token"]
+
+    create_provider = client.post(
+        "/services/providers",
+        json={
+            "user_id": "user_4",
+            "name": "Sprint Metrics Grooming",
+            "category": "grooming",
+            "suburb": "Surry Hills",
+            "description": "Quick quote-response specialist",
+            "price_from": 43,
+        },
+        headers={"Authorization": f"Bearer {provider_token}"},
+    )
+    assert create_provider.status_code == 200
+    provider_id = create_provider.json()["id"]
+
+    requester_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert requester_login.status_code == 200
+    requester_token = requester_login.json()["access_token"]
+
+    create_quote = client.post(
+        "/services/quotes/request",
+        json={
+            "user_id": "user_2",
+            "category": "grooming",
+            "suburb": "Surry Hills",
+            "preferred_window": "Weekday afternoons",
+            "pet_details": "Mini poodle, skin-sensitive",
+            "note": "",
+        },
+        headers={"Authorization": f"Bearer {requester_token}"},
+    )
+    assert create_quote.status_code == 200
+    quote_payload = create_quote.json()
+    quote_id = quote_payload["quote_request"]["id"]
+    target = next((item for item in quote_payload["targets"] if item["provider_id"] == provider_id), None)
+    assert target is not None
+
+    respond = client.post(
+        f"/services/quotes/{quote_id}/respond",
+        json={
+            "actor_user_id": "user_4",
+            "provider_id": provider_id,
+            "decision": "accepted",
+            "message": "We can take this booking",
+        },
+        headers={"Authorization": f"Bearer {provider_token}"},
+    )
+    assert respond.status_code == 200
+
+    providers = client.get("/services/providers", params={"suburb": "Surry Hills", "q": "Sprint Metrics Grooming"})
+    assert providers.status_code == 200
+    assert providers.json()
+    sprint_provider = next((item for item in providers.json() if item["id"] == provider_id), None)
+    assert sprint_provider is not None
+    assert sprint_provider["quote_response_rate_pct"] >= 100
+    assert sprint_provider["quote_response_streak"] >= 1
+    assert sprint_provider["quote_sprint_tier"] in {"none", "bronze", "silver", "gold", "platinum"}
+
+
+def test_group_challenge_participation_and_growth_rewards():
+    user_login = client.post("/auth/login", json={"user_id": "user_1", "password": "petsocial-demo"})
+    assert user_login.status_code == 200
+    user_token = user_login.json()["access_token"]
+
+    groups_response = client.get("/community/groups", params={"user_id": "user_1"})
+    assert groups_response.status_code == 200
+    joined_group = next((group for group in groups_response.json() if group["membership_status"] == "member"), None)
+    assert joined_group is not None
+    group_id = joined_group["id"]
+
+    challenges_before = client.get(
+        f"/community/groups/{group_id}/challenges",
+        params={"user_id": "user_1"},
+    )
+    assert challenges_before.status_code == 200
+    assert any(item["challenge"]["type"] == "clean_park_streak" for item in challenges_before.json())
+
+    participate = client.post(
+        f"/community/groups/{group_id}/challenges/participate",
+        json={
+            "user_id": "user_1",
+            "challenge_type": "clean_park_streak",
+            "contribution_count": 2,
+            "note": "Cleanup check-in",
+        },
+        headers={"Authorization": f"Bearer {user_token}"},
+    )
+    assert participate.status_code == 200
+    participation_payload = participate.json()
+    assert participation_payload["challenge"]["type"] == "clean_park_streak"
+    assert participation_payload["my_contribution_count"] >= 2
+
+    invite = client.post(
+        "/community/invites",
+        json={"group_id": group_id, "inviter_user_id": "user_1"},
+        headers={"Authorization": f"Bearer {user_token}"},
+    )
+    assert invite.status_code == 200
+    token = invite.json()["token"]
+
+    onboarding = client.post(
+        "/community/onboarding/complete",
+        json={
+            "invite_token": token,
+            "owner_name": "Riley",
+            "dog_name": "Mochi",
+            "suburb": joined_group["suburb"],
+            "share_photo_to_group": False,
+        },
+    )
+    assert onboarding.status_code == 200
+
+    groups_after = client.get("/community/groups", params={"user_id": "user_1"})
+    assert groups_after.status_code == 200
+    updated_group = next((group for group in groups_after.json() if group["id"] == group_id), None)
+    assert updated_group is not None
+    assert updated_group["my_pack_builder_points"] >= joined_group.get("my_pack_builder_points", 0)
+    assert updated_group["cooperative_score"] >= 1

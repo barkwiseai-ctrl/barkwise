@@ -251,6 +251,26 @@ class PetSocialRepository(
 
     suspend fun applyJoinGroup(groupId: String): Group = api.joinGroup(groupId, GroupJoinRequest(userId = userId))
 
+    suspend fun loadGroupChallenges(groupId: String): List<GroupChallengeView> = api.getGroupChallenges(
+        groupId = groupId,
+        userId = userId,
+    )
+
+    suspend fun participateGroupChallenge(
+        groupId: String,
+        challengeType: String,
+        contributionCount: Int = 1,
+        note: String = "",
+    ): GroupChallengeParticipationResult = api.participateGroupChallenge(
+        groupId = groupId,
+        payload = GroupChallengeParticipationRequest(
+            userId = userId,
+            challengeType = challengeType,
+            contributionCount = contributionCount,
+            note = note,
+        ),
+    )
+
     suspend fun createGroupInvite(groupId: String): GroupInvite = api.createGroupInvite(
         GroupInviteCreateRequest(
             groupId = groupId,
@@ -453,6 +473,45 @@ class PetSocialRepository(
             providerId = providerId,
             decision = decision,
             message = message,
+        ),
+    )
+
+    suspend fun loadVetCoachProfile(): VetCoachProfile = api.getVetCoachProfile(userId = userId)
+
+    suspend fun submitVetCoachSession(
+        durationMinutes: Int,
+        qualityScore: Double,
+        topic: String = "",
+        note: String = "",
+    ): VetCoachSessionResult = api.submitVetCoachSession(
+        VetCoachSessionRequest(
+            actorUserId = userId,
+            durationMinutes = durationMinutes,
+            qualityScore = qualityScore,
+            topic = topic,
+            note = note,
+        ),
+    )
+
+    suspend fun activateVetSpotlight(minutes: Int): VetSpotlightActivationResult = api.activateVetSpotlight(
+        VetSpotlightActivateRequest(
+            actorUserId = userId,
+            minutes = minutes,
+        ),
+    )
+
+    suspend fun verifyGroomerByVet(
+        providerId: String,
+        decision: String,
+        confidenceScore: Double = 0.8,
+        note: String = "",
+    ): VetGroomerVerificationResult = api.verifyGroomerByVet(
+        providerId = providerId,
+        payload = VetGroomerVerificationRequest(
+            actorUserId = userId,
+            decision = decision,
+            confidenceScore = confidenceScore,
+            note = note,
         ),
     )
 

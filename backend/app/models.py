@@ -24,6 +24,14 @@ class ServiceProvider(BaseModel):
     local_bookers_this_month: int = 0
     shared_group_bookers: int = 0
     social_proof: list[str] = Field(default_factory=list)
+    quote_sprint_tier: Literal["none", "bronze", "silver", "gold", "platinum"] = "none"
+    quote_response_rate_pct: int = 0
+    quote_response_streak: int = 0
+    vet_checked: bool = False
+    vet_checked_until: Optional[str] = None
+    vet_checked_by: Optional[str] = None
+    highlighted_vet: Optional[str] = None
+    highlighted_vet_until: Optional[str] = None
 
 
 class Review(BaseModel):
@@ -116,6 +124,65 @@ class ServiceQuoteRequest(BaseModel):
 class ServiceQuoteRequestView(BaseModel):
     quote_request: ServiceQuoteRequest
     targets: list[ServiceQuoteTarget]
+
+
+class VetCoachSessionRequest(BaseModel):
+    actor_user_id: str
+    duration_minutes: int = Field(ge=1, le=240)
+    quality_score: float = Field(ge=0.0, le=1.0)
+    topic: str = ""
+    note: str = ""
+
+
+class VetSpotlightActivateRequest(BaseModel):
+    actor_user_id: str
+    minutes: int = Field(ge=5, le=600)
+
+
+class VetCoachProfile(BaseModel):
+    user_id: str
+    spotlight_minutes: int = 0
+    coaching_minutes: int = 0
+    coaching_sessions: int = 0
+    coach_quality_score: float = 0.0
+    highlighted_until: Optional[str] = None
+    badge_tier: Literal["none", "bronze", "silver", "gold", "platinum"] = "none"
+
+
+class VetCoachSessionResult(BaseModel):
+    session_id: str
+    minutes_earned: int
+    profile: VetCoachProfile
+
+
+class VetSpotlightActivationResult(BaseModel):
+    minutes_spent: int
+    profile: VetCoachProfile
+
+
+class VetGroomerVerificationRequest(BaseModel):
+    actor_user_id: str
+    decision: Literal["approved", "needs_improvement"]
+    confidence_score: float = Field(default=0.8, ge=0.0, le=1.0)
+    note: str = ""
+
+
+class VetGroomerVerification(BaseModel):
+    id: str
+    provider_id: str
+    vet_user_id: str
+    decision: Literal["approved", "needs_improvement"]
+    confidence_score: float
+    note: str = ""
+    created_at: str
+    valid_until: Optional[str] = None
+    spotlight_minutes_earned: int = 0
+
+
+class VetGroomerVerificationResult(BaseModel):
+    verification: VetGroomerVerification
+    provider: ServiceProvider
+    vet_profile: VetCoachProfile
 
 
 class BookingRequest(BaseModel):
@@ -302,6 +369,10 @@ class GroupView(BaseModel):
     membership_status: Literal["none", "pending", "member"] = "none"
     is_admin: bool = False
     pending_request_count: int = 0
+    group_badges: list[str] = Field(default_factory=list)
+    cooperative_score: int = 0
+    my_pack_builder_points: int = 0
+    my_clean_park_points: int = 0
 
 
 class GroupCreateRequest(BaseModel):
@@ -335,6 +406,40 @@ class GroupJoinRequestView(BaseModel):
     group_id: str
     user_id: str
     status: Literal["pending"]
+
+
+class GroupChallenge(BaseModel):
+    id: str
+    group_id: str
+    type: Literal["pack_builder", "clean_park_streak"]
+    title: str
+    description: str
+    target_count: int
+    progress_count: int
+    status: Literal["active", "completed"] = "active"
+    reward_label: str
+    start_at: str
+    end_at: str
+
+
+class GroupChallengeView(BaseModel):
+    challenge: GroupChallenge
+    my_contribution_count: int = 0
+
+
+class GroupChallengeParticipationRequest(BaseModel):
+    user_id: str
+    challenge_type: Literal["pack_builder", "clean_park_streak"]
+    contribution_count: int = Field(default=1, ge=1, le=50)
+    note: str = ""
+
+
+class GroupChallengeParticipationResult(BaseModel):
+    challenge: GroupChallenge
+    my_contribution_count: int
+    contribution_count: int
+    reward_unlocked: bool = False
+    unlocked_badges: list[str] = Field(default_factory=list)
 
 
 class CommunityEvent(BaseModel):

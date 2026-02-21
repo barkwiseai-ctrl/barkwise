@@ -24,6 +24,11 @@ from app.models import (
     ServiceQuoteRequest,
     ServiceQuoteTarget,
     ServiceProvider,
+    VetCoachProfile,
+    VetCoachSessionResult,
+    VetGroomerVerification,
+    VetGroomerVerificationResult,
+    VetSpotlightActivationResult,
 )
 
 
@@ -58,6 +63,8 @@ ACCOUNT_LABELS = {
     "user_4": "Account D",
 }
 
+DEFAULT_VET_USERS = {"user_1", "user_3"}
+
 
 class ServiceStoreError(ValueError):
     """Base class for user-visible service-store errors."""
@@ -88,6 +95,8 @@ class ServiceStore:
         path = Path(self.db_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path = str(path)
+        configured_vets = {value.strip() for value in os.getenv("VET_USER_IDS", "").split(",") if value.strip()}
+        self._vet_user_ids: Set[str] = configured_vets or set(DEFAULT_VET_USERS)
         self._init_db()
         self._seed_if_needed()
 
@@ -234,10 +243,56 @@ class ServiceStore:
                     )
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS vet_profiles (
+                        user_id TEXT PRIMARY KEY,
+                        spotlight_minutes INTEGER NOT NULL DEFAULT 0,
+                        coaching_minutes INTEGER NOT NULL DEFAULT 0,
+                        coaching_sessions INTEGER NOT NULL DEFAULT 0,
+                        quality_score_sum REAL NOT NULL DEFAULT 0.0,
+                        quality_score_count INTEGER NOT NULL DEFAULT 0,
+                        grooming_reviews_count INTEGER NOT NULL DEFAULT 0,
+                        highlighted_until TEXT,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS vet_coach_sessions (
+                        id TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        duration_minutes INTEGER NOT NULL,
+                        quality_score REAL NOT NULL,
+                        topic TEXT NOT NULL,
+                        note TEXT NOT NULL,
+                        minutes_earned INTEGER NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS vet_groomer_verifications (
+                        id TEXT PRIMARY KEY,
+                        provider_id TEXT NOT NULL,
+                        vet_user_id TEXT NOT NULL,
+                        decision TEXT NOT NULL,
+                        confidence_score REAL NOT NULL,
+                        note TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        valid_until TEXT,
+                        spotlight_minutes_earned INTEGER NOT NULL DEFAULT 0
+                    )
+                    """
+                )
                 self._ensure_column(conn, "bookings", "owner_user_id", "TEXT NOT NULL DEFAULT 'guest_user'")
                 self._ensure_column(conn, "providers", "status", "TEXT NOT NULL DEFAULT 'active'")
                 self._ensure_column(conn, "quote_request_targets", "reminder_15_sent", "INTEGER NOT NULL DEFAULT 0")
                 self._ensure_column(conn, "quote_request_targets", "reminder_60_sent", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "vet_profiles", "grooming_reviews_count", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "vet_profiles", "updated_at", "TEXT NOT NULL DEFAULT ''")
                 conn.commit()
                 conn.execute("UPDATE availability_slots SET is_booked = 0")
                 conn.commit()
@@ -638,14 +693,30 @@ class ServiceStore:
         response_time_minutes: Optional[int] = None,
         local_bookers_this_month: int = 0,
         shared_group_bookers: int = 0,
+        quote_sprint_tier: str = "none",
+        quote_response_rate_pct: int = 0,
+        quote_response_streak: int = 0,
+        vet_checked: bool = False,
+        vet_checked_until: Optional[str] = None,
+        vet_checked_by: Optional[str] = None,
+        highlighted_vet: Optional[str] = None,
+        highlighted_vet_until: Optional[str] = None,
     ) -> ServiceProvider:
         social_proof: List[str] = []
+        if vet_checked and vet_checked_until:
+            social_proof.append(f"Vet-checked until {vet_checked_until[:10]}")
+        if quote_sprint_tier != "none":
+            social_proof.append(
+                f"Quote Sprint {quote_sprint_tier.title()} • {quote_response_rate_pct}% response rate • {quote_response_streak} streak"
+            )
         if local_bookers_this_month > 0:
             social_proof.append(f"Used by {local_bookers_this_month} pet owners in {row['suburb']} this month")
         if shared_group_bookers > 0:
             social_proof.append(f"{shared_group_bookers} members from your groups booked this provider")
         if response_time_minutes is not None:
             social_proof.append(f"Typically responds in about {response_time_minutes} min")
+        if highlighted_vet and highlighted_vet_until:
+            social_proof.append(f"Highlighted vet owner until {highlighted_vet_until[:10]}")
 
         return ServiceProvider(
             id=row["id"],
@@ -668,6 +739,14 @@ class ServiceStore:
             local_bookers_this_month=local_bookers_this_month,
             shared_group_bookers=shared_group_bookers,
             social_proof=social_proof,
+            quote_sprint_tier=quote_sprint_tier,
+            quote_response_rate_pct=quote_response_rate_pct,
+            quote_response_streak=quote_response_streak,
+            vet_checked=vet_checked,
+            vet_checked_until=vet_checked_until,
+            vet_checked_by=vet_checked_by,
+            highlighted_vet=highlighted_vet,
+            highlighted_vet_until=highlighted_vet_until,
         )
 
     def _compute_provider_response_times(self, conn: sqlite3.Connection) -> Dict[str, int]:
@@ -686,6 +765,186 @@ class ServiceStore:
                 continue
             response_minutes[str(row["provider_id"])] = max(1, int(round(float(minutes))))
         return response_minutes
+
+    def _is_vet_user(self, user_id: str) -> bool:
+        if user_id in self._vet_user_ids:
+            return True
+        normalized = user_id.strip().lower()
+        return normalized.startswith("vet_") or normalized.endswith("_vet")
+
+    def _vet_badge_tier(self, sessions: int, quality_avg: float) -> str:
+        if sessions >= 20 and quality_avg >= 0.90:
+            return "platinum"
+        if sessions >= 10 and quality_avg >= 0.85:
+            return "gold"
+        if sessions >= 5 and quality_avg >= 0.75:
+            return "silver"
+        if sessions >= 2 and quality_avg >= 0.60:
+            return "bronze"
+        return "none"
+
+    def _vet_profile_from_row(self, row: sqlite3.Row) -> VetCoachProfile:
+        quality_count = int(row["quality_score_count"] or 0)
+        quality_sum = float(row["quality_score_sum"] or 0.0)
+        quality_avg = (quality_sum / quality_count) if quality_count > 0 else 0.0
+        sessions = int(row["coaching_sessions"] or 0)
+        return VetCoachProfile(
+            user_id=str(row["user_id"]),
+            spotlight_minutes=int(row["spotlight_minutes"] or 0),
+            coaching_minutes=int(row["coaching_minutes"] or 0),
+            coaching_sessions=sessions,
+            coach_quality_score=round(quality_avg, 3),
+            highlighted_until=row["highlighted_until"] or None,
+            badge_tier=self._vet_badge_tier(sessions=sessions, quality_avg=quality_avg),
+        )
+
+    def _ensure_vet_profile_row(self, conn: sqlite3.Connection, user_id: str) -> None:
+        now_iso = datetime.utcnow().isoformat()
+        conn.execute(
+            """
+            INSERT INTO vet_profiles (
+                user_id, spotlight_minutes, coaching_minutes, coaching_sessions, quality_score_sum,
+                quality_score_count, grooming_reviews_count, highlighted_until, updated_at
+            )
+            VALUES (?, 0, 0, 0, 0.0, 0, 0, NULL, ?)
+            ON CONFLICT(user_id) DO NOTHING
+            """,
+            (user_id, now_iso),
+        )
+
+    def _load_vet_profile(self, conn: sqlite3.Connection, user_id: str, *, create_missing: bool = True) -> Optional[VetCoachProfile]:
+        if create_missing:
+            self._ensure_vet_profile_row(conn, user_id)
+        row = conn.execute("SELECT * FROM vet_profiles WHERE user_id = ?", (user_id,)).fetchone()
+        if not row:
+            return None
+        return self._vet_profile_from_row(row)
+
+    def _compute_highlighted_vets(self, conn: sqlite3.Connection) -> Dict[str, str]:
+        now_iso = datetime.utcnow().isoformat()
+        rows = conn.execute(
+            """
+            SELECT user_id, highlighted_until
+            FROM vet_profiles
+            WHERE highlighted_until IS NOT NULL
+              AND highlighted_until > ?
+            """,
+            (now_iso,),
+        ).fetchall()
+        highlighted: Dict[str, str] = {}
+        for row in rows:
+            user_id = str(row["user_id"])
+            highlighted_until = row["highlighted_until"]
+            if highlighted_until:
+                highlighted[user_id] = str(highlighted_until)
+        return highlighted
+
+    def _compute_latest_vet_verifications(
+        self,
+        conn: sqlite3.Connection,
+    ) -> Dict[str, Dict[str, Any]]:
+        now_iso = datetime.utcnow().isoformat()
+        rows = conn.execute(
+            """
+            SELECT v.provider_id, v.vet_user_id, v.decision, v.valid_until, v.created_at
+            FROM vet_groomer_verifications v
+            JOIN (
+                SELECT provider_id, MAX(created_at) AS max_created_at
+                FROM vet_groomer_verifications
+                GROUP BY provider_id
+            ) latest
+                ON latest.provider_id = v.provider_id
+               AND latest.max_created_at = v.created_at
+            """
+        ).fetchall()
+        latest: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            provider_id = str(row["provider_id"])
+            decision = str(row["decision"] or "")
+            valid_until = row["valid_until"]
+            is_valid = decision == "approved" and bool(valid_until) and str(valid_until) > now_iso
+            latest[provider_id] = {
+                "vet_checked": bool(is_valid),
+                "vet_checked_by": str(row["vet_user_id"]) if row["vet_user_id"] else None,
+                "vet_checked_until": str(valid_until) if valid_until else None,
+            }
+        return latest
+
+    def _compute_quote_sprint_metrics(self, conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
+        rows = conn.execute(
+            """
+            SELECT provider_id, status, created_at, responded_at
+            FROM quote_request_targets
+            ORDER BY provider_id ASC, created_at DESC
+            """
+        ).fetchall()
+        grouped: Dict[str, List[sqlite3.Row]] = {}
+        for row in rows:
+            provider_id = str(row["provider_id"])
+            grouped.setdefault(provider_id, []).append(row)
+
+        metrics: Dict[str, Dict[str, Any]] = {}
+        for provider_id, provider_rows in grouped.items():
+            total = len(provider_rows)
+            responded_rows = [
+                row
+                for row in provider_rows
+                if str(row["status"]) in {"accepted", "declined"} or bool(row["responded_at"])
+            ]
+            responded = len(responded_rows)
+            response_rate_pct = int(round((responded / total) * 100)) if total > 0 else 0
+            avg_minutes_values: List[float] = []
+            for row in responded_rows:
+                created_raw = str(row["created_at"] or "")
+                responded_raw = str(row["responded_at"] or "")
+                if not created_raw or not responded_raw:
+                    continue
+                try:
+                    created_dt = datetime.fromisoformat(created_raw)
+                    responded_dt = datetime.fromisoformat(responded_raw)
+                except ValueError:
+                    continue
+                diff = (responded_dt - created_dt).total_seconds() / 60.0
+                if diff >= 0:
+                    avg_minutes_values.append(diff)
+            avg_minutes = int(round(sum(avg_minutes_values) / len(avg_minutes_values))) if avg_minutes_values else None
+
+            streak = 0
+            for row in provider_rows:
+                status = str(row["status"])
+                if status in {"accepted", "declined"} or bool(row["responded_at"]):
+                    streak += 1
+                else:
+                    break
+
+            if total < 3:
+                tier = "none"
+            elif response_rate_pct >= 95 and (avg_minutes is not None and avg_minutes <= 15) and streak >= 5:
+                tier = "platinum"
+            elif response_rate_pct >= 90 and (avg_minutes is not None and avg_minutes <= 20) and streak >= 3:
+                tier = "gold"
+            elif response_rate_pct >= 75 and (avg_minutes is not None and avg_minutes <= 35):
+                tier = "silver"
+            elif response_rate_pct >= 60 and (avg_minutes is not None and avg_minutes <= 60):
+                tier = "bronze"
+            else:
+                tier = "none"
+
+            metrics[provider_id] = {
+                "tier": tier,
+                "response_rate_pct": response_rate_pct,
+                "streak": streak,
+            }
+        return metrics
+
+    def _quote_sprint_tier_score(self, tier: str) -> int:
+        return {
+            "none": 0,
+            "bronze": 1,
+            "silver": 2,
+            "gold": 3,
+            "platinum": 4,
+        }.get(tier, 0)
 
     def _compute_local_bookers_this_month(self, conn: sqlite3.Connection) -> Dict[str, int]:
         month_start = date.today().replace(day=1).isoformat()
@@ -767,6 +1026,9 @@ class ServiceStore:
                 response_time_map = self._compute_provider_response_times(conn)
                 local_bookers_map = self._compute_local_bookers_this_month(conn)
                 shared_group_bookers_map = self._compute_shared_group_bookers(conn, viewer_user_id=user_id)
+                quote_sprint_map = self._compute_quote_sprint_metrics(conn)
+                vet_verification_map = self._compute_latest_vet_verifications(conn)
+                highlighted_vet_map = self._compute_highlighted_vets(conn)
 
         origin = self._resolve_origin(suburb=suburb, user_lat=user_lat, user_lng=user_lng)
         query = (q or "").strip().lower()
@@ -805,6 +1067,16 @@ class ServiceStore:
                         continue
 
                 provider_id = str(row["id"])
+                sprint = quote_sprint_map.get(
+                    provider_id,
+                    {"tier": "none", "response_rate_pct": 0, "streak": 0},
+                )
+                verification = vet_verification_map.get(
+                    provider_id,
+                    {"vet_checked": False, "vet_checked_by": None, "vet_checked_until": None},
+                )
+                highlighted_until = highlighted_vet_map.get(owner_user_id or "")
+                highlighted_vet = ACCOUNT_LABELS.get(owner_user_id, owner_user_id) if highlighted_until and owner_user_id else None
                 result.append(
                     self._row_to_provider(
                         row,
@@ -813,6 +1085,14 @@ class ServiceStore:
                         response_time_minutes=response_time_map.get(provider_id),
                         local_bookers_this_month=local_bookers_map.get(provider_id, 0),
                         shared_group_bookers=shared_group_bookers_map.get(provider_id, 0),
+                        quote_sprint_tier=str(sprint.get("tier", "none")),
+                        quote_response_rate_pct=int(sprint.get("response_rate_pct", 0)),
+                        quote_response_streak=int(sprint.get("streak", 0)),
+                        vet_checked=bool(verification.get("vet_checked", False)),
+                        vet_checked_by=verification.get("vet_checked_by"),
+                        vet_checked_until=verification.get("vet_checked_until"),
+                        highlighted_vet=highlighted_vet,
+                        highlighted_vet_until=highlighted_until,
                     )
                 )
             return result
@@ -835,6 +1115,7 @@ class ServiceStore:
             result.sort(
                 key=lambda p: (
                     p.distance_km if p.distance_km is not None else 9999,
+                    -self._quote_sprint_tier_score(p.quote_sprint_tier),
                     -p.rating,
                     p.price_from,
                 )
@@ -1147,6 +1428,290 @@ class ServiceStore:
                 targets = self._quote_targets_for_request(conn, quote_request_id=quote_request_id)
         return self._quote_request_from_row(request_row), targets
 
+    def get_vet_coach_profile(self, *, actor_user_id: str) -> VetCoachProfile:
+        if not self._is_vet_user(actor_user_id):
+            raise ServiceStorePermissionError("Only verified vets can access coach profile")
+        with self._lock:
+            with self._connect() as conn:
+                profile = self._load_vet_profile(conn, actor_user_id, create_missing=True)
+                conn.commit()
+        if not profile:
+            raise ServiceStoreNotFoundError("Vet profile not found")
+        return profile
+
+    def record_vet_coach_session(
+        self,
+        *,
+        actor_user_id: str,
+        duration_minutes: int,
+        quality_score: float,
+        topic: str = "",
+        note: str = "",
+    ) -> VetCoachSessionResult:
+        if not self._is_vet_user(actor_user_id):
+            raise ServiceStorePermissionError("Only verified vets can submit coach sessions")
+        if duration_minutes <= 0:
+            raise ServiceStoreValidationError("duration_minutes must be > 0")
+        if quality_score < 0.0 or quality_score > 1.0:
+            raise ServiceStoreValidationError("quality_score must be between 0.0 and 1.0")
+
+        now = datetime.utcnow()
+        now_iso = now.isoformat()
+        today_prefix = now.date().isoformat()
+        yesterday_prefix = (now.date() - timedelta(days=1)).isoformat()
+        base_earned = max(1, int(round(duration_minutes * (0.6 + quality_score))))
+
+        with self._lock:
+            with self._connect() as conn:
+                self._ensure_vet_profile_row(conn, actor_user_id)
+                today_count_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS cnt
+                    FROM vet_coach_sessions
+                    WHERE user_id = ? AND created_at LIKE ?
+                    """,
+                    (actor_user_id, f"{today_prefix}%"),
+                ).fetchone()
+                had_session_today = int(today_count_row["cnt"] or 0) > 0 if today_count_row else False
+
+                streak_bonus = 0
+                if not had_session_today:
+                    yesterday_count_row = conn.execute(
+                        """
+                        SELECT COUNT(*) AS cnt
+                        FROM vet_coach_sessions
+                        WHERE user_id = ? AND created_at LIKE ?
+                        """,
+                        (actor_user_id, f"{yesterday_prefix}%"),
+                    ).fetchone()
+                    if yesterday_count_row and int(yesterday_count_row["cnt"] or 0) > 0:
+                        streak_bonus = 5
+
+                minutes_earned = base_earned + streak_bonus
+                session_id = f"vcs_{uuid4().hex[:10]}"
+                conn.execute(
+                    """
+                    INSERT INTO vet_coach_sessions (
+                        id, user_id, duration_minutes, quality_score, topic, note, minutes_earned, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session_id,
+                        actor_user_id,
+                        int(duration_minutes),
+                        float(quality_score),
+                        topic.strip(),
+                        note.strip(),
+                        int(minutes_earned),
+                        now_iso,
+                    ),
+                )
+                conn.execute(
+                    """
+                    UPDATE vet_profiles
+                    SET spotlight_minutes = spotlight_minutes + ?,
+                        coaching_minutes = coaching_minutes + ?,
+                        coaching_sessions = coaching_sessions + 1,
+                        quality_score_sum = quality_score_sum + ?,
+                        quality_score_count = quality_score_count + 1,
+                        updated_at = ?
+                    WHERE user_id = ?
+                    """,
+                    (
+                        int(minutes_earned),
+                        int(duration_minutes),
+                        float(quality_score),
+                        now_iso,
+                        actor_user_id,
+                    ),
+                )
+                profile = self._load_vet_profile(conn, actor_user_id, create_missing=False)
+                conn.commit()
+
+        if not profile:
+            raise ServiceStoreNotFoundError("Vet profile not found after session save")
+        return VetCoachSessionResult(
+            session_id=session_id,
+            minutes_earned=minutes_earned,
+            profile=profile,
+        )
+
+    def activate_vet_spotlight(
+        self,
+        *,
+        actor_user_id: str,
+        minutes: int,
+    ) -> VetSpotlightActivationResult:
+        if not self._is_vet_user(actor_user_id):
+            raise ServiceStorePermissionError("Only verified vets can activate spotlight")
+        if minutes <= 0:
+            raise ServiceStoreValidationError("minutes must be > 0")
+
+        now = datetime.utcnow()
+        now_iso = now.isoformat()
+        with self._lock:
+            with self._connect() as conn:
+                self._ensure_vet_profile_row(conn, actor_user_id)
+                row = conn.execute("SELECT * FROM vet_profiles WHERE user_id = ?", (actor_user_id,)).fetchone()
+                if not row:
+                    raise ServiceStoreNotFoundError("Vet profile not found")
+                balance = int(row["spotlight_minutes"] or 0)
+                if balance < minutes:
+                    raise ServiceStoreValidationError(
+                        f"Insufficient spotlight minutes ({balance} available, {minutes} requested)"
+                    )
+                current_until_raw = row["highlighted_until"]
+                current_until: Optional[datetime] = None
+                if current_until_raw:
+                    try:
+                        current_until = datetime.fromisoformat(str(current_until_raw))
+                    except ValueError:
+                        current_until = None
+                base_time = current_until if current_until and current_until > now else now
+                next_until = (base_time + timedelta(minutes=minutes)).isoformat()
+
+                conn.execute(
+                    """
+                    UPDATE vet_profiles
+                    SET spotlight_minutes = spotlight_minutes - ?,
+                        highlighted_until = ?,
+                        updated_at = ?
+                    WHERE user_id = ?
+                    """,
+                    (minutes, next_until, now_iso, actor_user_id),
+                )
+                profile = self._load_vet_profile(conn, actor_user_id, create_missing=False)
+                conn.commit()
+        if not profile:
+            raise ServiceStoreNotFoundError("Vet profile not found after spotlight activation")
+        return VetSpotlightActivationResult(
+            minutes_spent=minutes,
+            profile=profile,
+        )
+
+    def verify_groomer_by_vet(
+        self,
+        *,
+        provider_id: str,
+        actor_user_id: str,
+        decision: str,
+        confidence_score: float,
+        note: str = "",
+    ) -> VetGroomerVerificationResult:
+        if not self._is_vet_user(actor_user_id):
+            raise ServiceStorePermissionError("Only verified vets can review groomers")
+        if decision not in {"approved", "needs_improvement"}:
+            raise ServiceStoreValidationError("Invalid decision. Allowed: approved, needs_improvement")
+        if confidence_score < 0.0 or confidence_score > 1.0:
+            raise ServiceStoreValidationError("confidence_score must be between 0.0 and 1.0")
+
+        now = datetime.utcnow()
+        now_iso = now.isoformat()
+        valid_until = (now + timedelta(days=90)).isoformat() if decision == "approved" else None
+        spotlight_minutes_earned = (
+            12 + int(round(confidence_score * 8))
+            if decision == "approved"
+            else 4 + int(round(confidence_score * 4))
+        )
+
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
+                if not row:
+                    raise ServiceStoreNotFoundError("Provider not found")
+                if str(row["category"]) != "grooming":
+                    raise ServiceStoreValidationError("Vet verification is only available for grooming providers")
+
+                owner = conn.execute(
+                    "SELECT user_id FROM provider_owners WHERE provider_id = ?",
+                    (provider_id,),
+                ).fetchone()
+                owner_user_id = str(owner["user_id"]) if owner else None
+                if owner_user_id and owner_user_id == actor_user_id:
+                    raise ServiceStorePermissionError("Vets cannot verify their own listing")
+
+                verification_id = f"vver_{uuid4().hex[:10]}"
+                conn.execute(
+                    """
+                    INSERT INTO vet_groomer_verifications (
+                        id, provider_id, vet_user_id, decision, confidence_score, note, created_at, valid_until, spotlight_minutes_earned
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        verification_id,
+                        provider_id,
+                        actor_user_id,
+                        decision,
+                        float(confidence_score),
+                        note.strip(),
+                        now_iso,
+                        valid_until,
+                        int(spotlight_minutes_earned),
+                    ),
+                )
+                self._ensure_vet_profile_row(conn, actor_user_id)
+                conn.execute(
+                    """
+                    UPDATE vet_profiles
+                    SET spotlight_minutes = spotlight_minutes + ?,
+                        grooming_reviews_count = grooming_reviews_count + 1,
+                        updated_at = ?
+                    WHERE user_id = ?
+                    """,
+                    (int(spotlight_minutes_earned), now_iso, actor_user_id),
+                )
+
+                response_time_map = self._compute_provider_response_times(conn)
+                local_bookers_map = self._compute_local_bookers_this_month(conn)
+                quote_sprint_map = self._compute_quote_sprint_metrics(conn)
+                vet_verification_map = self._compute_latest_vet_verifications(conn)
+                highlighted_vet_map = self._compute_highlighted_vets(conn)
+                vet_profile = self._load_vet_profile(conn, actor_user_id, create_missing=False)
+                conn.commit()
+
+        if not vet_profile:
+            raise ServiceStoreNotFoundError("Vet profile not found after grooming verification")
+        sprint = quote_sprint_map.get(provider_id, {"tier": "none", "response_rate_pct": 0, "streak": 0})
+        verification_map = vet_verification_map.get(
+            provider_id,
+            {"vet_checked": False, "vet_checked_by": None, "vet_checked_until": None},
+        )
+        highlighted_until = highlighted_vet_map.get(owner_user_id or "")
+        highlighted_vet = ACCOUNT_LABELS.get(owner_user_id, owner_user_id) if highlighted_until and owner_user_id else None
+        provider = self._row_to_provider(
+            row,
+            owner_user_id=owner_user_id,
+            response_time_minutes=response_time_map.get(provider_id),
+            local_bookers_this_month=local_bookers_map.get(provider_id, 0),
+            shared_group_bookers=0,
+            quote_sprint_tier=str(sprint.get("tier", "none")),
+            quote_response_rate_pct=int(sprint.get("response_rate_pct", 0)),
+            quote_response_streak=int(sprint.get("streak", 0)),
+            vet_checked=bool(verification_map.get("vet_checked", False)),
+            vet_checked_by=verification_map.get("vet_checked_by"),
+            vet_checked_until=verification_map.get("vet_checked_until"),
+            highlighted_vet=highlighted_vet,
+            highlighted_vet_until=highlighted_until,
+        )
+        verification = VetGroomerVerification(
+            id=verification_id,
+            provider_id=provider_id,
+            vet_user_id=actor_user_id,
+            decision=decision,
+            confidence_score=float(confidence_score),
+            note=note.strip(),
+            created_at=now_iso,
+            valid_until=valid_until,
+            spotlight_minutes_earned=int(spotlight_minutes_earned),
+        )
+        return VetGroomerVerificationResult(
+            verification=verification,
+            provider=provider,
+            vet_profile=vet_profile,
+        )
+
     def get_provider_details(self, provider_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             with self._connect() as conn:
@@ -1161,9 +1726,35 @@ class ServiceStore:
                     "SELECT * FROM reviews WHERE provider_id = ? ORDER BY id DESC",
                     (provider_id,),
                 ).fetchall()
+                response_time_map = self._compute_provider_response_times(conn)
+                local_bookers_map = self._compute_local_bookers_this_month(conn)
+                quote_sprint_map = self._compute_quote_sprint_metrics(conn)
+                vet_verification_map = self._compute_latest_vet_verifications(conn)
+                highlighted_vet_map = self._compute_highlighted_vets(conn)
 
         owner_user_id = owner["user_id"] if owner else None
-        provider = self._row_to_provider(row, owner_user_id=owner_user_id)
+        sprint = quote_sprint_map.get(provider_id, {"tier": "none", "response_rate_pct": 0, "streak": 0})
+        verification = vet_verification_map.get(
+            provider_id,
+            {"vet_checked": False, "vet_checked_by": None, "vet_checked_until": None},
+        )
+        highlighted_until = highlighted_vet_map.get(owner_user_id or "")
+        highlighted_vet = ACCOUNT_LABELS.get(owner_user_id, owner_user_id) if highlighted_until and owner_user_id else None
+        provider = self._row_to_provider(
+            row,
+            owner_user_id=owner_user_id,
+            response_time_minutes=response_time_map.get(provider_id),
+            local_bookers_this_month=local_bookers_map.get(provider_id, 0),
+            shared_group_bookers=0,
+            quote_sprint_tier=str(sprint.get("tier", "none")),
+            quote_response_rate_pct=int(sprint.get("response_rate_pct", 0)),
+            quote_response_streak=int(sprint.get("streak", 0)),
+            vet_checked=bool(verification.get("vet_checked", False)),
+            vet_checked_by=verification.get("vet_checked_by"),
+            vet_checked_until=verification.get("vet_checked_until"),
+            highlighted_vet=highlighted_vet,
+            highlighted_vet_until=highlighted_until,
+        )
         reviews = [
             Review(
                 id=r["id"],

@@ -22,6 +22,13 @@ from app.models import (
     ServiceProviderDetails,
     ServiceProviderRestoreRequest,
     ServiceProviderUpdateRequest,
+    VetCoachProfile,
+    VetCoachSessionRequest,
+    VetCoachSessionResult,
+    VetGroomerVerificationRequest,
+    VetGroomerVerificationResult,
+    VetSpotlightActivateRequest,
+    VetSpotlightActivationResult,
 )
 from app.services.service_store import (
     ServiceStoreConflictError,
@@ -139,6 +146,85 @@ def respond_quote_request(
             deep_link=f"quote:{updated_request.id}",
         )
         return ServiceQuoteRequestView(quote_request=updated_request, targets=targets)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.get("/vet-coach/profile", response_model=VetCoachProfile)
+def get_vet_coach_profile(
+    user_id: str = Query(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=user_id, authorization=authorization)
+    try:
+        return service_store.get_vet_coach_profile(actor_user_id=user_id)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.post("/vet-coach/sessions", response_model=VetCoachSessionResult)
+def submit_vet_coach_session(
+    request: VetCoachSessionRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=request.actor_user_id, authorization=authorization)
+    try:
+        return service_store.record_vet_coach_session(
+            actor_user_id=request.actor_user_id,
+            duration_minutes=request.duration_minutes,
+            quality_score=request.quality_score,
+            topic=request.topic,
+            note=request.note,
+        )
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.post("/vet-coach/spotlight/activate", response_model=VetSpotlightActivationResult)
+def activate_vet_spotlight(
+    request: VetSpotlightActivateRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=request.actor_user_id, authorization=authorization)
+    try:
+        return service_store.activate_vet_spotlight(
+            actor_user_id=request.actor_user_id,
+            minutes=request.minutes,
+        )
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.post("/providers/{provider_id}/vet-verify", response_model=VetGroomerVerificationResult)
+def vet_verify_groomer(
+    provider_id: str,
+    request: VetGroomerVerificationRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=request.actor_user_id, authorization=authorization)
+    try:
+        result = service_store.verify_groomer_by_vet(
+            provider_id=provider_id,
+            actor_user_id=request.actor_user_id,
+            decision=request.decision,
+            confidence_score=request.confidence_score,
+            note=request.note,
+        )
+        owner_ids = service_store.list_provider_owner_user_ids(provider_id)
+        for owner_id in owner_ids:
+            if owner_id and owner_id != request.actor_user_id:
+                notification_store.create(
+                    user_id=owner_id,
+                    title="Listing reviewed by vet",
+                    body=(
+                        f"Your listing is now Vet-Checked until {result.verification.valid_until[:10]}"
+                        if result.verification.valid_until
+                        else "A vet submitted improvement notes for your listing"
+                    ),
+                    category="booking",
+                    deep_link=f"provider:{provider_id}",
+                )
+        return result
     except ServiceStoreError as exc:
         _raise_service_http_error(exc)
 

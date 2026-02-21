@@ -1594,6 +1594,34 @@ class PetSocialViewModel(
         }
     }
 
+    fun logGroupCleanupCheckIn(groupId: String) {
+        if (groupId.isBlank()) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            runCatching {
+                repository.participateGroupChallenge(
+                    groupId = groupId,
+                    challengeType = "clean_park_streak",
+                    contributionCount = 1,
+                    note = "Cleanup check-in from app",
+                )
+            }.onSuccess { result ->
+                val unlocked = if (result.unlockedBadges.isNotEmpty()) {
+                    " Unlocked: ${result.unlockedBadges.joinToString(", ")}."
+                } else {
+                    ""
+                }
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    toastMessage = "Cleanup logged (${result.myContributionCount}/${result.challenge.targetCount}).$unlocked",
+                )
+                loadHomeData(_uiState.value.selectedCategory)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+            }
+        }
+    }
+
     fun handleCta(cta: ChatCta) {
         when (cta.action) {
             "find_dog_walkers" -> {

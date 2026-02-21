@@ -722,6 +722,39 @@ private fun ProviderCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
             ) {
+                if (provider.vetChecked) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                    ) {
+                        Text(
+                            text = "Vet-Checked",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+                if (provider.quoteSprintTier != "none") {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    ) {
+                        Text(
+                            text = "Quote Sprint ${provider.quoteSprintTier.replaceFirstChar { it.uppercase() }}",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+                if (!provider.highlightedVet.isNullOrBlank()) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    ) {
+                        Text(
+                            text = "Highlighted Vet Owner",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
                 provider.responseTimeMinutes?.let { responseTime ->
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),

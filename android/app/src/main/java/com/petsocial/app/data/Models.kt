@@ -26,6 +26,14 @@ data class ServiceProvider(
     @SerialName("local_bookers_this_month") val localBookersThisMonth: Int = 0,
     @SerialName("shared_group_bookers") val sharedGroupBookers: Int = 0,
     @SerialName("social_proof") val socialProof: List<String> = emptyList(),
+    @SerialName("quote_sprint_tier") val quoteSprintTier: String = "none",
+    @SerialName("quote_response_rate_pct") val quoteResponseRatePct: Int = 0,
+    @SerialName("quote_response_streak") val quoteResponseStreak: Int = 0,
+    @SerialName("vet_checked") val vetChecked: Boolean = false,
+    @SerialName("vet_checked_until") val vetCheckedUntil: String? = null,
+    @SerialName("vet_checked_by") val vetCheckedBy: String? = null,
+    @SerialName("highlighted_vet") val highlightedVet: String? = null,
+    @SerialName("highlighted_vet_until") val highlightedVetUntil: String? = null,
 )
 
 @Serializable
@@ -129,6 +137,73 @@ data class ServiceQuoteRequest(
 data class ServiceQuoteRequestView(
     @SerialName("quote_request") val quoteRequest: ServiceQuoteRequest,
     val targets: List<ServiceQuoteTarget>,
+)
+
+@Serializable
+data class VetCoachSessionRequest(
+    @SerialName("actor_user_id") val actorUserId: String,
+    @SerialName("duration_minutes") val durationMinutes: Int,
+    @SerialName("quality_score") val qualityScore: Double,
+    val topic: String = "",
+    val note: String = "",
+)
+
+@Serializable
+data class VetSpotlightActivateRequest(
+    @SerialName("actor_user_id") val actorUserId: String,
+    val minutes: Int,
+)
+
+@Serializable
+data class VetCoachProfile(
+    @SerialName("user_id") val userId: String,
+    @SerialName("spotlight_minutes") val spotlightMinutes: Int,
+    @SerialName("coaching_minutes") val coachingMinutes: Int,
+    @SerialName("coaching_sessions") val coachingSessions: Int,
+    @SerialName("coach_quality_score") val coachQualityScore: Double,
+    @SerialName("highlighted_until") val highlightedUntil: String? = null,
+    @SerialName("badge_tier") val badgeTier: String = "none",
+)
+
+@Serializable
+data class VetCoachSessionResult(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("minutes_earned") val minutesEarned: Int,
+    val profile: VetCoachProfile,
+)
+
+@Serializable
+data class VetSpotlightActivationResult(
+    @SerialName("minutes_spent") val minutesSpent: Int,
+    val profile: VetCoachProfile,
+)
+
+@Serializable
+data class VetGroomerVerificationRequest(
+    @SerialName("actor_user_id") val actorUserId: String,
+    val decision: String,
+    @SerialName("confidence_score") val confidenceScore: Double = 0.8,
+    val note: String = "",
+)
+
+@Serializable
+data class VetGroomerVerification(
+    val id: String,
+    @SerialName("provider_id") val providerId: String,
+    @SerialName("vet_user_id") val vetUserId: String,
+    val decision: String,
+    @SerialName("confidence_score") val confidenceScore: Double,
+    val note: String = "",
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("valid_until") val validUntil: String? = null,
+    @SerialName("spotlight_minutes_earned") val spotlightMinutesEarned: Int = 0,
+)
+
+@Serializable
+data class VetGroomerVerificationResult(
+    val verification: VetGroomerVerification,
+    val provider: ServiceProvider,
+    @SerialName("vet_profile") val vetProfile: VetCoachProfile,
 )
 
 @Serializable
@@ -322,6 +397,10 @@ data class Group(
     @SerialName("membership_status") val membershipStatus: String = "none",
     @SerialName("is_admin") val isAdmin: Boolean = false,
     @SerialName("pending_request_count") val pendingRequestCount: Int = 0,
+    @SerialName("group_badges") val groupBadges: List<String> = emptyList(),
+    @SerialName("cooperative_score") val cooperativeScore: Int = 0,
+    @SerialName("my_pack_builder_points") val myPackBuilderPoints: Int = 0,
+    @SerialName("my_clean_park_points") val myCleanParkPoints: Int = 0,
 )
 
 @Serializable
@@ -348,6 +427,44 @@ data class GroupCreateRequest(
 @Serializable
 data class GroupJoinRequest(
     @SerialName("user_id") val userId: String,
+)
+
+@Serializable
+data class GroupChallenge(
+    val id: String,
+    @SerialName("group_id") val groupId: String,
+    val type: String,
+    val title: String,
+    val description: String,
+    @SerialName("target_count") val targetCount: Int,
+    @SerialName("progress_count") val progressCount: Int,
+    val status: String,
+    @SerialName("reward_label") val rewardLabel: String,
+    @SerialName("start_at") val startAt: String,
+    @SerialName("end_at") val endAt: String,
+)
+
+@Serializable
+data class GroupChallengeView(
+    val challenge: GroupChallenge,
+    @SerialName("my_contribution_count") val myContributionCount: Int = 0,
+)
+
+@Serializable
+data class GroupChallengeParticipationRequest(
+    @SerialName("user_id") val userId: String,
+    @SerialName("challenge_type") val challengeType: String,
+    @SerialName("contribution_count") val contributionCount: Int = 1,
+    val note: String = "",
+)
+
+@Serializable
+data class GroupChallengeParticipationResult(
+    val challenge: GroupChallenge,
+    @SerialName("my_contribution_count") val myContributionCount: Int,
+    @SerialName("contribution_count") val contributionCount: Int,
+    @SerialName("reward_unlocked") val rewardUnlocked: Boolean = false,
+    @SerialName("unlocked_badges") val unlockedBadges: List<String> = emptyList(),
 )
 
 @Serializable

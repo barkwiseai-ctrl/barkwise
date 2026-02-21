@@ -62,6 +62,21 @@ interface ApiService {
         @Body payload: ServiceQuoteProviderResponseRequest,
     ): ServiceQuoteRequestView
 
+    @GET("services/vet-coach/profile")
+    suspend fun getVetCoachProfile(@Query("user_id") userId: String): VetCoachProfile
+
+    @POST("services/vet-coach/sessions")
+    suspend fun submitVetCoachSession(@Body payload: VetCoachSessionRequest): VetCoachSessionResult
+
+    @POST("services/vet-coach/spotlight/activate")
+    suspend fun activateVetSpotlight(@Body payload: VetSpotlightActivateRequest): VetSpotlightActivationResult
+
+    @POST("services/providers/{providerId}/vet-verify")
+    suspend fun verifyGroomerByVet(
+        @Path("providerId") providerId: String,
+        @Body payload: VetGroomerVerificationRequest,
+    ): VetGroomerVerificationResult
+
     @GET("services/providers/{providerId}/availability")
     suspend fun getProviderAvailability(
         @Path("providerId") providerId: String,
@@ -123,6 +138,18 @@ interface ApiService {
 
     @POST("community/groups/{groupId}/join")
     suspend fun joinGroup(@Path("groupId") groupId: String, @Body payload: GroupJoinRequest): Group
+
+    @GET("community/groups/{groupId}/challenges")
+    suspend fun getGroupChallenges(
+        @Path("groupId") groupId: String,
+        @Query("user_id") userId: String? = null,
+    ): List<GroupChallengeView>
+
+    @POST("community/groups/{groupId}/challenges/participate")
+    suspend fun participateGroupChallenge(
+        @Path("groupId") groupId: String,
+        @Body payload: GroupChallengeParticipationRequest,
+    ): GroupChallengeParticipationResult
 
     @POST("community/invites")
     suspend fun createGroupInvite(@Body payload: GroupInviteCreateRequest): GroupInvite
