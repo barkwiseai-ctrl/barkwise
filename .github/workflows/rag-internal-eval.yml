@@ -1,0 +1,56 @@
+name: rag-internal-eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      allow_fallback:
+        description: "Allow fallback mode if OPENAI_API_KEY is unavailable"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      min_pass_rate:
+        description: "Minimum aggregate pass rate"
+        required: false
+        default: "0.7"
+        type: string
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run RAG eval
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rag-eval
+          ALLOW=""
+          if [[ "${{ inputs.allow_fallback }}" == "true" ]]; then
+            ALLOW="--allow-fallback"
+          fi
+          python3 backend/scripts/rag_internal_eval.py $ALLOW \
+            --min-pass-rate "${{ inputs.min_pass_rate }}" \
+            --json-out /tmp/rag-eval/rag-eval.json \
+            | tee /tmp/rag-eval/rag-eval.log
+
+      - name: Upload eval artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-eval-artifacts
+          path: /tmp/rag-eval/

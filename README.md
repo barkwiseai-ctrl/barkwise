@@ -34,6 +34,20 @@ cd /Users/yingxu/public-repos/pet-social-app/backend
 python3 scripts/rag_internal_eval.py --allow-fallback --json-out /tmp/rag-eval.json
 ```
 
+Strict LLM-mode eval (fails fast when `OPENAI_API_KEY` is not set):
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app/backend
+python3 scripts/rag_internal_eval.py --json-out /tmp/rag-eval-llm.json
+```
+
+Route telemetry summary from logs:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app/backend
+python3 scripts/route_telemetry_report.py /path/to/backend.log --json-out /tmp/route-telemetry-summary.json
+```
+
 Browser beta (for iPhone Safari + desktop):
 
 ```bash
