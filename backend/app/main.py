@@ -33,7 +33,8 @@ trusted_hosts = _parse_csv_env("TRUSTED_HOSTS", "*")
 if not (len(trusted_hosts) == 1 and trusted_hosts[0] == "*"):
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
 
-app.include_router(services.router)
+app.include_router(services.router, prefix="/services")
+app.include_router(services.router, prefix="/listings")
 app.include_router(chat.router)
 app.include_router(community.router)
 app.include_router(auth.router)

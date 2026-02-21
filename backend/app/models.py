@@ -19,6 +19,7 @@ class ServiceProvider(BaseModel):
     distance_km: Optional[float] = None
     owner_user_id: Optional[str] = None
     owner_label: Optional[str] = None
+    status: Literal["active", "cancelled"] = "active"
 
 
 class Review(BaseModel):
@@ -32,6 +33,39 @@ class Review(BaseModel):
 class ServiceProviderDetails(BaseModel):
     provider: ServiceProvider
     reviews: list[Review]
+
+
+class ServiceProviderCreateRequest(BaseModel):
+    user_id: str
+    name: str
+    category: Literal["dog_walking", "grooming"]
+    suburb: str
+    description: str
+    price_from: int = Field(ge=1)
+    full_description: Optional[str] = None
+    image_urls: list[str] = Field(default_factory=list)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class ServiceProviderUpdateRequest(BaseModel):
+    user_id: str
+    name: Optional[str] = None
+    suburb: Optional[str] = None
+    description: Optional[str] = None
+    price_from: Optional[int] = Field(default=None, ge=1)
+    full_description: Optional[str] = None
+    image_urls: Optional[list[str]] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class ServiceProviderCancelRequest(BaseModel):
+    user_id: str
+
+
+class ServiceProviderRestoreRequest(BaseModel):
+    user_id: str
 
 
 class BookingRequest(BaseModel):

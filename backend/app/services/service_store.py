@@ -3,7 +3,7 @@ import math
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
@@ -56,6 +56,26 @@ ACCOUNT_LABELS = {
 }
 
 
+class ServiceStoreError(ValueError):
+    """Base class for user-visible service-store errors."""
+
+
+class ServiceStoreValidationError(ServiceStoreError):
+    pass
+
+
+class ServiceStoreNotFoundError(ServiceStoreError):
+    pass
+
+
+class ServiceStoreConflictError(ServiceStoreError):
+    pass
+
+
+class ServiceStorePermissionError(ServiceStoreError):
+    pass
+
+
 @dataclass
 class ServiceStore:
     db_path: str
@@ -90,7 +110,8 @@ class ServiceStore:
                         full_description TEXT NOT NULL,
                         image_urls_json TEXT NOT NULL,
                         latitude REAL NOT NULL,
-                        longitude REAL NOT NULL
+                        longitude REAL NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'active'
                     )
                     """
                 )
@@ -179,6 +200,7 @@ class ServiceStore:
                     """
                 )
                 self._ensure_column(conn, "bookings", "owner_user_id", "TEXT NOT NULL DEFAULT 'guest_user'")
+                self._ensure_column(conn, "providers", "status", "TEXT NOT NULL DEFAULT 'active'")
                 conn.commit()
                 conn.execute("UPDATE availability_slots SET is_booked = 0")
                 conn.commit()
@@ -521,8 +543,8 @@ class ServiceStore:
                         """
                         INSERT OR IGNORE INTO providers (
                             id, name, category, suburb, rating, review_count, price_from,
-                            description, full_description, image_urls_json, latitude, longitude
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            description, full_description, image_urls_json, latitude, longitude, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             provider["id"],
@@ -537,6 +559,7 @@ class ServiceStore:
                             json.dumps(provider["image_urls"]),
                             provider["latitude"],
                             provider["longitude"],
+                            "active",
                         ),
                     )
                     # Seed sample ownership so users can act as providers and customers.
@@ -592,12 +615,15 @@ class ServiceStore:
             distance_km=distance_km,
             owner_user_id=owner_user_id,
             owner_label=ACCOUNT_LABELS.get(owner_user_id, owner_user_id),
+            status=row["status"] or "active",
         )
 
     def list_providers(
         self,
         category: Optional[str] = None,
         suburb: Optional[str] = None,
+        user_id: Optional[str] = None,
+        include_inactive: bool = False,
         min_rating: Optional[float] = None,
         max_distance_km: Optional[float] = None,
         user_lat: Optional[float] = None,
@@ -606,6 +632,13 @@ class ServiceStore:
         sort_by: str = "relevance",
         limit: int = 200,
     ) -> List[ServiceProvider]:
+        sort_key = (sort_by or "relevance").strip().lower()
+        allowed_sorts = {"relevance", "distance", "rating", "price_low", "price_high"}
+        if sort_key not in allowed_sorts:
+            raise ServiceStoreValidationError(
+                "Invalid sort_by value. Allowed: relevance, distance, rating, price_low, price_high"
+            )
+
         with self._lock:
             with self._connect() as conn:
                 rows = conn.execute("SELECT * FROM providers").fetchall()
@@ -618,6 +651,12 @@ class ServiceStore:
         def collect(filter_suburb: bool) -> List[ServiceProvider]:
             result: List[ServiceProvider] = []
             for row in rows:
+                owner_user_id = owner_map.get(row["id"])
+                provider_status = (row["status"] or "active").strip().lower()
+                if provider_status != "active":
+                    can_include_inactive = include_inactive and user_id and owner_user_id == user_id
+                    if not can_include_inactive:
+                        continue
                 if category and row["category"] != category:
                     continue
                 if filter_suburb and suburb and row["suburb"].lower() != suburb.lower():
@@ -642,7 +681,6 @@ class ServiceStore:
                     if max_distance_km is not None and distance > max_distance_km:
                         continue
 
-                owner_user_id = owner_map.get(row["id"])
                 result.append(self._row_to_provider(row, distance_km=distance, owner_user_id=owner_user_id))
             return result
 
@@ -651,7 +689,6 @@ class ServiceStore:
         if suburb and not result:
             result = collect(filter_suburb=False)
 
-        sort_key = (sort_by or "relevance").strip().lower()
         if sort_key == "distance":
             result.sort(key=lambda p: (p.distance_km if p.distance_km is not None else 9999, -p.rating))
         elif sort_key == "rating":
@@ -776,10 +813,37 @@ class ServiceStore:
             return True, "held"
         return False, None
 
+    def _parse_iso_date(self, value: str, *, field: str = "date") -> date:
+        try:
+            return date.fromisoformat(value)
+        except ValueError as exc:
+            raise ServiceStoreValidationError(f"Invalid {field}; expected YYYY-MM-DD") from exc
+
+    def _parse_time_slot(self, value: str, *, field: str = "time_slot") -> time:
+        try:
+            return time.fromisoformat(value)
+        except ValueError as exc:
+            raise ServiceStoreValidationError(f"Invalid {field}; expected HH:MM") from exc
+
+    def _parse_slot_datetime(self, slot_date: str, time_slot: str) -> datetime:
+        parsed_date = self._parse_iso_date(slot_date)
+        parsed_time = self._parse_time_slot(time_slot)
+        return datetime.combine(parsed_date, parsed_time)
+
+    def _assert_provider_exists(self, provider_id: str) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                provider = conn.execute("SELECT id FROM providers WHERE id = ?", (provider_id,)).fetchone()
+        if not provider:
+            raise ServiceStoreNotFoundError("Provider not found")
+
     def get_available_slots(self, provider_id: str, slot_date: str) -> List[ServiceAvailabilitySlot]:
         # Auto-ensure nearby availability for convenience.
-        self.ensure_availability(provider_id=provider_id, start_date=date.fromisoformat(slot_date), days=1)
+        parsed_date = self._parse_iso_date(slot_date)
+        self._assert_provider_exists(provider_id)
+        self.ensure_availability(provider_id=provider_id, start_date=parsed_date, days=1)
         slots: List[ServiceAvailabilitySlot] = []
+        normalized_date = parsed_date.isoformat()
         with self._lock:
             with self._connect() as conn:
                 self._cleanup_expired_holds(conn)
@@ -790,12 +854,12 @@ class ServiceStore:
                     WHERE provider_id = ? AND slot_date = ?
                     ORDER BY time_slot
                     """,
-                    (provider_id, slot_date),
+                    (provider_id, normalized_date),
                 ).fetchall()
                 now_utc = datetime.utcnow()
                 for row in rows:
                     blocked, reason = self._slot_is_blocked(conn, provider_id, row["slot_date"], row["time_slot"])
-                    slot_dt = datetime.fromisoformat(f"{row['slot_date']}T{row['time_slot']}:00")
+                    slot_dt = self._parse_slot_datetime(row["slot_date"], row["time_slot"])
                     if slot_dt - now_utc < timedelta(hours=2):
                         blocked = True
                         reason = "cutoff"
@@ -812,15 +876,13 @@ class ServiceStore:
         return slots
 
     def create_booking(self, request: BookingRequest) -> Booking:
-        self.ensure_availability(provider_id=request.provider_id, start_date=date.fromisoformat(request.date), days=1)
+        requested_slot = self._parse_slot_datetime(request.date, request.time_slot)
+        self._assert_provider_exists(request.provider_id)
+        self.ensure_availability(provider_id=request.provider_id, start_date=requested_slot.date(), days=1)
 
         with self._lock:
             with self._connect() as conn:
                 self._cleanup_expired_holds(conn)
-                provider = conn.execute("SELECT id FROM providers WHERE id = ?", (request.provider_id,)).fetchone()
-                if not provider:
-                    raise ValueError("Provider not found")
-
                 slot = conn.execute(
                     """
                     SELECT id, is_booked FROM availability_slots
@@ -829,10 +891,9 @@ class ServiceStore:
                     (request.provider_id, request.date, request.time_slot),
                 ).fetchone()
                 if not slot:
-                    raise ValueError("Time slot not available")
-                slot_dt = datetime.fromisoformat(f"{request.date}T{request.time_slot}:00")
-                if slot_dt - datetime.utcnow() < timedelta(hours=2):
-                    raise ValueError("Booking cutoff applies for this slot")
+                    raise ServiceStoreValidationError("Time slot not available")
+                if requested_slot - datetime.utcnow() < timedelta(hours=2):
+                    raise ServiceStoreValidationError("Booking cutoff applies for this slot")
 
                 conn.execute(
                     """
@@ -843,7 +904,7 @@ class ServiceStore:
                 )
                 blocked, reason = self._slot_is_blocked(conn, request.provider_id, request.date, request.time_slot)
                 if blocked:
-                    raise ValueError(f"Time slot unavailable ({reason})")
+                    raise ServiceStoreConflictError(f"Time slot unavailable ({reason})")
 
                 booking = Booking(
                     id=f"b_{uuid4().hex[:8]}",
@@ -893,14 +954,19 @@ class ServiceStore:
         return booking
 
     def list_bookings(self, user_id: Optional[str] = None, role: Optional[str] = None) -> List[Booking]:
+        allowed_roles = {None, "all", "owner", "provider"}
+        normalized_role = role.strip().lower() if role else None
+        if normalized_role not in allowed_roles:
+            raise ServiceStoreValidationError("Invalid role value. Allowed: all, owner, provider")
+
         with self._lock:
             with self._connect() as conn:
                 query = "SELECT b.* FROM bookings b"
                 params: List[Any] = []
-                if user_id and role == "provider":
+                if user_id and normalized_role == "provider":
                     query += " JOIN provider_owners po ON po.provider_id = b.provider_id WHERE po.user_id = ?"
                     params.append(user_id)
-                elif user_id and role == "owner":
+                elif user_id and normalized_role == "owner":
                     query += " WHERE b.owner_user_id = ?"
                     params.append(user_id)
                 elif user_id:
@@ -930,7 +996,9 @@ class ServiceStore:
         ]
 
     def create_booking_hold(self, request: BookingHoldRequest, ttl_minutes: int = 15) -> BookingHold:
-        self.ensure_availability(provider_id=request.provider_id, start_date=date.fromisoformat(request.date), days=1)
+        requested_slot = self._parse_slot_datetime(request.date, request.time_slot)
+        self._assert_provider_exists(request.provider_id)
+        self.ensure_availability(provider_id=request.provider_id, start_date=requested_slot.date(), days=1)
 
         with self._lock:
             with self._connect() as conn:
@@ -943,15 +1011,14 @@ class ServiceStore:
                     (request.provider_id, request.date, request.time_slot),
                 ).fetchone()
                 if not slot:
-                    raise ValueError("Time slot not available")
+                    raise ServiceStoreValidationError("Time slot not available")
 
-                slot_dt = datetime.fromisoformat(f"{request.date}T{request.time_slot}:00")
-                if slot_dt - datetime.utcnow() < timedelta(hours=2):
-                    raise ValueError("Booking cutoff applies for this slot")
+                if requested_slot - datetime.utcnow() < timedelta(hours=2):
+                    raise ServiceStoreValidationError("Booking cutoff applies for this slot")
 
                 blocked, reason = self._slot_is_blocked(conn, request.provider_id, request.date, request.time_slot)
                 if blocked:
-                    raise ValueError(f"Time slot unavailable ({reason})")
+                    raise ServiceStoreConflictError(f"Time slot unavailable ({reason})")
 
                 expires_at = (datetime.utcnow() + timedelta(minutes=ttl_minutes)).isoformat()
                 hold = BookingHold(
@@ -993,15 +1060,15 @@ class ServiceStore:
             with self._connect() as conn:
                 row = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
                 if not row:
-                    raise ValueError("Booking not found")
+                    raise ServiceStoreNotFoundError("Booking not found")
 
                 current_status = str(row["status"])
                 if current_status in BOOKING_TERMINAL_STATUSES:
-                    raise ValueError("Booking is already terminal")
+                    raise ServiceStoreConflictError("Booking is already terminal")
 
                 next_status = update.status
                 if next_status not in allowed_transitions.get(current_status, set()):
-                    raise ValueError(f"Invalid status transition: {current_status} -> {next_status}")
+                    raise ServiceStoreValidationError(f"Invalid status transition: {current_status} -> {next_status}")
 
                 owner_user_id = str(row["owner_user_id"])
                 provider_owner = conn.execute(
@@ -1012,12 +1079,12 @@ class ServiceStore:
 
                 if next_status in {"provider_confirmed", "provider_declined", "in_progress", "completed", "cancelled_by_provider"}:
                     if update.actor_user_id != provider_user_id:
-                        raise ValueError("Only provider can apply this status")
+                        raise ServiceStorePermissionError("Only provider can apply this status")
                 if next_status in {"cancelled_by_owner", "reschedule_requested"}:
                     if update.actor_user_id != owner_user_id:
-                        raise ValueError("Only owner can apply this status")
+                        raise ServiceStorePermissionError("Only owner can apply this status")
                 if next_status == "rescheduled" and update.actor_user_id != provider_user_id:
-                    raise ValueError("Only provider can finalize reschedule")
+                    raise ServiceStorePermissionError("Only provider can finalize reschedule")
 
                 conn.execute("UPDATE bookings SET status = ?, note = ? WHERE id = ?", (next_status, update.note or row["note"], booking_id))
                 conn.execute(
@@ -1050,13 +1117,14 @@ class ServiceStore:
                 )
 
     def create_provider_blackout(self, provider_id: str, request: ProviderBlackoutRequest) -> ProviderBlackout:
+        self._parse_slot_datetime(request.date, request.time_slot)
         with self._lock:
             with self._connect() as conn:
                 owner = conn.execute("SELECT user_id FROM provider_owners WHERE provider_id = ?", (provider_id,)).fetchone()
                 if not owner:
-                    raise ValueError("Provider owner not found")
+                    raise ServiceStoreNotFoundError("Provider owner not found")
                 if owner["user_id"] != request.actor_user_id:
-                    raise ValueError("Only provider owner can create blackout")
+                    raise ServiceStorePermissionError("Only provider owner can create blackout")
 
                 exists = conn.execute(
                     """
@@ -1066,7 +1134,7 @@ class ServiceStore:
                     (provider_id, request.date, request.time_slot),
                 ).fetchone()
                 if exists:
-                    raise ValueError("Blackout already exists")
+                    raise ServiceStoreConflictError("Blackout already exists")
 
                 blackout = ProviderBlackout(
                     id=f"blk_{uuid4().hex[:8]}",
@@ -1122,24 +1190,35 @@ class ServiceStore:
         date_to: str,
         role: str = "all",
     ) -> List[CalendarEvent]:
+        parsed_from = self._parse_iso_date(date_from, field="date_from")
+        parsed_to = self._parse_iso_date(date_to, field="date_to")
+        if parsed_to < parsed_from:
+            raise ServiceStoreValidationError("date_to must be on or after date_from")
+
+        normalized_role = (role or "all").strip().lower()
+        if normalized_role not in {"all", "owner", "provider"}:
+            raise ServiceStoreValidationError("Invalid role value. Allowed: all, owner, provider")
+
+        date_from_iso = parsed_from.isoformat()
+        date_to_iso = parsed_to.isoformat()
         with self._lock:
             with self._connect() as conn:
                 self._cleanup_expired_holds(conn)
                 events: List[CalendarEvent] = []
                 booking_rows: List[sqlite3.Row] = []
 
-                if role in {"all", "owner"}:
+                if normalized_role in {"all", "owner"}:
                     booking_rows.extend(
                         conn.execute(
                             """
                             SELECT * FROM bookings
                             WHERE owner_user_id = ? AND booking_date BETWEEN ? AND ?
                             """,
-                            (user_id, date_from, date_to),
+                            (user_id, date_from_iso, date_to_iso),
                         ).fetchall()
                     )
 
-                if role in {"all", "provider"}:
+                if normalized_role in {"all", "provider"}:
                     booking_rows.extend(
                         conn.execute(
                             """
@@ -1148,7 +1227,7 @@ class ServiceStore:
                             JOIN provider_owners po ON po.provider_id = b.provider_id
                             WHERE po.user_id = ? AND b.booking_date BETWEEN ? AND ?
                             """,
-                            (user_id, date_from, date_to),
+                            (user_id, date_from_iso, date_to_iso),
                         ).fetchall()
                     )
 
@@ -1178,7 +1257,7 @@ class ServiceStore:
                     SELECT * FROM booking_holds
                     WHERE owner_user_id = ? AND booking_date BETWEEN ? AND ?
                     """,
-                    (user_id, date_from, date_to),
+                    (user_id, date_from_iso, date_to_iso),
                 ).fetchall()
                 for row in hold_rows:
                     events.append(
@@ -1195,7 +1274,7 @@ class ServiceStore:
                         )
                     )
 
-                if role in {"all", "provider"}:
+                if normalized_role in {"all", "provider"}:
                     blackout_rows = conn.execute(
                         """
                         SELECT bs.*, po.user_id AS owner_user_id
@@ -1203,7 +1282,7 @@ class ServiceStore:
                         JOIN provider_owners po ON po.provider_id = bs.provider_id
                         WHERE po.user_id = ? AND bs.slot_date BETWEEN ? AND ?
                         """,
-                        (user_id, date_from, date_to),
+                        (user_id, date_from_iso, date_to_iso),
                     ).fetchall()
                     for row in blackout_rows:
                         events.append(
@@ -1239,11 +1318,22 @@ class ServiceStore:
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
     ) -> ServiceProvider:
+        if category not in {"dog_walking", "grooming"}:
+            raise ServiceStoreValidationError("Invalid category. Allowed: dog_walking, grooming")
+        if not name.strip():
+            raise ServiceStoreValidationError("Provider name is required")
+        if not suburb.strip():
+            raise ServiceStoreValidationError("Suburb is required")
+        if not description.strip():
+            raise ServiceStoreValidationError("Description is required")
+        if int(price_from) <= 0:
+            raise ServiceStoreValidationError("price_from must be greater than 0")
+
         coords = self._resolve_origin(suburb=suburb, user_lat=latitude, user_lng=longitude)
         lat, lng = coords if coords else (-33.8889, 151.2111)
         provider_id = f"svc_{uuid4().hex[:8]}"
 
-        full_description = full_description or description
+        full_description = (full_description or description).strip()
         images = image_urls or [
             "https://images.unsplash.com/photo-1450778869180-41d0601e046e",
             "https://images.unsplash.com/photo-1517849845537-4d257902454a",
@@ -1255,22 +1345,23 @@ class ServiceStore:
                     """
                     INSERT INTO providers (
                         id, name, category, suburb, rating, review_count, price_from,
-                        description, full_description, image_urls_json, latitude, longitude
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        description, full_description, image_urls_json, latitude, longitude, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         provider_id,
-                        name,
+                        name.strip(),
                         category,
-                        suburb,
+                        suburb.strip(),
                         5.0,
                         0,
                         int(price_from),
-                        description,
+                        description.strip(),
                         full_description,
                         json.dumps(images),
                         lat,
                         lng,
+                        "active",
                     ),
                 )
                 conn.execute(
@@ -1286,7 +1377,144 @@ class ServiceStore:
         self.ensure_availability(provider_id=provider_id, start_date=date.today(), days=14)
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
-        return self._row_to_provider(row)
+        return self._row_to_provider(row, owner_user_id=owner_user_id)
+
+    def update_provider(
+        self,
+        *,
+        provider_id: str,
+        actor_user_id: str,
+        name: Optional[str] = None,
+        suburb: Optional[str] = None,
+        description: Optional[str] = None,
+        price_from: Optional[int] = None,
+        full_description: Optional[str] = None,
+        image_urls: Optional[List[str]] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+    ) -> ServiceProvider:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
+                if not row:
+                    raise ServiceStoreNotFoundError("Provider not found")
+
+                owner = conn.execute(
+                    "SELECT user_id FROM provider_owners WHERE provider_id = ?",
+                    (provider_id,),
+                ).fetchone()
+                if not owner:
+                    raise ServiceStoreNotFoundError("Provider owner not found")
+                owner_user_id = str(owner["user_id"])
+                if owner_user_id != actor_user_id:
+                    raise ServiceStorePermissionError("Only provider owner can edit listing")
+
+                updated_name = (name if name is not None else row["name"]).strip()
+                updated_suburb = (suburb if suburb is not None else row["suburb"]).strip()
+                updated_description = (description if description is not None else row["description"]).strip()
+                updated_price_from = int(price_from if price_from is not None else row["price_from"])
+                updated_full_description = (full_description if full_description is not None else row["full_description"]).strip()
+                if not updated_full_description:
+                    updated_full_description = updated_description
+
+                if not updated_name:
+                    raise ServiceStoreValidationError("Provider name is required")
+                if not updated_suburb:
+                    raise ServiceStoreValidationError("Suburb is required")
+                if not updated_description:
+                    raise ServiceStoreValidationError("Description is required")
+                if updated_price_from <= 0:
+                    raise ServiceStoreValidationError("price_from must be greater than 0")
+
+                if image_urls is None:
+                    updated_image_urls = json.loads(row["image_urls_json"] or "[]")
+                else:
+                    updated_image_urls = [url.strip() for url in image_urls if url and url.strip()]
+                if not updated_image_urls:
+                    updated_image_urls = [
+                        "https://images.unsplash.com/photo-1450778869180-41d0601e046e",
+                        "https://images.unsplash.com/photo-1517849845537-4d257902454a",
+                    ]
+
+                next_latitude = latitude if latitude is not None else float(row["latitude"])
+                next_longitude = longitude if longitude is not None else float(row["longitude"])
+                if suburb is not None and latitude is None and longitude is None:
+                    resolved = self._resolve_origin(suburb=updated_suburb, user_lat=None, user_lng=None)
+                    if resolved:
+                        next_latitude, next_longitude = resolved
+
+                conn.execute(
+                    """
+                    UPDATE providers
+                    SET name = ?, suburb = ?, description = ?, price_from = ?,
+                        full_description = ?, image_urls_json = ?, latitude = ?, longitude = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        updated_name,
+                        updated_suburb,
+                        updated_description,
+                        updated_price_from,
+                        updated_full_description,
+                        json.dumps(updated_image_urls),
+                        float(next_latitude),
+                        float(next_longitude),
+                        provider_id,
+                    ),
+                )
+                conn.commit()
+                updated_row = conn.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
+        return self._row_to_provider(updated_row, owner_user_id=owner_user_id)
+
+    def cancel_provider(self, *, provider_id: str, actor_user_id: str) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute("SELECT id FROM providers WHERE id = ?", (provider_id,)).fetchone()
+                if not row:
+                    raise ServiceStoreNotFoundError("Provider not found")
+
+                owner = conn.execute(
+                    "SELECT user_id FROM provider_owners WHERE provider_id = ?",
+                    (provider_id,),
+                ).fetchone()
+                if not owner:
+                    raise ServiceStoreNotFoundError("Provider owner not found")
+                if str(owner["user_id"]) != actor_user_id:
+                    raise ServiceStorePermissionError("Only provider owner can cancel listing")
+
+                conn.execute("UPDATE providers SET status = 'cancelled' WHERE id = ?", (provider_id,))
+                conn.execute(
+                    """
+                    UPDATE bookings
+                    SET status = 'cancelled_by_provider'
+                    WHERE provider_id = ? AND status IN ('requested', 'provider_confirmed', 'in_progress', 'reschedule_requested', 'rescheduled')
+                    """,
+                    (provider_id,),
+                )
+                conn.commit()
+
+    def restore_provider(self, *, provider_id: str, actor_user_id: str) -> ServiceProvider:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
+                if not row:
+                    raise ServiceStoreNotFoundError("Provider not found")
+                owner = conn.execute(
+                    "SELECT user_id FROM provider_owners WHERE provider_id = ?",
+                    (provider_id,),
+                ).fetchone()
+                if not owner:
+                    raise ServiceStoreNotFoundError("Provider owner not found")
+                owner_user_id = str(owner["user_id"])
+                if owner_user_id != actor_user_id:
+                    raise ServiceStorePermissionError("Only provider owner can restore listing")
+                if (row["status"] or "active") == "active":
+                    raise ServiceStoreConflictError("Listing is already active")
+
+                conn.execute("UPDATE providers SET status = 'active' WHERE id = ?", (provider_id,))
+                conn.commit()
+                updated = conn.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
+        return self._row_to_provider(updated, owner_user_id=owner_user_id)
 
     def _resolve_origin(
         self,

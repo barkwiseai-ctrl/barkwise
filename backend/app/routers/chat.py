@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -9,6 +10,7 @@ from app.services.ai_orchestrator import AIOrchestrator
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 orchestrator = AIOrchestrator()
+logger = logging.getLogger(__name__)
 
 
 @router.post("")
@@ -33,6 +35,7 @@ def submit_provider_listing(request: ProviderSubmitRequest):
 @router.post("/stream")
 def chat_stream(request: ChatRequest):
     def event_generator():
+        yield ": stream-start\n\n"
         try:
             for event in orchestrator.stream_message(
                 message=request.message,
@@ -44,6 +47,7 @@ def chat_stream(request: ChatRequest):
             # Client disconnected before stream completion.
             return
         except Exception:
+            logger.exception("Chat stream failed")
             fallback = {
                 "type": "final",
                 "response": {
@@ -58,4 +62,12 @@ def chat_stream(request: ChatRequest):
             yield f"data: {json.dumps(fallback)}\n\n"
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

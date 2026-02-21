@@ -1,13 +1,30 @@
 import base64
 import hashlib
 import hmac
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Header, HTTPException, status
 
-TOKEN_TTL_HOURS = int(os.getenv("AUTH_TOKEN_TTL_HOURS", "24"))
+logger = logging.getLogger(__name__)
+
+
+def _read_token_ttl_hours() -> int:
+    raw_value = os.getenv("AUTH_TOKEN_TTL_HOURS", "24").strip()
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning("Invalid AUTH_TOKEN_TTL_HOURS=%r; falling back to 24.", raw_value)
+        return 24
+    if parsed <= 0:
+        logger.warning("AUTH_TOKEN_TTL_HOURS=%r must be > 0; falling back to 24.", raw_value)
+        return 24
+    return parsed
+
+
+TOKEN_TTL_HOURS = _read_token_ttl_hours()
 AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").lower() in {"1", "true", "yes"}
 _AUTH_SECRET = os.getenv("AUTH_SECRET", "dev-insecure-secret-change-me")
 

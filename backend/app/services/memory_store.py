@@ -62,10 +62,10 @@ class MemoryStore:
                     }
 
                 return {
-                    "profile_memory": json.loads(row["profile_json"] or "{}"),
+                    "profile_memory": self._safe_json_object(row["profile_json"]),
                     "profile_accepted": bool(row["profile_accepted"]),
-                    "field_locks": json.loads(row["field_locks_json"] or "{}"),
-                    "provider_state": json.loads(row["provider_state_json"] or "{}"),
+                    "field_locks": self._safe_json_object(row["field_locks_json"]),
+                    "provider_state": self._safe_json_object(row["provider_state_json"]),
                 }
 
     def save_user_state(
@@ -125,3 +125,16 @@ class MemoryStore:
         turns = [{"role": row["role"], "content": row["content"]} for row in rows]
         turns.reverse()
         return turns
+
+    def _safe_json_object(self, raw_value: Any) -> Dict[str, Any]:
+        if raw_value in (None, ""):
+            return {}
+        if isinstance(raw_value, dict):
+            return raw_value
+        if not isinstance(raw_value, str):
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}

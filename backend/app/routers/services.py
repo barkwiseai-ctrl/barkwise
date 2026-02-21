@@ -13,19 +13,41 @@ from app.models import (
     ProviderBlackout,
     ProviderBlackoutRequest,
     ServiceAvailabilitySlot,
+    ServiceProviderCancelRequest,
     ServiceProvider,
+    ServiceProviderCreateRequest,
     ServiceProviderDetails,
+    ServiceProviderRestoreRequest,
+    ServiceProviderUpdateRequest,
 )
-from app.services.service_store import service_store
+from app.services.service_store import (
+    ServiceStoreConflictError,
+    ServiceStoreError,
+    ServiceStoreNotFoundError,
+    ServiceStorePermissionError,
+    service_store,
+)
 from app.services.notification_store import notification_store
 
-router = APIRouter(prefix="/services", tags=["services"])
+router = APIRouter(tags=["listings"])
+
+
+def _raise_service_http_error(exc: ServiceStoreError) -> None:
+    if isinstance(exc, ServiceStoreNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, ServiceStorePermissionError):
+        raise HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, ServiceStoreConflictError):
+        raise HTTPException(status_code=409, detail=str(exc))
+    raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/providers", response_model=list[ServiceProvider])
 def list_providers(
     category: Optional[str] = Query(default=None),
     suburb: Optional[str] = Query(default=None),
+    user_id: Optional[str] = Query(default=None),
+    include_inactive: bool = Query(default=False),
     min_rating: Optional[float] = Query(default=None),
     max_distance_km: Optional[float] = Query(default=None),
     user_lat: Optional[float] = Query(default=None),
@@ -33,16 +55,21 @@ def list_providers(
     q: Optional[str] = Query(default=None),
     sort_by: str = Query(default="relevance"),
 ):
-    return service_store.list_providers(
-        category=category,
-        suburb=suburb,
-        min_rating=min_rating,
-        max_distance_km=max_distance_km,
-        user_lat=user_lat,
-        user_lng=user_lng,
-        q=q,
-        sort_by=sort_by,
-    )
+    try:
+        return service_store.list_providers(
+            category=category,
+            suburb=suburb,
+            user_id=user_id,
+            include_inactive=include_inactive,
+            min_rating=min_rating,
+            max_distance_km=max_distance_km,
+            user_lat=user_lat,
+            user_lng=user_lng,
+            q=q,
+            sort_by=sort_by,
+        )
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
 
 
 @router.get("/providers/{provider_id}", response_model=ServiceProviderDetails)
@@ -53,12 +80,105 @@ def provider_details(provider_id: str):
     return details
 
 
+def _create_provider_impl(
+    request: ServiceProviderCreateRequest,
+    authorization: Optional[str] = Header(default=None),
+) -> ServiceProvider:
+    assert_actor_authorized(actor_user_id=request.user_id, authorization=authorization)
+    try:
+        return service_store.add_provider(
+            owner_user_id=request.user_id,
+            name=request.name,
+            category=request.category,
+            suburb=request.suburb,
+            description=request.description,
+            price_from=request.price_from,
+            full_description=request.full_description,
+            image_urls=request.image_urls,
+            latitude=request.latitude,
+            longitude=request.longitude,
+        )
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.post("/providers", response_model=ServiceProvider)
+def create_provider(request: ServiceProviderCreateRequest, authorization: Optional[str] = Header(default=None)):
+    return _create_provider_impl(request=request, authorization=authorization)
+
+
+@router.api_route("/provider", methods=["POST", "PUT"], response_model=ServiceProvider)
+def create_provider_singular(request: ServiceProviderCreateRequest, authorization: Optional[str] = Header(default=None)):
+    return _create_provider_impl(request=request, authorization=authorization)
+
+
+@router.api_route("/providers/create", methods=["POST", "PUT"], response_model=ServiceProvider)
+def create_provider_legacy_plural(request: ServiceProviderCreateRequest, authorization: Optional[str] = Header(default=None)):
+    return _create_provider_impl(request=request, authorization=authorization)
+
+
+@router.api_route("/provider/create", methods=["POST", "PUT"], response_model=ServiceProvider)
+def create_provider_legacy_singular(request: ServiceProviderCreateRequest, authorization: Optional[str] = Header(default=None)):
+    return _create_provider_impl(request=request, authorization=authorization)
+
+
+@router.post("/providers/{provider_id}/update", response_model=ServiceProvider)
+def update_provider(
+    provider_id: str,
+    request: ServiceProviderUpdateRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=request.user_id, authorization=authorization)
+    try:
+        return service_store.update_provider(
+            provider_id=provider_id,
+            actor_user_id=request.user_id,
+            name=request.name,
+            suburb=request.suburb,
+            description=request.description,
+            price_from=request.price_from,
+            full_description=request.full_description,
+            image_urls=request.image_urls,
+            latitude=request.latitude,
+            longitude=request.longitude,
+        )
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.post("/providers/{provider_id}/cancel")
+def cancel_provider(
+    provider_id: str,
+    request: ServiceProviderCancelRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=request.user_id, authorization=authorization)
+    try:
+        service_store.cancel_provider(provider_id=provider_id, actor_user_id=request.user_id)
+        return {"status": "cancelled", "provider_id": provider_id}
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.post("/providers/{provider_id}/restore", response_model=ServiceProvider)
+def restore_provider(
+    provider_id: str,
+    request: ServiceProviderRestoreRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=request.user_id, authorization=authorization)
+    try:
+        return service_store.restore_provider(provider_id=provider_id, actor_user_id=request.user_id)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
 @router.get("/providers/{provider_id}/availability", response_model=list[ServiceAvailabilitySlot])
 def provider_availability(provider_id: str, date: str = Query(...)):
     try:
         return service_store.get_available_slots(provider_id=provider_id, slot_date=date)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
 
 
 @router.post("/bookings", response_model=Booking)
@@ -77,11 +197,8 @@ def create_booking(request: BookingRequest, authorization: Optional[str] = Heade
                     deep_link=f"booking:{booking.id}",
                 )
         return booking
-    except ValueError as exc:
-        message = str(exc)
-        if "Provider not found" in message:
-            raise HTTPException(status_code=404, detail=message)
-        raise HTTPException(status_code=400, detail=message)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
 
 
 @router.get("/bookings", response_model=list[Booking])
@@ -89,7 +206,10 @@ def list_bookings(
     user_id: Optional[str] = Query(default=None),
     role: Optional[str] = Query(default=None),
 ):
-    return service_store.list_bookings(user_id=user_id, role=role)
+    try:
+        return service_store.list_bookings(user_id=user_id, role=role)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
 
 
 @router.post("/bookings/holds", response_model=BookingHold)
@@ -97,8 +217,8 @@ def create_booking_hold(request: BookingHoldRequest, authorization: Optional[str
     assert_actor_authorized(actor_user_id=request.user_id, authorization=authorization)
     try:
         return service_store.create_booking_hold(request)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
 
 
 @router.post("/bookings/{booking_id}/status", response_model=Booking)
@@ -121,11 +241,8 @@ def update_booking_status(
                     deep_link=f"booking:{booking.id}",
                 )
         return booking
-    except ValueError as exc:
-        message = str(exc)
-        if "not found" in message.lower():
-            raise HTTPException(status_code=404, detail=message)
-        raise HTTPException(status_code=400, detail=message)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
 
 
 @router.post("/providers/{provider_id}/blackouts", response_model=ProviderBlackout)
@@ -137,11 +254,8 @@ def create_provider_blackout(
     assert_actor_authorized(actor_user_id=request.actor_user_id, authorization=authorization)
     try:
         return service_store.create_provider_blackout(provider_id=provider_id, request=request)
-    except ValueError as exc:
-        message = str(exc)
-        if "not found" in message.lower():
-            raise HTTPException(status_code=404, detail=message)
-        raise HTTPException(status_code=400, detail=message)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
 
 
 @router.get("/providers/{provider_id}/blackouts", response_model=list[ProviderBlackout])
@@ -156,9 +270,12 @@ def list_calendar_events(
     date_to: str = Query(...),
     role: str = Query(default="all"),
 ):
-    return service_store.list_calendar_events(
-        user_id=user_id,
-        date_from=date_from,
-        date_to=date_to,
-        role=role,
-    )
+    try:
+        return service_store.list_calendar_events(
+            user_id=user_id,
+            date_from=date_from,
+            date_to=date_to,
+            role=role,
+        )
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
