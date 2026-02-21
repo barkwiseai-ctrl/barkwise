@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BarkWise Web Beta</title>
+    <link rel="stylesheet" href="/web/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>BarkWise Web Beta</h1>
+        <p>Browser test build for iPhone + desktop</p>
+      </div>
+      <div class="env">
+        <label for="apiBase">API base</label>
+        <input id="apiBase" type="text" placeholder="https://api.example.com" />
+        <button id="saveApiBase" type="button">Save</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="card">
+        <h2>Session</h2>
+        <form id="loginForm" class="row">
+          <input id="userId" type="text" placeholder="user_1" required />
+          <input id="password" type="password" value="petsocial-demo" required />
+          <button type="submit">Login</button>
+        </form>
+        <p class="hint">Password for demo backend is <code>petsocial-demo</code>.</p>
+        <p id="sessionState" class="status"></p>
+      </section>
+
+      <nav class="tabs">
+        <button class="tab active" data-target="services">Services</button>
+        <button class="tab" data-target="community">Community</button>
+        <button class="tab" data-target="chat">Chat</button>
+        <button class="tab" data-target="notifications">Notifications</button>
+      </nav>
+
+      <section id="services" class="panel card active">
+        <h2>Services</h2>
+        <form id="providerFilter" class="row wrap">
+          <select id="serviceCategory">
+            <option value="">All categories</option>
+            <option value="dog_walking">Dog walking</option>
+            <option value="grooming">Grooming</option>
+          </select>
+          <input id="serviceSuburb" type="text" placeholder="Suburb" />
+          <button type="submit">Load providers</button>
+        </form>
+        <div id="providersList" class="list"></div>
+
+        <h3>Create Booking</h3>
+        <form id="bookingForm" class="grid2">
+          <input id="bookingProviderId" type="text" placeholder="provider id (svc_1)" required />
+          <input id="bookingPetName" type="text" placeholder="pet name" required />
+          <input id="bookingDate" type="date" required />
+          <input id="bookingTime" type="text" placeholder="09:00-10:00" required />
+          <input id="bookingNote" type="text" placeholder="note (optional)" />
+          <button type="submit">Create booking</button>
+        </form>
+        <pre id="bookingResult" class="mono"></pre>
+      </section>
+
+      <section id="community" class="panel card">
+        <h2>Community</h2>
+        <form id="communityFilter" class="row wrap">
+          <input id="communitySuburb" type="text" placeholder="Suburb" />
+          <input id="communityQuery" type="text" placeholder="Search posts" />
+          <button type="submit">Load feed</button>
+        </form>
+        <div id="communityPosts" class="list"></div>
+
+        <h3>Groups</h3>
+        <form id="groupFilter" class="row wrap">
+          <input id="groupSuburb" type="text" placeholder="Suburb" />
+          <button type="submit">Load groups</button>
+        </form>
+        <div id="groupsList" class="list"></div>
+
+        <h3>Create post</h3>
+        <form id="postForm" class="grid2">
+          <select id="postType">
+            <option value="group_post">Group post</option>
+            <option value="lost_found">Lost/found</option>
+          </select>
+          <input id="postSuburb" type="text" placeholder="Suburb" required />
+          <input id="postTitle" type="text" placeholder="Title" required />
+          <input id="postBody" type="text" placeholder="Body" required />
+          <button type="submit">Create post</button>
+        </form>
+      </section>
+
+      <section id="chat" class="panel card">
+        <h2>BarkAI Chat</h2>
+        <div id="chatThread" class="chat"></div>
+        <form id="chatForm" class="row">
+          <input id="chatMessage" type="text" placeholder="Ask BarkAI..." required />
+          <button type="submit">Send</button>
+        </form>
+      </section>
+
+      <section id="notifications" class="panel card">
+        <h2>Notifications</h2>
+        <form id="notificationForm" class="row wrap">
+          <label><input id="unreadOnly" type="checkbox" /> unread only</label>
+          <button type="submit">Load notifications</button>
+        </form>
+        <div id="notificationsList" class="list"></div>
+      </section>
+
+      <section class="card">
+        <h2>Logs</h2>
+        <pre id="log" class="mono"></pre>
+      </section>
+    </main>
+
+    <script src="/web/app.js"></script>
+  </body>
+</html>
