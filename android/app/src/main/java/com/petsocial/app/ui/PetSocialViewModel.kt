@@ -26,6 +26,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeParseException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +38,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import retrofit2.HttpException
 
 enum class AppTab {
     Services,
@@ -94,6 +97,9 @@ data class ProviderListing(
     val category: String,
     val status: String,
     val priceFrom: Int,
+    val description: String = "",
+    val suburb: String = "",
+    val imageUrls: List<String> = emptyList(),
 )
 
 data class ProviderBooking(
@@ -125,6 +131,17 @@ data class A2uiCardState(
     val submitAction: String? = null,
 )
 
+data class BarkThread(
+    val id: String,
+    val title: String,
+    val conversation: List<ChatTurn> = emptyList(),
+    val chat: ChatResponse? = null,
+    val profileSuggestion: PetProfileSuggestion? = null,
+    val a2uiProfileCard: A2uiCardState? = null,
+    val a2uiProviderCard: A2uiCardState? = null,
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
 data class UiState(
     val providers: List<ServiceProvider> = emptyList(),
     val nearbyPetBusinesses: List<NearbyPetBusiness> = emptyList(),
@@ -141,6 +158,13 @@ data class UiState(
     val profileSuggestion: PetProfileSuggestion? = null,
     val a2uiProfileCard: A2uiCardState? = null,
     val a2uiProviderCard: A2uiCardState? = null,
+    val barkThreads: List<BarkThread> = listOf(
+        BarkThread(
+            id = "bark_thread_1",
+            title = "Thread 1",
+        ),
+    ),
+    val selectedBarkThreadId: String = "bark_thread_1",
     val messageThreads: List<MessageThread> = emptyList(),
     val selectedMessageThreadId: String? = null,
     val directMessages: List<DirectMessage> = emptyList(),
@@ -151,6 +175,7 @@ data class UiState(
     val servicesSearchQuery: String = "",
     val servicesSortBy: String = "relevance",
     val postsSortBy: String = "relevance",
+    val selectedCommunityGroupId: String? = null,
     val selectedSuburb: String = "Surry Hills",
     val selectedRangeCenter: String = "manual",
     val currentLocationSuburb: String? = null,
@@ -182,10 +207,10 @@ data class UiState(
 )
 
 private fun accountLabel(userId: String): String = when (userId) {
-    "user_1" -> "Account A"
-    "user_2" -> "Account B"
-    "user_3" -> "Account C"
-    "user_4" -> "Account D"
+    "user_1" -> "Sesame"
+    "user_2" -> "Snowy"
+    "user_3" -> "Anika"
+    "user_4" -> "Tommy"
     else -> userId
 }
 
@@ -226,6 +251,71 @@ private fun ensureSeedDogParkGroup(
         listOf(seeded) + groups
     } else {
         groups.map { group -> if (group.id == TEST_DOG_PARK_GROUP_ID) seeded else group }
+    }
+}
+
+private fun ensureSeedProviders(
+    providers: List<ServiceProvider>,
+    suburb: String,
+    category: String?,
+): List<ServiceProvider> {
+    if (!ENABLE_TEST_SEED_DATA) return providers
+    if (providers.isNotEmpty()) return providers
+
+    val base = listOf(
+        ServiceProvider(
+            id = "seed_svc_1",
+            name = "Neighborhood Paws Walkers",
+            category = "dog_walking",
+            suburb = suburb,
+            rating = 4.8,
+            reviewCount = 86,
+            priceFrom = 24,
+            description = "Friendly daily dog walks with photo updates.",
+            fullDescription = "Reliable local walkers for weekday and weekend sessions.",
+            imageUrls = fallbackPetPhotos.take(3),
+            latitude = -33.8889,
+            longitude = 151.2111,
+            ownerUserId = "user_1",
+            ownerLabel = "Sesame",
+        ),
+        ServiceProvider(
+            id = "seed_svc_2",
+            name = "Coat Care Groom Studio",
+            category = "grooming",
+            suburb = suburb,
+            rating = 4.9,
+            reviewCount = 63,
+            priceFrom = 48,
+            description = "Gentle grooming for sensitive and anxious pets.",
+            fullDescription = "Bath, nail trim, and breed-aware styling sessions.",
+            imageUrls = fallbackPetPhotos.drop(2).take(3),
+            latitude = -33.8928,
+            longitude = 151.2040,
+            ownerUserId = "user_3",
+            ownerLabel = "Anika",
+        ),
+        ServiceProvider(
+            id = "seed_svc_3",
+            name = "Parkside Groom & Go",
+            category = "grooming",
+            suburb = suburb,
+            rating = 4.6,
+            reviewCount = 41,
+            priceFrom = 44,
+            description = "Quick grooming sessions and coat tidy plans.",
+            fullDescription = "Practical recurring grooming packages for active dogs.",
+            imageUrls = fallbackPetPhotos.drop(4).take(3),
+            latitude = -33.8981,
+            longitude = 151.1742,
+            ownerUserId = "user_4",
+            ownerLabel = "Tommy",
+        ),
+    )
+    return if (category.isNullOrBlank()) {
+        base
+    } else {
+        base.filter { provider -> provider.category == category }
     }
 }
 
@@ -280,13 +370,13 @@ class PetSocialViewModel(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+    private var servicesSearchJob: Job? = null
 
     init {
         if (isStagingTestBuild()) {
             _uiState.value = _uiState.value.copy(
                 selectedSuburb = STAGING_TEST_SUBURB,
                 selectedRangeCenter = "manual",
-                selectedCategory = "grooming",
                 profileInfo = _uiState.value.profileInfo.copy(suburb = STAGING_TEST_SUBURB),
             )
         }
@@ -295,7 +385,7 @@ class PetSocialViewModel(
 
     fun loadHomeData(category: String? = _uiState.value.selectedCategory) {
         val state = _uiState.value
-        val resolvedCategory = if (isStagingTestBuild()) "grooming" else category
+        val resolvedCategory = category
         val suburb = if (isStagingTestBuild()) STAGING_TEST_SUBURB else state.selectedSuburb
         val useCurrentLocation = state.selectedRangeCenter == "current" &&
             state.currentLatitude != null &&
@@ -306,12 +396,17 @@ class PetSocialViewModel(
                 val providers = repository.loadProviders(
                     category = resolvedCategory,
                     suburb = suburb,
+                    includeInactive = false,
                     minRating = state.serviceMinRating?.toDouble(),
                     maxDistanceKm = state.serviceMaxDistanceKm?.toDouble(),
                     userLat = if (useCurrentLocation) state.currentLatitude else null,
                     userLng = if (useCurrentLocation) state.currentLongitude else null,
                     query = state.servicesSearchQuery.ifBlank { null },
                     sortBy = state.servicesSortBy,
+                )
+                val ownerListingProviders = repository.loadProviders(
+                    userId = state.activeUserId,
+                    includeInactive = true,
                 )
                 val groups = repository.loadGroups(suburb = suburb)
                 val posts = repository.loadPosts(suburb = suburb, sortBy = state.postsSortBy)
@@ -330,6 +425,7 @@ class PetSocialViewModel(
                 }
                 HomePayload(
                     providers = providers,
+                    ownerListingProviders = ownerListingProviders,
                     nearbyPetBusinesses = nearbyPetBusinesses,
                     groups = groups,
                     posts = posts,
@@ -343,6 +439,7 @@ class PetSocialViewModel(
                 repository.saveHomeCache(
                     HomeCacheSnapshot(
                         providers = payload.providers,
+                        ownerListingProviders = payload.ownerListingProviders,
                         nearbyPetBusinesses = payload.nearbyPetBusinesses,
                         groups = payload.groups,
                         posts = payload.posts,
@@ -365,6 +462,7 @@ class PetSocialViewModel(
                     applyHomePayload(
                         payload = HomePayload(
                             providers = cached.providers,
+                            ownerListingProviders = cached.ownerListingProviders,
                             nearbyPetBusinesses = cached.nearbyPetBusinesses,
                             groups = cached.groups,
                             posts = cached.posts,
@@ -398,7 +496,11 @@ class PetSocialViewModel(
         isOfflineMode: Boolean,
         hasPendingSync: Boolean,
     ) {
-        val providers = payload.providers
+        val providers = ensureSeedProviders(
+            providers = payload.providers,
+            suburb = suburb,
+            category = _uiState.value.selectedCategory,
+        )
         val groups = ensureSeedDogParkGroup(
             groups = payload.groups,
             activeUserId = _uiState.value.activeUserId,
@@ -412,20 +514,20 @@ class PetSocialViewModel(
         } else {
             existingFavoriteIds.filter { id -> providers.any { provider -> provider.id == id } }
         }
-        val existingListings = _uiState.value.providerListings
-        val syncedListings = if (existingListings.isEmpty()) {
-            providers.take(2).map { provider ->
+        val syncedListings = payload.ownerListingProviders
+            .filter { provider -> provider.ownerUserId == _uiState.value.activeUserId }
+            .map { provider ->
                 ProviderListing(
-                    id = "listing_${provider.id}",
+                    id = provider.id,
                     title = provider.name,
                     category = provider.category.replace("_", " "),
-                    status = "active",
+                    status = provider.status,
                     priceFrom = provider.priceFrom,
+                    description = provider.description,
+                    suburb = provider.suburb,
+                    imageUrls = provider.imageUrls,
                 )
             }
-        } else {
-            existingListings
-        }
         val joinedEvents = events
             .filter { event -> event.rsvpStatus == "attending" }
             .map { event ->
@@ -529,11 +631,71 @@ class PetSocialViewModel(
             isOfflineMode = isOfflineMode,
             hasPendingSync = hasPendingSync,
             notifications = payload.notifications,
+            selectedCommunityGroupId = _uiState.value.selectedCommunityGroupId
+                ?.takeIf { selectedId -> groups.any { group -> group.id == selectedId } },
         )
     }
 
     fun switchTab(tab: AppTab) {
-        _uiState.value = _uiState.value.copy(selectedTab = tab)
+        _uiState.value = _uiState.value.copy(
+            selectedTab = tab,
+            selectedCommunityGroupId = if (tab == AppTab.Community) {
+                _uiState.value.selectedCommunityGroupId
+            } else {
+                null
+            },
+        )
+    }
+
+    fun openCommunityGroup(groupId: String) {
+        if (groupId.isBlank()) return
+        _uiState.value = _uiState.value.copy(
+            selectedTab = AppTab.Community,
+            selectedCommunityGroupId = groupId,
+        )
+    }
+
+    fun clearSelectedCommunityGroup() {
+        _uiState.value = _uiState.value.copy(selectedCommunityGroupId = null)
+    }
+
+    fun startNewBarkThread() {
+        val now = System.currentTimeMillis()
+        val newId = "bark_thread_$now"
+        val newThread = BarkThread(
+            id = newId,
+            title = "New thread",
+            updatedAt = now,
+        )
+        val existing = _uiState.value.barkThreads.filterNot { it.id == newId }
+        _uiState.value = _uiState.value.copy(
+            selectedTab = AppTab.BarkAI,
+            selectedBarkThreadId = newId,
+            barkThreads = (listOf(newThread) + existing).take(20),
+            chat = null,
+            conversation = emptyList(),
+            profileSuggestion = null,
+            a2uiProfileCard = null,
+            a2uiProviderCard = null,
+            streamingAssistantText = "",
+            loading = false,
+        )
+    }
+
+    fun selectBarkThread(threadId: String) {
+        val state = _uiState.value
+        val selected = state.barkThreads.firstOrNull { it.id == threadId } ?: return
+        _uiState.value = state.copy(
+            selectedTab = AppTab.BarkAI,
+            selectedBarkThreadId = threadId,
+            chat = selected.chat,
+            conversation = selected.conversation,
+            profileSuggestion = selected.profileSuggestion,
+            a2uiProfileCard = selected.a2uiProfileCard,
+            a2uiProviderCard = selected.a2uiProviderCard,
+            streamingAssistantText = "",
+            loading = false,
+        )
     }
 
     fun createGroupInvite(groupId: String) {
@@ -630,11 +792,19 @@ class PetSocialViewModel(
     }
 
     fun updateServicesSearchQuery(query: String) {
+        if (_uiState.value.servicesSearchQuery == query) return
         _uiState.value = _uiState.value.copy(servicesSearchQuery = query)
-        loadHomeData(_uiState.value.selectedCategory)
+        servicesSearchJob?.cancel()
+        servicesSearchJob = viewModelScope.launch {
+            delay(300)
+            if (_uiState.value.servicesSearchQuery == query) {
+                loadHomeData(_uiState.value.selectedCategory)
+            }
+        }
     }
 
     fun updateServicesSortBy(sortBy: String) {
+        if (_uiState.value.servicesSortBy == sortBy) return
         _uiState.value = _uiState.value.copy(servicesSortBy = sortBy)
         loadHomeData(_uiState.value.selectedCategory)
     }
@@ -783,7 +953,7 @@ class PetSocialViewModel(
     fun setServiceProviderMode(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(
             isServiceProvider = enabled,
-            toastMessage = if (enabled) "Service provider profile enabled" else "Service provider profile disabled",
+            toastMessage = if (enabled) "Listing profile enabled" else "Listing profile disabled",
         )
     }
 
@@ -832,22 +1002,149 @@ class PetSocialViewModel(
         )
     }
 
-    fun editProviderListing(listingId: String) {
-        _uiState.value = _uiState.value.copy(
-            providerListings = _uiState.value.providerListings.map { listing ->
-                if (listing.id == listingId) listing.copy(title = "${listing.title} (Updated)") else listing
-            },
-            toastMessage = "Service listing edited",
-        )
+    fun editProviderListing(
+        listingId: String,
+        name: String,
+        description: String,
+        priceFrom: Int,
+        imageUrls: List<String> = emptyList(),
+    ) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            val state = _uiState.value
+            runCatching {
+                repository.updateServiceProvider(
+                    providerId = listingId,
+                    name = name,
+                    description = description,
+                    priceFrom = priceFrom,
+                    fullDescription = description,
+                    imageUrls = imageUrls,
+                    latitude = state.currentLatitude,
+                    longitude = state.currentLongitude,
+                )
+            }.onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    toastMessage = "Listing updated",
+                )
+                loadHomeData(_uiState.value.selectedCategory)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+            }
+        }
     }
 
     fun cancelProviderListing(listingId: String) {
-        _uiState.value = _uiState.value.copy(
-            providerListings = _uiState.value.providerListings.map { listing ->
-                if (listing.id == listingId) listing.copy(status = "cancelled") else listing
-            },
-            toastMessage = "Service listing cancelled",
-        )
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            val cancelled = repository.cancelServiceProvider(listingId)
+            if (cancelled) {
+                _uiState.value = _uiState.value.copy(loading = false, toastMessage = "Listing cancelled")
+                loadHomeData(_uiState.value.selectedCategory)
+            } else {
+                _uiState.value = _uiState.value.copy(loading = false, error = "Failed to cancel listing")
+            }
+        }
+    }
+
+    fun restoreProviderListing(listingId: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            runCatching { repository.restoreServiceProvider(listingId) }
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(loading = false, toastMessage = "Listing restored")
+                    loadHomeData(_uiState.value.selectedCategory)
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+                }
+        }
+    }
+
+    fun createProviderListing(
+        name: String,
+        category: String,
+        suburb: String,
+        description: String,
+        priceFrom: Int,
+        imageUrls: List<String> = emptyList(),
+    ) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            val state = _uiState.value
+            runCatching {
+                repository.createServiceProvider(
+                    name = name,
+                    category = category,
+                    suburb = suburb,
+                    description = description,
+                    priceFrom = priceFrom,
+                    fullDescription = description,
+                    imageUrls = imageUrls,
+                    latitude = state.currentLatitude,
+                    longitude = state.currentLongitude,
+                )
+            }.onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    selectedTab = AppTab.Services,
+                    toastMessage = "Listing created",
+                )
+                loadHomeData(_uiState.value.selectedCategory)
+            }.onFailure { error ->
+                val isMethodNotAllowed = (error as? HttpException)?.code() == 405 ||
+                    (error.message?.contains("HTTP 405", ignoreCase = true) == true)
+                val shouldLocalFallback = isMethodNotAllowed || BuildConfig.ENVIRONMENT.lowercase() == "staging"
+                if (shouldLocalFallback) {
+                    val localId = "local_provider_${System.currentTimeMillis()}"
+                    val ownerUserId = state.activeUserId
+                    val localProvider = ServiceProvider(
+                        id = localId,
+                        name = name,
+                        category = category,
+                        suburb = suburb,
+                        rating = 5.0,
+                        reviewCount = 0,
+                        priceFrom = priceFrom,
+                        description = description,
+                        fullDescription = description,
+                        imageUrls = imageUrls,
+                        latitude = state.currentLatitude ?: 0.0,
+                        longitude = state.currentLongitude ?: 0.0,
+                        ownerUserId = ownerUserId,
+                        ownerLabel = accountLabel(ownerUserId),
+                        status = "active",
+                    )
+                    val categoryMatches = state.selectedCategory.isNullOrBlank() || state.selectedCategory == category
+                    val updatedProviders = if (categoryMatches) listOf(localProvider) + state.providers else state.providers
+                    val updatedListings = listOf(
+                        ProviderListing(
+                            id = localProvider.id,
+                            title = localProvider.name,
+                            category = localProvider.category.replace("_", " "),
+                            status = localProvider.status,
+                            priceFrom = localProvider.priceFrom,
+                            description = localProvider.description,
+                            suburb = localProvider.suburb,
+                            imageUrls = localProvider.imageUrls,
+                        ),
+                    ) + state.providerListings
+                    _uiState.value = state.copy(
+                        loading = false,
+                        selectedTab = AppTab.Services,
+                        providers = updatedProviders,
+                        providerListings = updatedListings,
+                        isServiceProvider = true,
+                        hasPendingSync = true,
+                        toastMessage = "Listing created locally (sync pending)",
+                        error = null,
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+                }
+            }
+        }
     }
 
     fun saveProviderConfig(availableTimeSlots: String, preferredSuburbs: String) {
@@ -933,6 +1230,10 @@ class PetSocialViewModel(
     }
 
     fun updateServiceFilters(minRating: Float?, maxDistanceKm: Int?) {
+        if (
+            _uiState.value.serviceMinRating == minRating &&
+            _uiState.value.serviceMaxDistanceKm == maxDistanceKm
+        ) return
         _uiState.value = _uiState.value.copy(serviceMinRating = minRating, serviceMaxDistanceKm = maxDistanceKm)
         loadHomeData(_uiState.value.selectedCategory)
     }
@@ -949,14 +1250,26 @@ class PetSocialViewModel(
         val trimmedMessage = message.trim()
         if (trimmedMessage.isBlank()) return
         if (tryHandleLocalServicesIntent(trimmedMessage)) return
-        val suburb = _uiState.value.selectedSuburb
+        val state = _uiState.value
+        val suburb = state.selectedSuburb
+        val selectedThreadId = state.selectedBarkThreadId
+        val activeThread = state.barkThreads.firstOrNull { it.id == selectedThreadId } ?: state.barkThreads.first()
+        val nextConversation = activeThread.conversation + ChatTurn(role = "user", content = trimmedMessage)
+        val nextThread = activeThread.copy(
+            title = resolveBarkThreadTitle(activeThread.title, nextConversation),
+            conversation = nextConversation,
+            updatedAt = System.currentTimeMillis(),
+        )
+        val nextThreads = upsertBarkThread(state.barkThreads, nextThread)
         viewModelScope.launch {
-                _uiState.value = _uiState.value.copy(
+            _uiState.value = _uiState.value.copy(
                 loading = true,
                 error = null,
                 selectedTab = AppTab.BarkAI,
                 streamingAssistantText = "",
-                conversation = _uiState.value.conversation + ChatTurn(role = "user", content = trimmedMessage),
+                selectedBarkThreadId = nextThread.id,
+                barkThreads = nextThreads,
+                conversation = nextConversation,
             )
             runCatching {
                 repository.streamChat(
@@ -970,13 +1283,38 @@ class PetSocialViewModel(
                 )
             }.onSuccess { applyChatResponse(it) }
                 .onFailure { error ->
-                    _uiState.value = _uiState.value.copy(
-                        error = error.message,
-                        loading = false,
-                        streamingAssistantText = "",
+                    applyChatResponse(
+                        buildFallbackChatResponse(
+                            userMessage = trimmedMessage,
+                            priorConversation = nextConversation,
+                        ),
+                        toast = "BarkAI network issue: using offline guidance",
                     )
+                    _uiState.value = _uiState.value.copy(error = null)
                 }
         }
+    }
+
+    private fun buildFallbackChatResponse(
+        userMessage: String,
+        priorConversation: List<ChatTurn>,
+    ): ChatResponse {
+        val lower = userMessage.lowercase()
+        val vaccineTerms = listOf("vaccine", "vaccination", "booster", "immunization", "shot", "shots")
+        val answer = if (vaccineTerms.any { lower.contains(it) }) {
+            "I could not reach BarkAI right now, but here is a safe starting point: core vaccines " +
+                "for dogs are typically planned by age and risk profile, with boosters scheduled over time. " +
+                "Bring your dog's age, prior records, lifestyle, and travel plans to your regular vet to " +
+                "finalize the exact schedule. If your dog has vomiting, breathing trouble, facial swelling, " +
+                "or collapse after any vaccine, seek urgent in-person care immediately."
+        } else {
+            "I could not reach BarkAI right now. Please retry in a moment, or ask me to open nearby " +
+                "walkers, groomers, bookings, or community groups while chat reconnects."
+        }
+        return ChatResponse(
+            answer = answer,
+            conversation = priorConversation + ChatTurn(role = "assistant", content = answer),
+        )
     }
 
     private fun tryHandleLocalServicesIntent(message: String): Boolean {
@@ -1007,13 +1345,13 @@ class PetSocialViewModel(
                 ChatTurn(
                     role = "assistant",
                     content = buildString {
-                        append("Opened Services for ")
+                        append("Opened Listings for ")
                         append(if (category == "grooming") "groomers" else "dog walkers")
                         distanceKm?.let { append(" within $it km") }
                         append(".")
                     },
                 ),
-            toastMessage = "Applied BarkAI search to Services",
+            toastMessage = "Applied BarkAI search to Listings",
         )
         loadHomeData(category = category)
         return true
@@ -1230,6 +1568,7 @@ class PetSocialViewModel(
                 createLostFoundPost(title = title, body = body, suburb = suburb)
             }
 
+            "new_bark_thread" -> startNewBarkThread()
             "accept_profile_card" -> acceptProfileCard()
             "submit_provider_listing" -> submitProviderListing()
             "join_group" -> {
@@ -1286,6 +1625,28 @@ class PetSocialViewModel(
         }
     }
 
+    fun createCommunityGroupPost(title: String, body: String, suburb: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            runCatching {
+                repository.createCommunityGroupPost(
+                    title = title,
+                    body = body,
+                    suburb = suburb,
+                )
+            }.onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    selectedTab = AppTab.Community,
+                    toastMessage = "Community post created",
+                )
+                loadHomeData(_uiState.value.selectedCategory)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+            }
+        }
+    }
+
     fun consumeToast() {
         _uiState.value = _uiState.value.copy(toastMessage = null)
     }
@@ -1312,13 +1673,26 @@ class PetSocialViewModel(
     private fun isStagingTestBuild(): Boolean = BuildConfig.ENVIRONMENT.equals("staging", ignoreCase = true)
 
     private fun applyChatResponse(response: ChatResponse, toast: String? = null) {
+        val state = _uiState.value
         val parsed = parseA2uiMessages(response.a2uiMessages)
-        _uiState.value = _uiState.value.copy(
+        val selectedThreadId = state.selectedBarkThreadId
+        val activeThread = state.barkThreads.firstOrNull { it.id == selectedThreadId } ?: state.barkThreads.first()
+        val updatedThread = activeThread.copy(
+            title = resolveBarkThreadTitle(activeThread.title, response.conversation),
+            conversation = response.conversation,
+            chat = response,
+            profileSuggestion = response.profileSuggestion,
+            a2uiProfileCard = parsed.first,
+            a2uiProviderCard = parsed.second,
+            updatedAt = System.currentTimeMillis(),
+        )
+        _uiState.value = state.copy(
             chat = response,
             conversation = response.conversation,
             profileSuggestion = response.profileSuggestion,
             a2uiProfileCard = parsed.first,
             a2uiProviderCard = parsed.second,
+            barkThreads = upsertBarkThread(state.barkThreads, updatedThread),
             loading = false,
             streamingAssistantText = "",
             selectedTab = AppTab.BarkAI,
@@ -1365,6 +1739,20 @@ class PetSocialViewModel(
 
         return profileCard to providerCard
     }
+}
+
+private fun upsertBarkThread(threads: List<BarkThread>, updated: BarkThread): List<BarkThread> {
+    val filtered = threads.filterNot { it.id == updated.id }
+    return (listOf(updated) + filtered)
+        .sortedByDescending { it.updatedAt }
+        .take(20)
+}
+
+private fun resolveBarkThreadTitle(existingTitle: String, conversation: List<ChatTurn>): String {
+    if (existingTitle != "New thread" && existingTitle != "Thread 1") return existingTitle
+    val firstUser = conversation.firstOrNull { it.role == "user" }?.content?.trim().orEmpty()
+    if (firstUser.isBlank()) return existingTitle
+    return if (firstUser.length <= 36) firstUser else firstUser.take(33).trimEnd() + "..."
 }
 
 private fun buildMessageThreads(
@@ -1508,6 +1896,7 @@ class PetSocialViewModelFactory(
 
 private data class HomePayload(
     val providers: List<ServiceProvider>,
+    val ownerListingProviders: List<ServiceProvider>,
     val nearbyPetBusinesses: List<NearbyPetBusiness>,
     val groups: List<Group>,
     val posts: List<CommunityPost>,
@@ -1541,9 +1930,10 @@ private fun jsonElementToDisplay(element: JsonElement): String {
 }
 
 private val fallbackPetPhotos = listOf(
-    "https://images.unsplash.com/photo-1517849845537-4d257902454a",
-    "https://images.unsplash.com/photo-1450778869180-41d0601e046e",
-    "https://images.unsplash.com/photo-1518717758536-85ae29035b6d",
+    "https://loremflickr.com/640/640/bordoodle,dog?lock=201",
+    "https://loremflickr.com/640/640/black,white,dog?lock=202",
+    "https://loremflickr.com/640/640/cavoodle,dog?lock=203",
+    "https://loremflickr.com/640/640/brown,toy,dog,cavoodle?lock=204",
     "https://images.unsplash.com/photo-1537151608828-ea2b11777ee8",
     "https://images.unsplash.com/photo-1525253013412-55c1a69a5738",
     "https://images.unsplash.com/photo-1543466835-00a7907e9de1",

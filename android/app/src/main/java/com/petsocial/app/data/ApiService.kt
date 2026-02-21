@@ -19,6 +19,8 @@ interface ApiService {
     suspend fun getProviders(
         @Query("category") category: String? = null,
         @Query("suburb") suburb: String? = null,
+        @Query("user_id") userId: String? = null,
+        @Query("include_inactive") includeInactive: Boolean = false,
         @Query("min_rating") minRating: Double? = null,
         @Query("max_distance_km") maxDistanceKm: Double? = null,
         @Query("user_lat") userLat: Double? = null,
@@ -29,6 +31,27 @@ interface ApiService {
 
     @GET("services/providers/{providerId}")
     suspend fun getProviderDetails(@Path("providerId") providerId: String): ServiceProviderDetailsResponse
+
+    @POST("services/providers")
+    suspend fun createProvider(@Body payload: CreateServiceProviderRequest): ServiceProvider
+
+    @POST("services/providers/{providerId}/update")
+    suspend fun updateProvider(
+        @Path("providerId") providerId: String,
+        @Body payload: UpdateServiceProviderRequest,
+    ): ServiceProvider
+
+    @POST("services/providers/{providerId}/cancel")
+    suspend fun cancelProvider(
+        @Path("providerId") providerId: String,
+        @Body payload: CancelServiceProviderRequest,
+    ): Map<String, String>
+
+    @POST("services/providers/{providerId}/restore")
+    suspend fun restoreProvider(
+        @Path("providerId") providerId: String,
+        @Body payload: RestoreServiceProviderRequest,
+    ): ServiceProvider
 
     @GET("services/providers/{providerId}/availability")
     suspend fun getProviderAvailability(
@@ -167,13 +190,13 @@ interface ApiService {
         private val json = Json { ignoreUnknownKeys = true }
         private const val DEFAULT_API_BASE_URL = "https://api.barkwise.app/"
 
-        private fun normalizeBaseUrl(candidate: String?, fallback: String): String {
+        private fun normalizeBaseUrl(candidate: String?): String? {
             val cleaned = candidate
                 ?.trim()
                 ?.trim('"')
                 ?.takeIf { it.isNotBlank() }
                 ?.let { value -> if (value.endsWith("/")) value else "$value/" }
-            return if (cleaned?.toHttpUrlOrNull() != null) cleaned else fallback
+            return if (cleaned?.toHttpUrlOrNull() != null) cleaned else null
         }
 
         fun create(
@@ -181,10 +204,12 @@ interface ApiService {
             authTokenProvider: (() -> String?)? = null,
             fallbackBaseUrl: String? = null,
         ): ApiService {
-            val resolvedFallbackBaseUrl = normalizeBaseUrl(fallbackBaseUrl, DEFAULT_API_BASE_URL)
-            val resolvedBaseUrl = normalizeBaseUrl(baseUrl, resolvedFallbackBaseUrl)
+            val resolvedFallbackBaseUrl = normalizeBaseUrl(fallbackBaseUrl)
+            val resolvedBaseUrl = normalizeBaseUrl(baseUrl)
+                ?: resolvedFallbackBaseUrl
+                ?: DEFAULT_API_BASE_URL
             val primaryUrl = resolvedBaseUrl.toHttpUrlOrNull()
-            val fallbackUrl = resolvedFallbackBaseUrl.toHttpUrlOrNull()
+            val fallbackUrl = resolvedFallbackBaseUrl?.toHttpUrlOrNull()
             val authInterceptor = Interceptor { chain ->
                 val requestBuilder = chain.request().newBuilder()
                 val token = authTokenProvider?.invoke().orEmpty().trim()

@@ -37,6 +37,7 @@ import com.petsocial.app.data.ChatResponse
 import com.petsocial.app.data.ChatTurn
 import com.petsocial.app.data.PetProfileSuggestion
 import com.petsocial.app.ui.A2uiCardState
+import com.petsocial.app.ui.BarkThread
 
 @Composable
 fun ChatScreen(
@@ -48,6 +49,10 @@ fun ChatScreen(
     profileSuggestion: PetProfileSuggestion?,
     a2uiProfileCard: A2uiCardState?,
     a2uiProviderCard: A2uiCardState?,
+    barkThreads: List<BarkThread>,
+    selectedBarkThreadId: String,
+    onSelectBarkThread: (String) -> Unit,
+    onNewBarkThread: () -> Unit,
     onSend: (String) -> Unit,
     onCtaClick: (ChatCta) -> Unit,
     onAcceptProfile: () -> Unit,
@@ -57,13 +62,11 @@ fun ChatScreen(
     var inputFocused by rememberSaveable { mutableStateOf(false) }
     val conversationListState = rememberLazyListState()
     val isShowingStreaming = loading && streamingAssistantText.isNotBlank()
-    val isShowingTyping = loading && streamingAssistantText.isBlank()
     val hasQuickActions = chatResponse?.ctaChips?.isNotEmpty() == true
     val hasProfileCard = ((a2uiProfileCard?.fields?.isNotEmpty() == true) || profileSuggestion != null)
     val hasProviderCard = a2uiProviderCard != null
     val listCount = conversation.size +
         (if (isShowingStreaming) 1 else 0) +
-        (if (isShowingTyping) 1 else 0) +
         (if (hasProviderCard) 1 else 0) +
         (if (hasProfileCard) 1 else 0) +
         (if (hasQuickActions) 1 else 0) +
@@ -89,6 +92,28 @@ fun ChatScreen(
             .navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            AssistChip(
+                onClick = onNewBarkThread,
+                label = { Text("New Thread") },
+            )
+            barkThreads.forEach { thread ->
+                AssistChip(
+                    onClick = { onSelectBarkThread(thread.id) },
+                    label = {
+                        Text(
+                            if (thread.id == selectedBarkThreadId) "• ${thread.title}" else thread.title,
+                        )
+                    },
+                )
+            }
+        }
+
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -111,7 +136,7 @@ fun ChatScreen(
                 if (conversation.isEmpty() && !loading) {
                     item {
                         Text(
-                            text = "BarkAI is ready for pet questions, local pet services, and community help.",
+                            text = "BarkAI is ready for pet questions, local pet listings, and community help.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
@@ -130,11 +155,6 @@ fun ChatScreen(
                 if (loading && streamingAssistantText.isNotBlank()) {
                     item {
                         MessageBubble(ChatTurn(role = "assistant", content = streamingAssistantText))
-                    }
-                }
-                if (loading && streamingAssistantText.isBlank()) {
-                    item {
-                        MessageBubble(ChatTurn(role = "assistant", content = "BarkWise is typing..."))
                     }
                 }
                 a2uiProviderCard?.let { providerCard ->
@@ -180,7 +200,11 @@ fun ChatScreen(
                                     response.ctaChips.forEach { cta ->
                                         AssistChip(
                                             onClick = { onCtaClick(cta) },
-                                            label = { Text(cta.label) },
+                                            label = {
+                                                Text(
+                                                    if (cta.action == "new_bark_thread") "New Thread" else cta.label,
+                                                )
+                                            },
                                         )
                                     }
                                 }

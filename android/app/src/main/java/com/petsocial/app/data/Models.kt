@@ -21,6 +21,7 @@ data class ServiceProvider(
     @SerialName("distance_km") val distanceKm: Double? = null,
     @SerialName("owner_user_id") val ownerUserId: String? = null,
     @SerialName("owner_label") val ownerLabel: String? = null,
+    val status: String = "active",
 )
 
 @Serializable
@@ -36,6 +37,43 @@ data class Review(
 data class ServiceProviderDetailsResponse(
     val provider: ServiceProvider,
     val reviews: List<Review>,
+)
+
+@Serializable
+data class CreateServiceProviderRequest(
+    @SerialName("user_id") val userId: String,
+    val name: String,
+    val category: String,
+    val suburb: String,
+    val description: String,
+    @SerialName("price_from") val priceFrom: Int,
+    @SerialName("full_description") val fullDescription: String? = null,
+    @SerialName("image_urls") val imageUrls: List<String> = emptyList(),
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+)
+
+@Serializable
+data class UpdateServiceProviderRequest(
+    @SerialName("user_id") val userId: String,
+    val name: String? = null,
+    val suburb: String? = null,
+    val description: String? = null,
+    @SerialName("price_from") val priceFrom: Int? = null,
+    @SerialName("full_description") val fullDescription: String? = null,
+    @SerialName("image_urls") val imageUrls: List<String>? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+)
+
+@Serializable
+data class CancelServiceProviderRequest(
+    @SerialName("user_id") val userId: String,
+)
+
+@Serializable
+data class RestoreServiceProviderRequest(
+    @SerialName("user_id") val userId: String,
 )
 
 @Serializable
@@ -310,6 +348,7 @@ data class NearbyPetBusiness(
 @Serializable
 data class HomeCacheSnapshot(
     val providers: List<ServiceProvider>,
+    @SerialName("owner_listing_providers") val ownerListingProviders: List<ServiceProvider> = emptyList(),
     val nearbyPetBusinesses: List<NearbyPetBusiness>,
     val groups: List<Group>,
     val posts: List<CommunityPost>,

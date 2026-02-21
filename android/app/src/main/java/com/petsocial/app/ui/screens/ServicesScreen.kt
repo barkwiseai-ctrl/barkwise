@@ -1,9 +1,11 @@
 package com.petsocial.app.ui.screens
 
 import android.app.DatePickerDialog
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
@@ -26,10 +29,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,6 +62,7 @@ import com.petsocial.app.ui.PetRosterItem
 import com.petsocial.app.ui.components.PetRosterShowcase
 import java.time.LocalDate
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 @Composable
 fun ServicesScreen(
@@ -78,6 +84,7 @@ fun ServicesScreen(
     onSearchQueryChange: (String) -> Unit,
     onSortByChange: (String) -> Unit,
     onFilterChange: (Float?, Int?) -> Unit,
+    onCreateService: () -> Unit,
     onBook: (providerId: String, date: String, timeSlot: String, note: String) -> Unit,
     onViewDetails: (String) -> Unit,
     onLoadAvailability: (providerId: String, date: String) -> Unit,
@@ -100,6 +107,7 @@ fun ServicesScreen(
             onSearchQueryChange = onSearchQueryChange,
             onSortByChange = onSortByChange,
             onFilterChange = onFilterChange,
+            onCreateService = onCreateService,
             onViewDetails = onViewDetails,
         )
     } else {
@@ -131,6 +139,7 @@ private fun ServicesListPage(
     onSearchQueryChange: (String) -> Unit,
     onSortByChange: (String) -> Unit,
     onFilterChange: (Float?, Int?) -> Unit,
+    onCreateService: () -> Unit,
     onViewDetails: (String) -> Unit,
 ) {
     val categories = listOf(
@@ -147,67 +156,156 @@ private fun ServicesListPage(
         "price_low" to "Price: low-high",
         "price_high" to "Price: high-low",
     )
+    val activeFilterCount = listOf(minRating != null, maxDistanceKm != null, sortBy != "relevance").count { it }
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    val listHasScrolled by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 20
+        }
+    }
+    var filtersExpanded by rememberSaveable { mutableStateOf(true) }
+
+    LaunchedEffect(viewMode) {
+        if (viewMode == "map") {
+            filtersExpanded = true
+        }
+    }
+    LaunchedEffect(viewMode, listHasScrolled) {
+        if (viewMode == "list" && listHasScrolled) {
+            filtersExpanded = false
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Trusted local services", style = MaterialTheme.typography.titleMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = viewMode == "list",
-                onClick = { onChangeViewMode("list") },
-                label = { Text("List") },
-                enabled = !loading,
-            )
-            FilterChip(
-                selected = viewMode == "map",
-                onClick = { onChangeViewMode("map") },
-                label = { Text("Map") },
-                enabled = !loading,
-            )
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    "Trusted local listings",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = onCreateService) {
+                    Text("Create listing")
+                }
+            }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            categories.forEach { (key, label) ->
-                FilterChip(
-                    onClick = { onCategorySelect(key) },
-                    label = { Text(label) },
-                    selected = selectedCategory == key,
-                    enabled = !loading,
+        if (viewMode == "list" && !filtersExpanded) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        filtersExpanded = true
+                        coroutineScope.launch { listState.animateScrollToItem(0) }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Refine search")
+                }
+                CompactFilterDropdown(
+                    modifier = Modifier.weight(1f),
+                    selectedLabel = maxDistanceKm?.let { "$it km" } ?: "Any distance",
+                    options = distanceOptions.map { option -> option to (option?.let { "$it km" } ?: "Any distance") },
+                    onSelect = { option -> onFilterChange(minRating, option) },
                 )
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            FilterDropdown(
-                modifier = Modifier.weight(1f),
-                label = "Rating",
-                selectedLabel = minRating?.let { "${it}+ rating" } ?: "Any rating",
-                options = ratingOptions.map { option -> option to (option?.let { "${it}+ rating" } ?: "Any rating") },
-                onSelect = { option -> onFilterChange(option, maxDistanceKm) },
-            )
-            FilterDropdown(
-                modifier = Modifier.weight(1f),
-                label = "Distance",
-                selectedLabel = maxDistanceKm?.let { "$it km" } ?: "Any distance",
-                options = distanceOptions.map { option -> option to (option?.let { "$it km" } ?: "Any distance") },
-                onSelect = { option -> onFilterChange(minRating, option) },
-            )
+        AnimatedVisibility(visible = viewMode == "map" || filtersExpanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = viewMode == "list",
+                        onClick = { onChangeViewMode("list") },
+                        label = { Text("List") },
+                        enabled = !loading,
+                    )
+                    FilterChip(
+                        selected = viewMode == "map",
+                        onClick = { onChangeViewMode("map") },
+                        label = { Text("Map") },
+                        enabled = !loading,
+                    )
+                    if (viewMode == "list") {
+                        FilterChip(
+                            selected = false,
+                            onClick = { filtersExpanded = false },
+                            label = { Text("Hide filters") },
+                            enabled = !loading,
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                ) {
+                    categories.forEach { (key, label) ->
+                        FilterChip(
+                            onClick = { onCategorySelect(key) },
+                            label = { Text(label) },
+                            selected = selectedCategory == key,
+                            enabled = !loading,
+                        )
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    FilterDropdown(
+                        modifier = Modifier.weight(1f),
+                        label = "Rating",
+                        selectedLabel = minRating?.let { "${it}+ rating" } ?: "Any rating",
+                        options = ratingOptions.map { option -> option to (option?.let { "${it}+ rating" } ?: "Any rating") },
+                        onSelect = { option -> onFilterChange(option, maxDistanceKm) },
+                    )
+                    FilterDropdown(
+                        modifier = Modifier.weight(1f),
+                        label = "Distance",
+                        selectedLabel = maxDistanceKm?.let { "$it km" } ?: "Any distance",
+                        options = distanceOptions.map { option -> option to (option?.let { "$it km" } ?: "Any distance") },
+                        onSelect = { option -> onFilterChange(minRating, option) },
+                    )
+                }
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    label = { Text("Search listings") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !loading,
+                    singleLine = true,
+                )
+
+                FilterDropdown(
+                    label = "Sort",
+                    selectedLabel = sortOptions.firstOrNull { it.first == sortBy }?.second ?: "Best match",
+                    options = sortOptions,
+                    onSelect = onSortByChange,
+                )
+
+                if (activeFilterCount > 0) {
+                    TextButton(
+                        onClick = {
+                            onSortByChange("relevance")
+                            onFilterChange(null, null)
+                        },
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Text("Clear $activeFilterCount active filter(s)")
+                    }
+                }
+            }
         }
-
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchQueryChange,
-            label = { Text("Search services") },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !loading,
-            singleLine = true,
-        )
-
-        FilterDropdown(
-            label = "Sort",
-            selectedLabel = sortOptions.firstOrNull { it.first == sortBy }?.second ?: "Best match",
-            options = sortOptions,
-            onSelect = onSortByChange,
-        )
 
         if (viewMode == "map") {
             ServicesMapPanel(
@@ -216,13 +314,35 @@ private fun ServicesListPage(
                 onViewDetails = onViewDetails,
             )
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 90.dp)) {
-                items(providers) { provider ->
-                    ProviderCard(
-                        provider = provider,
-                        onViewDetails = onViewDetails,
-                        groomerRoster = groomerPetRosters[provider.id].orEmpty(),
-                    )
+            LazyColumn(
+                state = listState,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 90.dp),
+            ) {
+                if (providers.isEmpty()) {
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = "No providers match your filters yet. Try broadening distance or rating.",
+                                modifier = Modifier.padding(14.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                } else {
+                    items(
+                        items = providers,
+                        key = { provider -> provider.id },
+                    ) { provider ->
+                        ProviderCard(
+                            provider = provider,
+                            onViewDetails = onViewDetails,
+                            groomerRoster = groomerPetRosters[provider.id].orEmpty(),
+                        )
+                    }
                 }
             }
         }
@@ -402,6 +522,39 @@ private fun <T> FilterDropdown(
 }
 
 @Composable
+private fun <T> CompactFilterDropdown(
+    modifier: Modifier = Modifier,
+    selectedLabel: String,
+    options: List<Pair<T, String>>,
+    onSelect: (T) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(selectedLabel, modifier = Modifier.weight(1f))
+            Text("▼")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { (value, text) ->
+                DropdownMenuItem(
+                    text = { Text(text) },
+                    onClick = {
+                        onSelect(value)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun ProviderCard(
     provider: ServiceProvider,
     groomerRoster: List<PetRosterItem>,
@@ -417,11 +570,32 @@ private fun ProviderCard(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(provider.name, style = MaterialTheme.typography.titleSmall)
-            Text(
-                "${provider.suburb} • ${provider.category.replace("_", " ")} • ${provider.rating}★",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(provider.name, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "${provider.suburb} • ${provider.category.replace("_", " ")}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                ) {
+                    Text(
+                        text = "${provider.rating}★",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
             provider.ownerLabel?.let { owner ->
                 Text("Offered by $owner", style = MaterialTheme.typography.labelSmall)
             }
@@ -438,8 +612,11 @@ private fun ProviderCard(
                     pets = groomerRoster,
                 )
             }
-            Text("From $${provider.priceFrom}", style = MaterialTheme.typography.labelLarge)
-            OutlinedButton(onClick = { onViewDetails(provider.id) }) { Text("View details") }
+            Text("From $${provider.priceFrom}", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            OutlinedButton(
+                onClick = { onViewDetails(provider.id) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("View details") }
         }
     }
 }
@@ -472,7 +649,7 @@ private fun ServiceDetailsPage(
             .padding(bottom = 80.dp)
             .verticalScroll(rememberScrollState()),
     ) {
-        TextButton(onClick = onBack) { Text("Back to services") }
+        TextButton(onClick = onBack) { Text("Back to listings") }
         Text(details.provider.name, style = MaterialTheme.typography.headlineSmall)
         Text("${details.provider.suburb} • ${details.provider.category.replace("_", " ")} • ${details.provider.rating}★")
         details.provider.ownerLabel?.let { owner ->
@@ -484,7 +661,7 @@ private fun ServiceDetailsPage(
                 items(details.provider.imageUrls) { imageUrl ->
                     AsyncImage(
                         model = imageUrl,
-                        contentDescription = "Service image",
+                        contentDescription = "Listing image",
                         modifier = Modifier
                             .fillMaxWidth(0.75f)
                             .height(200.dp)

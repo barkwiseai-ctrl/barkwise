@@ -1,6 +1,11 @@
 package com.petsocial.app.ui.screens
 
+import android.content.Intent
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -20,7 +26,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -29,20 +34,27 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.petsocial.app.BuildConfig
 import com.petsocial.app.data.CalendarEvent
 import com.petsocial.app.data.Group
 import com.petsocial.app.data.AppNotification
 import com.petsocial.app.data.ServiceProvider
-import com.petsocial.app.ui.JoinedEvent
 import com.petsocial.app.ui.OwnerBooking
 import com.petsocial.app.ui.ProfileInfo
 import com.petsocial.app.ui.ProviderBooking
 import com.petsocial.app.ui.ProviderConfig
 import com.petsocial.app.ui.ProviderListing
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -57,28 +69,36 @@ private data class PendingAction(
 @Composable
 fun ProfileScreen(
     profileInfo: ProfileInfo,
-    isServiceProvider: Boolean,
     activeUserId: String,
     allProviders: List<ServiceProvider>,
     ownerBookings: List<OwnerBooking>,
     joinedGroups: List<Group>,
     createdGroups: List<Group>,
-    joinedEvents: List<JoinedEvent>,
-    favouriteProviders: List<ServiceProvider>,
     providerListings: List<ProviderListing>,
     providerConfig: ProviderConfig,
     providerBookings: List<ProviderBooking>,
     calendarEvents: List<CalendarEvent>,
     selectedCalendarRole: String,
     notifications: List<AppNotification>,
+    onOpenCommunityGroup: (String) -> Unit,
     onSaveProfile: (ProfileInfo) -> Unit,
-    onToggleServiceProvider: (Boolean) -> Unit,
-    onEditOwnerBooking: (String) -> Unit,
-    onCancelOwnerBooking: (String) -> Unit,
-    onLeaveEvent: (String) -> Unit,
-    onRemoveFavourite: (String) -> Unit,
-    onEditProviderListing: (String) -> Unit,
+    onCreateProviderListing: (
+        name: String,
+        category: String,
+        suburb: String,
+        description: String,
+        priceFrom: Int,
+        imageUrls: List<String>,
+    ) -> Unit,
+    onEditProviderListing: (
+        listingId: String,
+        name: String,
+        description: String,
+        priceFrom: Int,
+        imageUrls: List<String>,
+    ) -> Unit,
     onCancelProviderListing: (String) -> Unit,
+    onRestoreProviderListing: (String) -> Unit,
     onSaveProviderConfig: (availableTimeSlots: String, preferredSuburbs: String) -> Unit,
     onConfirmProviderBooking: (String) -> Unit,
     onCancelProviderBooking: (String) -> Unit,
@@ -86,6 +106,8 @@ fun ProfileScreen(
     onMarkNotificationRead: (String) -> Unit,
     onSwitchAccount: (String) -> Unit,
 ) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     var displayName by rememberSaveable(profileInfo.displayName) { mutableStateOf(profileInfo.displayName) }
     var email by rememberSaveable(profileInfo.email) { mutableStateOf(profileInfo.email) }
     var phone by rememberSaveable(profileInfo.phone) { mutableStateOf(profileInfo.phone) }
@@ -95,26 +117,103 @@ fun ProfileScreen(
         mutableStateOf(profileInfo.favoriteSuburbs.joinToString(", "))
     }
 
-    var ownerExpanded by rememberSaveable { mutableStateOf(true) }
-    var bookingsExpanded by rememberSaveable { mutableStateOf(true) }
     var groupsExpanded by rememberSaveable { mutableStateOf(false) }
-    var eventsExpanded by rememberSaveable { mutableStateOf(false) }
-    var favouritesExpanded by rememberSaveable { mutableStateOf(false) }
 
-    var providerExpanded by rememberSaveable { mutableStateOf(true) }
-    var listingsExpanded by rememberSaveable { mutableStateOf(true) }
+    var listingsExpanded by rememberSaveable { mutableStateOf(false) }
     var configExpanded by rememberSaveable { mutableStateOf(false) }
     var incomingBookingsExpanded by rememberSaveable { mutableStateOf(false) }
-    var calendarExpanded by rememberSaveable { mutableStateOf(true) }
-    var testMatrixExpanded by rememberSaveable { mutableStateOf(true) }
-    var notificationsExpanded by rememberSaveable { mutableStateOf(true) }
+    var providerBookingsExpanded by rememberSaveable { mutableStateOf(false) }
+    var calendarExpanded by rememberSaveable { mutableStateOf(false) }
+    var testMatrixExpanded by rememberSaveable { mutableStateOf(false) }
+    var notificationsExpanded by rememberSaveable { mutableStateOf(false) }
+    var appShareExpanded by rememberSaveable { mutableStateOf(false) }
+    var testAccountExpanded by rememberSaveable { mutableStateOf(false) }
+    var showAccountPicker by rememberSaveable { mutableStateOf(false) }
+    var showProfileEditor by rememberSaveable { mutableStateOf(false) }
+    var showCreateListingDialog by rememberSaveable { mutableStateOf(false) }
+    var showEditListingDialog by rememberSaveable { mutableStateOf(false) }
+    var listingName by rememberSaveable { mutableStateOf("") }
+    var listingCategory by rememberSaveable { mutableStateOf("dog_walking") }
+    var listingSuburb by rememberSaveable(profileInfo.suburb) { mutableStateOf(profileInfo.suburb) }
+    var listingDescription by rememberSaveable { mutableStateOf("") }
+    var listingPriceFrom by rememberSaveable { mutableStateOf("") }
+    var listingImageUrls by rememberSaveable { mutableStateOf("") }
+    var editingListingId by rememberSaveable { mutableStateOf("") }
+    var editingListingName by rememberSaveable { mutableStateOf("") }
+    var editingListingDescription by rememberSaveable { mutableStateOf("") }
+    var editingListingPriceFrom by rememberSaveable { mutableStateOf("") }
+    var editingListingImageUrls by rememberSaveable { mutableStateOf("") }
 
     var pendingAction by remember { mutableStateOf<PendingAction?>(null) }
-
+    val testAccounts = listOf(
+        "user_1" to "Sesame",
+        "user_2" to "Snowy",
+        "user_3" to "Anika",
+        "user_4" to "Tommy",
+    )
+    val activeAccountLabel = testAccounts.firstOrNull { it.first == activeUserId }?.second ?: activeUserId
+    val listState = rememberLazyListState()
+    val incomingStatuses = remember {
+        setOf("pending_provider_confirmation", "requested", "rescheduled", "reschedule_requested")
+    }
+    val incomingProviderBookings = remember(providerBookings) {
+        providerBookings.filter { it.status in incomingStatuses }
+    }
+    val managedProviderBookings = remember(providerBookings) {
+        providerBookings.filterNot { it.status in incomingStatuses }
+    }
+    @OptIn(ExperimentalFoundationApi::class)
     LazyColumn(
+        state = listState,
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = 90.dp),
     ) {
+        stickyHeader {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SectionHeader(
+                        title = "Test account",
+                        expanded = testAccountExpanded,
+                        onToggle = { testAccountExpanded = !testAccountExpanded },
+                    )
+                    if (testAccountExpanded) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "Current: $activeAccountLabel",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Button(onClick = { showAccountPicker = true }) {
+                                Text("Switch test account")
+                            }
+                        }
+                        Text(
+                            "Profile: ${displayName.ifBlank { "Unnamed" }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Button(onClick = { showProfileEditor = true }) {
+                            Text("Edit my profile")
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             SectionHeader(
                 title = "Notifications (${notifications.count { !it.read }})",
@@ -137,245 +236,6 @@ fun ProfileScreen(
                                     TextButton(onClick = { onMarkNotificationRead(notification.id) }) {
                                         Text("Mark read")
                                     }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text("Test account", style = MaterialTheme.typography.labelLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("user_1" to "Account A", "user_2" to "Account B", "user_3" to "Account C", "user_4" to "Account D")
-                            .forEach { (id, label) ->
-                            FilterChip(
-                                selected = activeUserId == id,
-                                onClick = { onSwitchAccount(id) },
-                                label = { Text(label) },
-                            )
-                        }
-                    }
-                    Text("My Profile", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(
-                        value = displayName,
-                        onValueChange = { displayName = it },
-                        label = { Text("Display name") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it },
-                        label = { Text("Email") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = phone,
-                        onValueChange = { phone = it },
-                        label = { Text("Phone") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = suburb,
-                        onValueChange = { suburb = it },
-                        label = { Text("Home suburb") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = favoriteSuburbsText,
-                        onValueChange = { favoriteSuburbsText = it },
-                        label = { Text("Favorite suburbs (comma separated)") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = bio,
-                        onValueChange = { bio = it },
-                        label = { Text("Bio") },
-                        minLines = 2,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Button(
-                        onClick = {
-                            onSaveProfile(
-                                ProfileInfo(
-                                    displayName = displayName.trim(),
-                                    email = email.trim(),
-                                    phone = phone.trim(),
-                                    bio = bio.trim(),
-                                    suburb = suburb.trim(),
-                                    favoriteSuburbs = favoriteSuburbsText
-                                        .split(",")
-                                        .map { it.trim() }
-                                        .filter { it.isNotBlank() }
-                                        .distinct(),
-                                )
-                            )
-                        },
-                    ) {
-                        Text("Save profile")
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Enable service provider profile")
-                        Switch(
-                            checked = isServiceProvider,
-                            onCheckedChange = onToggleServiceProvider,
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
-            SectionHeader(
-                title = "Pet Owner",
-                expanded = ownerExpanded,
-                onToggle = { ownerExpanded = !ownerExpanded },
-            )
-        }
-
-        if (ownerExpanded) {
-            item {
-                SectionHeader(
-                    title = "Manage bookings (${ownerBookings.size})",
-                    expanded = bookingsExpanded,
-                    onToggle = { bookingsExpanded = !bookingsExpanded },
-                )
-            }
-            if (bookingsExpanded) {
-                if (ownerBookings.isEmpty()) {
-                    item { Text("No bookings yet") }
-                } else {
-                    items(ownerBookings) { booking ->
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(booking.serviceName, style = MaterialTheme.typography.titleSmall)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("${booking.date} ${booking.timeSlot}")
-                                    StatusBadge(booking.status)
-                                }
-                                if (booking.providerAccountLabel.isNotBlank()) {
-                                    Text("Provider: ${booking.providerAccountLabel}", style = MaterialTheme.typography.labelSmall)
-                                }
-                                if (booking.note.isNotBlank()) {
-                                    Text(booking.note, style = MaterialTheme.typography.bodySmall)
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { onEditOwnerBooking(booking.id) }, enabled = booking.status != "cancelled") {
-                                        Text("Edit")
-                                    }
-                                    Button(
-                                        onClick = {
-                                            pendingAction = PendingAction(
-                                                title = "Cancel booking?",
-                                                message = "This will mark the booking as cancelled.",
-                                                onConfirm = { onCancelOwnerBooking(booking.id) },
-                                            )
-                                        },
-                                        enabled = booking.status != "cancelled",
-                                    ) {
-                                        Text("Cancel")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            item {
-                SectionHeader(
-                    title = "Groups",
-                    expanded = groupsExpanded,
-                    onToggle = { groupsExpanded = !groupsExpanded },
-                )
-            }
-            if (groupsExpanded) {
-                item { Text("Joined groups", style = MaterialTheme.typography.titleSmall) }
-                if (joinedGroups.isEmpty()) {
-                    item { Text("No joined groups yet") }
-                } else {
-                    items(joinedGroups) { group ->
-                        Text("${group.name} • ${group.memberCount} members", style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-
-                item { Text("Created groups", style = MaterialTheme.typography.titleSmall) }
-                if (createdGroups.isEmpty()) {
-                    item { Text("No created groups yet") }
-                } else {
-                    items(createdGroups) { group ->
-                        Text("${group.name} • ${group.suburb}", style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
-
-            item {
-                SectionHeader(
-                    title = "Joined events (${joinedEvents.size})",
-                    expanded = eventsExpanded,
-                    onToggle = { eventsExpanded = !eventsExpanded },
-                )
-            }
-            if (eventsExpanded) {
-                if (joinedEvents.isEmpty()) {
-                    item { Text("No joined events") }
-                } else {
-                    items(joinedEvents) { event ->
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(event.title, style = MaterialTheme.typography.titleSmall)
-                                Text("${event.date} • ${event.suburb}")
-                                Button(
-                                    onClick = {
-                                        pendingAction = PendingAction(
-                                            title = "Remove event?",
-                                            message = "This event will be removed from your joined list.",
-                                            onConfirm = { onLeaveEvent(event.id) },
-                                        )
-                                    },
-                                ) {
-                                    Text("Remove")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            item {
-                SectionHeader(
-                    title = "Favourites (${favouriteProviders.size})",
-                    expanded = favouritesExpanded,
-                    onToggle = { favouritesExpanded = !favouritesExpanded },
-                )
-            }
-            if (favouritesExpanded) {
-                if (favouriteProviders.isEmpty()) {
-                    item { Text("No favourites yet") }
-                } else {
-                    items(favouriteProviders) { provider ->
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(provider.name, style = MaterialTheme.typography.titleSmall)
-                                Text("${provider.suburb} • ${provider.category.replace("_", " ")}")
-                                Button(
-                                    onClick = {
-                                        pendingAction = PendingAction(
-                                            title = "Remove favourite?",
-                                            message = "This provider will be removed from favourites.",
-                                            onConfirm = { onRemoveFavourite(provider.id) },
-                                        )
-                                    },
-                                ) {
-                                    Text("Remove")
                                 }
                             }
                         }
@@ -409,153 +269,283 @@ fun ProfileScreen(
 
         item {
             SectionHeader(
-                title = "Service Provider",
-                expanded = providerExpanded,
-                onToggle = { providerExpanded = !providerExpanded },
+                title = "Groups",
+                expanded = groupsExpanded,
+                onToggle = { groupsExpanded = !groupsExpanded },
+            )
+        }
+        if (groupsExpanded) {
+            item { Text("Joined groups", style = MaterialTheme.typography.titleSmall) }
+            if (joinedGroups.isEmpty()) {
+                item { Text("No joined groups yet") }
+            } else {
+                items(joinedGroups) { group ->
+                    Text(
+                        "${group.name} • ${group.memberCount} members",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.clickable { onOpenCommunityGroup(group.id) },
+                    )
+                }
+            }
+
+            item { Text("Created groups", style = MaterialTheme.typography.titleSmall) }
+            if (createdGroups.isEmpty()) {
+                item { Text("No created groups yet") }
+            } else {
+                items(createdGroups) { group ->
+                    Text(
+                        "${group.name} • ${group.suburb}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.clickable { onOpenCommunityGroup(group.id) },
+                    )
+                }
+            }
+        }
+
+        item {
+            SectionHeader(
+                title = "Listings (${providerListings.size})",
+                expanded = listingsExpanded,
+                onToggle = { listingsExpanded = !listingsExpanded },
             )
         }
 
-        if (providerExpanded) {
-            if (!isServiceProvider) {
-                item {
-                    Text(
-                        "Turn on service provider profile above to manage listings, booking slots, suburbs, and incoming bookings.",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+        if (listingsExpanded) {
+            item {
+                Button(onClick = { showCreateListingDialog = true }) {
+                    Text("Create listing")
                 }
+            }
+            if (providerListings.isEmpty()) {
+                item { Text("No listings yet") }
             } else {
-                item {
-                    SectionHeader(
-                        title = "Manage service listings (${providerListings.size})",
-                        expanded = listingsExpanded,
-                        onToggle = { listingsExpanded = !listingsExpanded },
-                    )
-                }
-
-                if (listingsExpanded) {
-                    if (providerListings.isEmpty()) {
-                        item { Text("No service listings yet") }
-                    } else {
-                        items(providerListings) { listing ->
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(listing.title, style = MaterialTheme.typography.titleSmall)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("${listing.category} • From \$${listing.priceFrom}")
-                                        StatusBadge(listing.status)
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(
-                                            onClick = { onEditProviderListing(listing.id) },
-                                            enabled = listing.status != "cancelled",
-                                        ) {
-                                            Text("Edit")
+                items(providerListings) { listing ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(listing.title, style = MaterialTheme.typography.titleSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("${listing.category} • From \$${listing.priceFrom}")
+                                StatusBadge(listing.status)
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        editingListingId = listing.id
+                                        editingListingName = listing.title
+                                        editingListingDescription = listing.description
+                                        editingListingPriceFrom = listing.priceFrom.toString()
+                                        editingListingImageUrls = listing.imageUrls.joinToString(", ")
+                                        showEditListingDialog = true
+                                    },
+                                    enabled = listing.status != "cancelled",
+                                ) {
+                                    Text("Edit")
+                                }
+                                Button(
+                                    onClick = if (listing.status == "cancelled") {
+                                        { onRestoreProviderListing(listing.id) }
+                                    } else {
+                                        {
+                                            pendingAction = PendingAction(
+                                                title = "Cancel listing?",
+                                                message = "This listing will be marked as cancelled.",
+                                                onConfirm = { onCancelProviderListing(listing.id) },
+                                            )
                                         }
-                                        Button(
-                                            onClick = {
-                                                pendingAction = PendingAction(
-                                                    title = "Cancel listing?",
-                                                    message = "This listing will be marked as cancelled.",
-                                                    onConfirm = { onCancelProviderListing(listing.id) },
-                                                )
-                                            },
-                                            enabled = listing.status != "cancelled",
-                                        ) {
-                                            Text("Cancel")
-                                        }
-                                    }
+                                    },
+                                ) {
+                                    Text(if (listing.status == "cancelled") "Restore" else "Cancel")
                                 }
                             }
                         }
                     }
                 }
-
+            }
+            item {
+                SectionHeader(
+                    title = "Listing setup defaults",
+                    expanded = configExpanded,
+                    onToggle = { configExpanded = !configExpanded },
+                )
+            }
+            if (configExpanded) {
                 item {
-                    SectionHeader(
-                        title = "Booking configuration",
-                        expanded = configExpanded,
-                        onToggle = { configExpanded = !configExpanded },
-                    )
+                    val config = remember(providerConfig) { providerConfig }
+                    var availableSlots by rememberSaveable(config.availableTimeSlots) { mutableStateOf(config.availableTimeSlots) }
+                    var preferredSuburbs by rememberSaveable(config.preferredSuburbs) { mutableStateOf(config.preferredSuburbs) }
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedTextField(
+                                value = availableSlots,
+                                onValueChange = { availableSlots = it },
+                                label = { Text("Available time slots") },
+                                minLines = 2,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = preferredSuburbs,
+                                onValueChange = { preferredSuburbs = it },
+                                label = { Text("Preferred suburbs") },
+                                minLines = 2,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Button(onClick = { onSaveProviderConfig(availableSlots.trim(), preferredSuburbs.trim()) }) {
+                                Text("Save defaults")
+                            }
+                        }
+                    }
                 }
-                if (configExpanded) {
-                    item {
-                        val config = remember(providerConfig) { providerConfig }
-                        var availableSlots by rememberSaveable(config.availableTimeSlots) { mutableStateOf(config.availableTimeSlots) }
-                        var preferredSuburbs by rememberSaveable(config.preferredSuburbs) { mutableStateOf(config.preferredSuburbs) }
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
+            }
+        }
+
+        item {
+            SectionHeader(
+                title = "Incoming bookings (${incomingProviderBookings.size})",
+                expanded = incomingBookingsExpanded,
+                onToggle = { incomingBookingsExpanded = !incomingBookingsExpanded },
+            )
+        }
+        if (incomingBookingsExpanded) {
+            if (incomingProviderBookings.isEmpty()) {
+                item { Text("No incoming bookings") }
+            } else {
+                items(incomingProviderBookings) { booking ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("${booking.petName} • ${booking.serviceName}", style = MaterialTheme.typography.titleSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("${booking.date} ${booking.timeSlot}")
+                                StatusBadge(booking.status)
+                            }
+                            if (booking.ownerUserId.isNotBlank()) {
+                                Text("Customer account: ${accountDisplayName(booking.ownerUserId)}", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { onConfirmProviderBooking(booking.id) },
+                                    enabled = booking.status in incomingStatuses,
+                                ) {
+                                    Text("Accept")
+                                }
+                                Button(
+                                    onClick = {
+                                        pendingAction = PendingAction(
+                                            title = "Cancel incoming booking?",
+                                            message = "This booking will be marked as cancelled.",
+                                            onConfirm = { onCancelProviderBooking(booking.id) },
+                                        )
+                                    },
+                                    enabled = booking.status != "cancelled_by_provider" && booking.status != "cancelled_by_owner",
+                                ) {
+                                    Text("Cancel booking")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            SectionHeader(
+                title = "Bookings (${managedProviderBookings.size})",
+                expanded = providerBookingsExpanded,
+                onToggle = { providerBookingsExpanded = !providerBookingsExpanded },
+            )
+        }
+        if (providerBookingsExpanded) {
+            item {
+                Text(
+                    "Confirmed bookings are reflected in Calendar.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (managedProviderBookings.isEmpty()) {
+                item { Text("No managed bookings yet") }
+            } else {
+                items(managedProviderBookings) { booking ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("${booking.petName} • ${booking.serviceName}", style = MaterialTheme.typography.titleSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("${booking.date} ${booking.timeSlot}")
+                                StatusBadge(booking.status)
+                            }
+                            if (booking.ownerUserId.isNotBlank()) {
+                                Text("Customer account: ${accountDisplayName(booking.ownerUserId)}", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            SectionHeader(
+                title = "Share App QR",
+                expanded = appShareExpanded,
+                onToggle = { appShareExpanded = !appShareExpanded },
+            )
+        }
+        if (appShareExpanded) {
+            item {
+                val trimmedLink = BuildConfig.INSTALL_PAGE_URL.trim()
+                val canRenderQr = trimmedLink.startsWith("http://") || trimmedLink.startsWith("https://")
+                val qrUrl = if (canRenderQr) qrImageUrl(trimmedLink) else null
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Install page link")
+                        Text(
+                            trimmedLink,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { clipboard.setText(AnnotatedString(trimmedLink)) },
+                                enabled = canRenderQr,
                             ) {
-                                OutlinedTextField(
-                                    value = availableSlots,
-                                    onValueChange = { availableSlots = it },
-                                    label = { Text("Available time slots") },
-                                    minLines = 2,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                                OutlinedTextField(
-                                    value = preferredSuburbs,
-                                    onValueChange = { preferredSuburbs = it },
-                                    label = { Text("Preferred suburbs") },
-                                    minLines = 2,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                                Button(onClick = { onSaveProviderConfig(availableSlots.trim(), preferredSuburbs.trim()) }) {
-                                    Text("Save configuration")
-                                }
+                                Text("Copy link")
+                            }
+                            Button(
+                                onClick = {
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, trimmedLink)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Share BarkWise install link"))
+                                },
+                                enabled = canRenderQr,
+                            ) {
+                                Text("Share link")
                             }
                         }
-                    }
-                }
-
-                item {
-                    SectionHeader(
-                        title = "Incoming bookings (${providerBookings.size})",
-                        expanded = incomingBookingsExpanded,
-                        onToggle = { incomingBookingsExpanded = !incomingBookingsExpanded },
-                    )
-                }
-
-                if (incomingBookingsExpanded) {
-                    if (providerBookings.isEmpty()) {
-                        item { Text("No incoming bookings") }
-                    } else {
-                        items(providerBookings) { booking ->
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("${booking.petName} • ${booking.serviceName}", style = MaterialTheme.typography.titleSmall)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("${booking.date} ${booking.timeSlot}")
-                                        StatusBadge(booking.status)
-                                    }
-                                    if (booking.ownerUserId.isNotBlank()) {
-                                        Text("Customer account: ${accountDisplayName(booking.ownerUserId)}", style = MaterialTheme.typography.labelSmall)
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(
-                                            onClick = { onConfirmProviderBooking(booking.id) },
-                                            enabled = booking.status == "requested" || booking.status == "rescheduled",
-                                        ) {
-                                            Text("Accept")
-                                        }
-                                        Button(
-                                            onClick = {
-                                                pendingAction = PendingAction(
-                                                    title = "Cancel incoming booking?",
-                                                    message = "This booking will be marked as cancelled.",
-                                                    onConfirm = { onCancelProviderBooking(booking.id) },
-                                                )
-                                            },
-                                            enabled = booking.status != "cancelled_by_provider" && booking.status != "cancelled_by_owner",
-                                        ) {
-                                            Text("Cancel booking")
-                                        }
-                                    }
-                                }
-                            }
+                        if (qrUrl != null) {
+                            Text("Scan this QR to open install page", style = MaterialTheme.typography.labelMedium)
+                            AsyncImage(
+                                model = qrUrl,
+                                contentDescription = "App install QR",
+                                modifier = Modifier
+                                    .size(220.dp)
+                                    .align(Alignment.CenterHorizontally),
+                            )
+                        } else {
+                            Text(
+                                "Enter a valid http(s) URL to generate QR.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
@@ -579,7 +569,17 @@ fun ProfileScreen(
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("Current test account: ${accountDisplayName(activeUserId)}", style = MaterialTheme.typography.titleSmall)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            AsyncImage(
+                                model = accountPhotoUrl(activeUserId),
+                                contentDescription = "${accountDisplayName(activeUserId)} profile photo",
+                                modifier = Modifier.size(34.dp),
+                            )
+                            Text("Current test account: ${accountDisplayName(activeUserId)}", style = MaterialTheme.typography.titleSmall)
+                        }
                         Text("Use these mappings to run cross-account booking and approval tests.", style = MaterialTheme.typography.bodySmall)
                     }
                 }
@@ -593,16 +593,16 @@ fun ProfileScreen(
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("Service ownership map", style = MaterialTheme.typography.titleSmall)
+                        Text("Listing ownership map", style = MaterialTheme.typography.titleSmall)
                         if (allProviders.isEmpty()) {
-                            Text("No services loaded. Refresh Services tab first.", style = MaterialTheme.typography.bodySmall)
+                            Text("No listings loaded. Refresh Listings tab first.", style = MaterialTheme.typography.bodySmall)
                         }
                         allProviders.forEach { provider ->
                             val ownerUserId = provider.ownerUserId
                             val owner = provider.ownerLabel
                                 ?: ownerUserId?.let(::accountDisplayName)
                                 ?: "Unknown owner"
-                            val suggestedBooker = listOf("Account A", "Account B", "Account C", "Account D")
+                            val suggestedBooker = listOf("Sesame", "Snowy", "Anika", "Tommy")
                                 .firstOrNull { it != owner } ?: "another account"
                             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                                 Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -655,6 +655,284 @@ fun ProfileScreen(
                 }
             }
         }
+    }
+
+    if (showCreateListingDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateListingDialog = false },
+            title = { Text("Create listing") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = listingName,
+                        onValueChange = { listingName = it },
+                        label = { Text("Listing name") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = listingCategory == "dog_walking",
+                            onClick = { listingCategory = "dog_walking" },
+                            label = { Text("Dog walking") },
+                        )
+                        FilterChip(
+                            selected = listingCategory == "grooming",
+                            onClick = { listingCategory = "grooming" },
+                            label = { Text("Grooming") },
+                        )
+                    }
+                    OutlinedTextField(
+                        value = listingSuburb,
+                        onValueChange = { listingSuburb = it },
+                        label = { Text("Suburb") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = listingDescription,
+                        onValueChange = { listingDescription = it },
+                        label = { Text("Description") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = listingPriceFrom,
+                        onValueChange = { listingPriceFrom = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Price from") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = listingImageUrls,
+                        onValueChange = { listingImageUrls = it },
+                        label = { Text("Image URLs (optional, comma-separated)") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                val parsedPrice = listingPriceFrom.toIntOrNull()
+                val parsedImageUrls = listingImageUrls
+                    .split(",", "\n")
+                    .map { value -> value.trim() }
+                    .filter { value -> value.isNotEmpty() }
+                val canSubmit = listingName.isNotBlank() &&
+                    listingSuburb.isNotBlank() &&
+                    listingDescription.isNotBlank() &&
+                    parsedPrice != null &&
+                    parsedPrice > 0
+                Button(
+                    onClick = {
+                        onCreateProviderListing(
+                            listingName.trim(),
+                            listingCategory,
+                            listingSuburb.trim(),
+                            listingDescription.trim(),
+                            parsedPrice ?: 0,
+                            parsedImageUrls,
+                        )
+                        showCreateListingDialog = false
+                        listingName = ""
+                        listingSuburb = profileInfo.suburb
+                        listingDescription = ""
+                        listingPriceFrom = ""
+                        listingImageUrls = ""
+                        listingCategory = "dog_walking"
+                    },
+                    enabled = canSubmit,
+                ) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateListingDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    if (showEditListingDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditListingDialog = false },
+            title = { Text("Edit listing") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editingListingName,
+                        onValueChange = { editingListingName = it },
+                        label = { Text("Listing name") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = editingListingDescription,
+                        onValueChange = { editingListingDescription = it },
+                        label = { Text("Description") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = editingListingPriceFrom,
+                        onValueChange = { editingListingPriceFrom = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Price from") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = editingListingImageUrls,
+                        onValueChange = { editingListingImageUrls = it },
+                        label = { Text("Image URLs (optional, comma-separated)") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                val parsedPrice = editingListingPriceFrom.toIntOrNull()
+                val parsedImageUrls = editingListingImageUrls
+                    .split(",", "\n")
+                    .map { value -> value.trim() }
+                    .filter { value -> value.isNotEmpty() }
+                val canSubmit = editingListingId.isNotBlank() &&
+                    editingListingName.isNotBlank() &&
+                    editingListingDescription.isNotBlank() &&
+                    parsedPrice != null &&
+                    parsedPrice > 0
+                Button(
+                    onClick = {
+                        onEditProviderListing(
+                            editingListingId,
+                            editingListingName.trim(),
+                            editingListingDescription.trim(),
+                            parsedPrice ?: 0,
+                            parsedImageUrls,
+                        )
+                        showEditListingDialog = false
+                    },
+                    enabled = canSubmit,
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditListingDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    if (showAccountPicker) {
+        AlertDialog(
+            onDismissRequest = { showAccountPicker = false },
+            title = { Text("Select test account") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    testAccounts.forEach { (id, label) ->
+                        Button(
+                            onClick = {
+                                onSwitchAccount(id)
+                                showAccountPicker = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                AsyncImage(
+                                    model = accountPhotoUrl(id),
+                                    contentDescription = "$label profile photo",
+                                    modifier = Modifier.size(26.dp),
+                                )
+                                Text(if (activeUserId == id) "$label (Current)" else label)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showAccountPicker = false }) { Text("Close") }
+            },
+        )
+    }
+
+    if (showProfileEditor) {
+        AlertDialog(
+            onDismissRequest = { showProfileEditor = false },
+            title = { Text("Edit profile") },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                ) {
+                    OutlinedTextField(
+                        value = displayName,
+                        onValueChange = { displayName = it },
+                        label = { Text("Display name") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it },
+                        label = { Text("Email") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = phone,
+                        onValueChange = { phone = it },
+                        label = { Text("Phone") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = suburb,
+                        onValueChange = { suburb = it },
+                        label = { Text("Home suburb") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = favoriteSuburbsText,
+                        onValueChange = { favoriteSuburbsText = it },
+                        label = { Text("Favorite suburbs (comma separated)") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = bio,
+                        onValueChange = { bio = it },
+                        label = { Text("Bio") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onSaveProfile(
+                            ProfileInfo(
+                                displayName = displayName.trim(),
+                                email = email.trim(),
+                                phone = phone.trim(),
+                                bio = bio.trim(),
+                                suburb = suburb.trim(),
+                                favoriteSuburbs = favoriteSuburbsText
+                                    .split(",")
+                                    .map { it.trim() }
+                                    .filter { it.isNotBlank() }
+                                    .distinct(),
+                            )
+                        )
+                        showProfileEditor = false
+                    },
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showProfileEditor = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 
     pendingAction?.let { action ->
@@ -842,6 +1120,11 @@ private fun parseCalendarDate(date: String): LocalDate? = try {
     null
 }
 
+private fun qrImageUrl(url: String): String {
+    val encoded = URLEncoder.encode(url, StandardCharsets.UTF_8.toString())
+    return "https://quickchart.io/qr?size=260&text=$encoded"
+}
+
 private fun String.toLocalDateString(): String {
     return if (length >= 10 && this[4] == '-' && this[7] == '-') {
         take(10)
@@ -890,9 +1173,17 @@ private fun StatusBadge(status: String) {
 }
 
 private fun accountDisplayName(userId: String): String = when (userId) {
-    "user_1" -> "Account A"
-    "user_2" -> "Account B"
-    "user_3" -> "Account C"
-    "user_4" -> "Account D"
+    "user_1" -> "Sesame"
+    "user_2" -> "Snowy"
+    "user_3" -> "Anika"
+    "user_4" -> "Tommy"
     else -> userId
+}
+
+private fun accountPhotoUrl(userId: String): String = when (userId) {
+    "user_1" -> "https://loremflickr.com/640/640/bordoodle,dog?lock=201"
+    "user_2" -> "https://loremflickr.com/640/640/black,white,dog?lock=202"
+    "user_3" -> "https://loremflickr.com/640/640/cavoodle,dog?lock=203"
+    "user_4" -> "https://loremflickr.com/640/640/brown,toy,dog,cavoodle?lock=204"
+    else -> "https://images.unsplash.com/photo-1517849845537-4d257902454a"
 }

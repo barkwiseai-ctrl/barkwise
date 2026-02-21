@@ -12,42 +12,91 @@ class MockApiService private constructor() : ApiService {
     private val providers = mutableListOf(
         ServiceProvider(
             id = "provider_1",
-            name = "Paws & Play Walkers",
-            category = "dog_walking",
+            name = "Sesame Suds Studio",
+            category = "grooming",
             suburb = "Surry Hills",
             rating = 4.9,
             reviewCount = 124,
-            priceFrom = 35,
-            description = "Daily neighborhood walks with photo updates.",
-            fullDescription = "Local dog walkers for weekday and weekend sessions.",
+            priceFrom = 62,
+            description = "Full groom + de-shed packages for doodles and double coats.",
+            fullDescription = "Mobile grooming van with calm, low-stress sessions and photo updates.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/bordoodle,dog?lock=101",
+            ),
             latitude = -33.8842,
             longitude = 151.2106,
             ownerUserId = "user_1",
-            ownerLabel = "Account A",
+            ownerLabel = "Sesame",
         ),
         ServiceProvider(
             id = "provider_2",
-            name = "Clean Pup Grooming",
+            name = "Sesame Gentle Trim Co.",
             category = "grooming",
-            suburb = "Redfern",
+            suburb = "Darlinghurst",
             rating = 4.7,
             reviewCount = 88,
-            priceFrom = 65,
-            description = "Full grooming, nail trim, and wash packages.",
-            fullDescription = "Salon grooming with pickup windows every afternoon.",
+            priceFrom = 58,
+            description = "Express tidy trims, wash and blow-dry.",
+            fullDescription = "Fast turnarounds for regular coat maintenance and hygiene clips.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/doodle,dog,grooming?lock=102",
+            ),
+            latitude = -33.8777,
+            longitude = 151.2219,
+            ownerUserId = "user_1",
+            ownerLabel = "Sesame",
+        ),
+        ServiceProvider(
+            id = "provider_3",
+            name = "Tommy Tiny Paws Grooming",
+            category = "grooming",
+            suburb = "Redfern",
+            rating = 4.8,
+            reviewCount = 102,
+            priceFrom = 67,
+            description = "Toy-breed specialist grooming with coat-safe products.",
+            fullDescription = "Gentle handling for small breeds, face tidy, nails, and paw care.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/brown,toy,dog,cavoodle?lock=103",
+            ),
             latitude = -33.8935,
             longitude = 151.2048,
-            ownerUserId = "user_3",
-            ownerLabel = "Account C",
+            ownerUserId = "user_4",
+            ownerLabel = "Tommy",
+        ),
+        ServiceProvider(
+            id = "provider_4",
+            name = "Tommy Cocoa Coat Spa",
+            category = "grooming",
+            suburb = "Surry Hills",
+            rating = 4.6,
+            reviewCount = 71,
+            priceFrom = 64,
+            description = "Brown-coat brightening wash, conditioning, and tidy styling.",
+            fullDescription = "Salon-style finish for toy cavoodles and poodle mixes.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/toy,cavoodle,dog?lock=104",
+            ),
+            latitude = -33.8860,
+            longitude = 151.2101,
+            ownerUserId = "user_4",
+            ownerLabel = "Tommy",
         ),
     )
     private val reviewsByProvider = mutableMapOf(
         "provider_1" to mutableListOf(
-            Review("review_1", "provider_1", "Sam", 5, "Always on time and patient with our lab."),
-            Review("review_2", "provider_1", "June", 5, "Great updates and friendly service."),
+            Review("review_1", "provider_1", "Sam", 5, "Excellent groom. Coat came back fluffy and even."),
+            Review("review_2", "provider_1", "June", 5, "Great updates and really gentle handling."),
         ),
         "provider_2" to mutableListOf(
-            Review("review_3", "provider_2", "Mia", 4, "Good groom and easy booking flow."),
+            Review("review_3", "provider_2", "Mia", 4, "Good tidy trim and easy booking flow."),
+        ),
+        "provider_3" to mutableListOf(
+            Review("review_4", "provider_3", "Harper", 5, "Perfect for small dogs, very patient staff."),
+            Review("review_5", "provider_3", "Noah", 4, "Great cut and nails, pickup was on time."),
+        ),
+        "provider_4" to mutableListOf(
+            Review("review_6", "provider_4", "Ava", 5, "My toy cavoodle looked amazing after the spa package."),
         ),
     )
     private val groupMembers = mutableMapOf(
@@ -110,7 +159,7 @@ class MockApiService private constructor() : ApiService {
             id = "notif_1",
             userId = "user_2",
             title = "Booking updated",
-            body = "Your walker confirmed tomorrow's booking.",
+            body = "Your groomer confirmed tomorrow's booking.",
             category = "booking",
             read = false,
             createdAt = Instant.now().minus(1, ChronoUnit.HOURS).toString(),
@@ -127,6 +176,8 @@ class MockApiService private constructor() : ApiService {
     override suspend fun getProviders(
         category: String?,
         suburb: String?,
+        userId: String?,
+        includeInactive: Boolean,
         minRating: Double?,
         maxDistanceKm: Double?,
         userLat: Double?,
@@ -136,6 +187,10 @@ class MockApiService private constructor() : ApiService {
     ): List<ServiceProvider> {
         val filtered = providers
             .asSequence()
+            .filter {
+                val isActive = it.status == "active"
+                isActive || (includeInactive && !userId.isNullOrBlank() && it.ownerUserId == userId)
+            }
             .filter { category.isNullOrBlank() || it.category == category }
             .filter { suburb.isNullOrBlank() || it.suburb.equals(suburb, ignoreCase = true) }
             .filter { minRating == null || it.rating >= minRating }
@@ -167,6 +222,93 @@ class MockApiService private constructor() : ApiService {
             provider = provider,
             reviews = reviewsByProvider[providerId].orEmpty(),
         )
+    }
+
+    override suspend fun createProvider(payload: CreateServiceProviderRequest): ServiceProvider {
+        val ownerLabel = when (payload.userId) {
+            "user_1" -> "Sesame"
+            "user_2" -> "Snowy"
+            "user_3" -> "Anika"
+            "user_4" -> "Tommy"
+            else -> payload.userId
+        }
+        val provider = ServiceProvider(
+            id = "provider_${providers.size + 1}",
+            name = payload.name,
+            category = payload.category,
+            suburb = payload.suburb,
+            rating = 5.0,
+            reviewCount = 0,
+            priceFrom = payload.priceFrom,
+            description = payload.description,
+            fullDescription = payload.fullDescription ?: payload.description,
+            imageUrls = payload.imageUrls.takeIf { it.isNotEmpty() }
+                ?: listOf("https://loremflickr.com/640/640/dog,pet?lock=${providers.size + 101}"),
+            latitude = payload.latitude ?: -33.8889,
+            longitude = payload.longitude ?: 151.2111,
+            ownerUserId = payload.userId,
+            ownerLabel = ownerLabel,
+        )
+        providers += provider
+        reviewsByProvider[provider.id] = mutableListOf()
+        return provider
+    }
+
+    override suspend fun updateProvider(
+        providerId: String,
+        payload: UpdateServiceProviderRequest,
+    ): ServiceProvider {
+        val index = providers.indexOfFirst { it.id == providerId }
+        if (index < 0) error("Provider not found: $providerId")
+        val existing = providers[index]
+        if (existing.ownerUserId != payload.userId) {
+            error("Only provider owner can edit listing")
+        }
+        val updated = existing.copy(
+            name = payload.name?.takeIf { it.isNotBlank() } ?: existing.name,
+            suburb = payload.suburb?.takeIf { it.isNotBlank() } ?: existing.suburb,
+            description = payload.description?.takeIf { it.isNotBlank() } ?: existing.description,
+            priceFrom = payload.priceFrom ?: existing.priceFrom,
+            fullDescription = payload.fullDescription?.takeIf { it.isNotBlank() }
+                ?: payload.description?.takeIf { it.isNotBlank() }
+                ?: existing.fullDescription,
+            imageUrls = payload.imageUrls
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.takeIf { it.isNotEmpty() }
+                ?: existing.imageUrls,
+            latitude = payload.latitude ?: existing.latitude,
+            longitude = payload.longitude ?: existing.longitude,
+            status = existing.status,
+        )
+        providers[index] = updated
+        return updated
+    }
+
+    override suspend fun cancelProvider(
+        providerId: String,
+        payload: CancelServiceProviderRequest,
+    ): Map<String, String> {
+        val index = providers.indexOfFirst { it.id == providerId }
+        if (index < 0) error("Provider not found: $providerId")
+        if (providers[index].ownerUserId != payload.userId) {
+            error("Only provider owner can cancel listing")
+        }
+        providers[index] = providers[index].copy(status = "cancelled")
+        return mapOf("status" to "cancelled", "provider_id" to providerId)
+    }
+
+    override suspend fun restoreProvider(
+        providerId: String,
+        payload: RestoreServiceProviderRequest,
+    ): ServiceProvider {
+        val index = providers.indexOfFirst { it.id == providerId }
+        if (index < 0) error("Provider not found: $providerId")
+        if (providers[index].ownerUserId != payload.userId) {
+            error("Only provider owner can restore listing")
+        }
+        providers[index] = providers[index].copy(status = "active")
+        return providers[index]
     }
 
     override suspend fun getProviderAvailability(providerId: String, date: String): List<ServiceAvailabilitySlot> {
@@ -301,8 +443,8 @@ class MockApiService private constructor() : ApiService {
     override suspend fun chat(payload: ChatRequest): ChatResponse {
         val conversation = conversationByUser.getOrPut(payload.userId) { mutableListOf() }
         conversation += ChatTurn(role = "user", content = payload.message)
-        val suburbHint = payload.suburb?.let { " around $it" }.orEmpty()
-        val answer = "Mock BarkAI: I can help you find walkers, groomers, and local events$suburbHint."
+        val suburbHint = payload.suburb?.let { " (suburb: $it)" }.orEmpty()
+        val answer = "Mock mode only. This build does not use the real LLM.$suburbHint"
         conversation += ChatTurn(role = "assistant", content = answer)
         return ChatResponse(
             answer = answer,

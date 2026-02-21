@@ -20,6 +20,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import retrofit2.HttpException
 import java.io.IOException
 import java.time.LocalDate
 import kotlin.coroutines.resume
@@ -46,6 +47,8 @@ class PetSocialRepository(
     suspend fun loadProviders(
         category: String? = null,
         suburb: String? = null,
+        userId: String? = null,
+        includeInactive: Boolean = false,
         minRating: Double? = null,
         maxDistanceKm: Double? = null,
         userLat: Double? = null,
@@ -55,6 +58,8 @@ class PetSocialRepository(
     ): List<ServiceProvider> = api.getProviders(
         category = category,
         suburb = suburb,
+        userId = userId,
+        includeInactive = includeInactive,
         minRating = minRating,
         maxDistanceKm = maxDistanceKm,
         userLat = userLat,
@@ -66,6 +71,157 @@ class PetSocialRepository(
     suspend fun loadProviderDetails(providerId: String): ServiceProviderDetailsResponse = api.getProviderDetails(providerId)
     suspend fun loadProviderAvailability(providerId: String, date: String): List<ServiceAvailabilitySlot> =
         api.getProviderAvailability(providerId, date)
+
+    suspend fun createServiceProvider(
+        name: String,
+        category: String,
+        suburb: String,
+        description: String,
+        priceFrom: Int,
+        fullDescription: String? = null,
+        imageUrls: List<String> = emptyList(),
+        latitude: Double? = null,
+        longitude: Double? = null,
+    ): ServiceProvider = createServiceProviderWithFallback(
+        CreateServiceProviderRequest(
+            userId = userId,
+            name = name,
+            category = category,
+            suburb = suburb,
+            description = description,
+            priceFrom = priceFrom,
+            fullDescription = fullDescription,
+            imageUrls = imageUrls,
+            latitude = latitude,
+            longitude = longitude,
+        ),
+    )
+
+    private suspend fun createServiceProviderWithFallback(payload: CreateServiceProviderRequest): ServiceProvider {
+        return runCatching { api.createProvider(payload) }
+            .recoverCatching { error ->
+                val retryableHttp = error as? HttpException
+                if (retryableHttp == null || (retryableHttp.code() != 404 && retryableHttp.code() != 405)) {
+                    throw error
+                }
+                postServiceProviderViaFallbackPath(payload)
+            }
+            .getOrThrow()
+    }
+
+    private suspend fun postServiceProviderViaFallbackPath(payload: CreateServiceProviderRequest): ServiceProvider =
+        withContext(Dispatchers.IO) {
+            val mediaType = "application/json".toMediaType()
+            val candidatePaths = listOf(
+                "services/providers",
+                "services/providers/",
+                "services/provider",
+                "services/provider/",
+                "services/providers/create",
+                "services/provider/create",
+                "providers",
+                "providers/",
+                "api/services/providers",
+                "api/services/providers/",
+                "api/services/provider",
+                "api/services/provider/",
+                "api/services/providers/create",
+                "api/services/provider/create",
+            )
+            val candidateMethods = listOf("POST", "PUT")
+            val baseCandidates = resolveBaseCandidates()
+            var lastError: Throwable? = null
+
+            for (base in baseCandidates) {
+                val baseHttpUrl = base.toHttpUrlOrNull() ?: continue
+                for (path in candidatePaths) {
+                    for (method in candidateMethods) {
+                        val url = baseHttpUrl.newBuilder()
+                            .encodedPath("/")
+                            .apply {
+                                path.split("/")
+                                    .filter { it.isNotBlank() }
+                                    .forEach { addPathSegment(it) }
+                            }
+                            .build()
+                        val requestBody = json.encodeToString(payload).toRequestBody(mediaType)
+                        val requestBuilder = Request.Builder().url(url)
+                        when (method) {
+                            "POST" -> requestBuilder.post(requestBody)
+                            "PUT" -> requestBuilder.put(requestBody)
+                            else -> requestBuilder.post(requestBody)
+                        }
+                        if (authToken.isNotBlank()) {
+                            requestBuilder.header("Authorization", "Bearer $authToken")
+                        }
+                        val request = requestBuilder.build()
+                        val response = try {
+                            httpClient.newCall(request).execute()
+                        } catch (error: Exception) {
+                            lastError = error
+                            continue
+                        }
+
+                        var tryNextPath = false
+                        response.use { raw ->
+                            if (raw.isSuccessful) {
+                                val rawBody = raw.body?.string().orEmpty()
+                                if (rawBody.isBlank()) error("Empty response from ${url.encodedPath}")
+                                return@withContext json.decodeFromString<ServiceProvider>(rawBody)
+                            }
+                            if (raw.code == 404 || raw.code == 405) {
+                                lastError = IllegalStateException("HTTP ${raw.code} ($method) at ${url.encodedPath}")
+                                tryNextPath = true
+                                return@use
+                            }
+                            error("Create service failed (${raw.code}) at ${url.encodedPath}")
+                        }
+                        if (tryNextPath) {
+                            continue
+                        }
+                    }
+                }
+            }
+            throw (lastError ?: IllegalStateException("Service create endpoint unavailable"))
+        }
+
+    suspend fun updateServiceProvider(
+        providerId: String,
+        name: String? = null,
+        suburb: String? = null,
+        description: String? = null,
+        priceFrom: Int? = null,
+        fullDescription: String? = null,
+        imageUrls: List<String>? = null,
+        latitude: Double? = null,
+        longitude: Double? = null,
+    ): ServiceProvider = api.updateProvider(
+        providerId = providerId,
+        payload = UpdateServiceProviderRequest(
+            userId = userId,
+            name = name,
+            suburb = suburb,
+            description = description,
+            priceFrom = priceFrom,
+            fullDescription = fullDescription,
+            imageUrls = imageUrls,
+            latitude = latitude,
+            longitude = longitude,
+        ),
+    )
+
+    suspend fun cancelServiceProvider(providerId: String): Boolean = runCatching {
+        api.cancelProvider(
+            providerId = providerId,
+            payload = CancelServiceProviderRequest(userId = userId),
+        )
+        true
+    }.getOrElse { false }
+
+    suspend fun restoreServiceProvider(providerId: String): ServiceProvider = api.restoreProvider(
+        providerId = providerId,
+        payload = RestoreServiceProviderRequest(userId = userId),
+    )
 
     suspend fun loadGroups(suburb: String?): List<Group> = api.getGroups(suburb = suburb, userId = userId)
 
@@ -163,9 +319,10 @@ class PetSocialRepository(
         onDelta: (String) -> Unit,
     ): ChatResponse = withContext(Dispatchers.IO) {
         val payload = ChatRequest(userId = userId, message = message, suburb = suburb)
-        val streamFallbackBaseUrl = normalizeBaseUrl(fallbackBaseUrl, DEFAULT_API_BASE_URL)
-        val streamPrimaryBaseUrl = normalizeBaseUrl(baseUrl, streamFallbackBaseUrl)
-        val streamFallbackEnabled = streamFallbackBaseUrl != streamPrimaryBaseUrl
+        val streamPrimaryBaseUrl = normalizeBaseUrl(baseUrl) ?: DEFAULT_API_BASE_URL
+        val streamFallbackBaseUrl = normalizeBaseUrl(fallbackBaseUrl)
+        val streamFallbackEnabled =
+            streamFallbackBaseUrl != null && streamFallbackBaseUrl != streamPrimaryBaseUrl
 
         fun readStream(streamBaseUrl: String): ChatResponse {
             val body = json.encodeToString(payload).toRequestBody("application/json".toMediaType())
@@ -220,7 +377,7 @@ class PetSocialRepository(
             readStream(streamPrimaryBaseUrl)
         }.recoverCatching { error ->
             if (streamFallbackEnabled && error is IOException) {
-                readStream(streamFallbackBaseUrl)
+                readStream(streamFallbackBaseUrl!!)
             } else {
                 throw error
             }
@@ -232,13 +389,19 @@ class PetSocialRepository(
         }
     }
 
-    private fun normalizeBaseUrl(candidate: String?, fallback: String): String {
+    private fun normalizeBaseUrl(candidate: String?): String? {
         val cleaned = candidate
             ?.trim()
             ?.trim('"')
             ?.takeIf { it.isNotBlank() }
             ?.let { value -> if (value.endsWith("/")) value else "$value/" }
-        return if (cleaned?.toHttpUrlOrNull() != null) cleaned else fallback
+        return if (cleaned?.toHttpUrlOrNull() != null) cleaned else null
+    }
+
+    private fun resolveBaseCandidates(): List<String> {
+        val primary = normalizeBaseUrl(baseUrl) ?: DEFAULT_API_BASE_URL
+        val fallback = normalizeBaseUrl(fallbackBaseUrl)
+        return listOfNotNull(primary, fallback).distinct()
     }
 
     suspend fun acceptProfileCard(): ChatResponse = api.acceptProfile(ProfileActionRequest(userId = userId))
@@ -317,14 +480,101 @@ class PetSocialRepository(
     )
 
     suspend fun createLostFoundPost(title: String, body: String, suburb: String): CommunityPost =
-        api.createPost(
+        createCommunityPostWithFallback(
             CommunityPostCreate(
                 type = "lost_found",
                 title = title,
                 body = body,
                 suburb = suburb,
-            )
+            ),
         )
+
+    suspend fun createCommunityGroupPost(title: String, body: String, suburb: String): CommunityPost =
+        createCommunityPostWithFallback(
+            CommunityPostCreate(
+                type = "group_post",
+                title = title,
+                body = body,
+                suburb = suburb,
+            ),
+        )
+
+    private suspend fun createCommunityPostWithFallback(payload: CommunityPostCreate): CommunityPost {
+        return runCatching { api.createPost(payload) }
+            .recoverCatching { error ->
+                val retryableHttp = error as? HttpException
+                if (retryableHttp == null || (retryableHttp.code() != 404 && retryableHttp.code() != 405)) {
+                    throw error
+                }
+                postCommunityViaFallbackPath(payload)
+            }
+            .getOrThrow()
+    }
+
+    private suspend fun postCommunityViaFallbackPath(payload: CommunityPostCreate): CommunityPost =
+        withContext(Dispatchers.IO) {
+            val mediaType = "application/json".toMediaType()
+            val requestBody = json.encodeToString(payload).toRequestBody(mediaType)
+            val candidatePaths = listOf(
+                "community/posts",
+                "community/posts/",
+                "posts",
+                "posts/",
+                "api/community/posts",
+                "api/community/posts/",
+            )
+            val baseCandidates = resolveBaseCandidates()
+            var lastError: Throwable? = null
+
+            for (base in baseCandidates) {
+                val baseHttpUrl = base.toHttpUrlOrNull() ?: continue
+                for (path in candidatePaths) {
+                    val url = baseHttpUrl.newBuilder()
+                        .encodedPath("/")
+                        .apply {
+                            path.split("/")
+                                .filter { it.isNotBlank() }
+                                .forEach { addPathSegment(it) }
+                        }
+                        .build()
+                    val request = Request.Builder()
+                        .url(url)
+                        .post(requestBody)
+                        .apply {
+                            if (authToken.isNotBlank()) {
+                                header("Authorization", "Bearer $authToken")
+                            }
+                        }
+                        .build()
+
+                    val response = try {
+                        httpClient.newCall(request).execute()
+                    } catch (error: Exception) {
+                        lastError = error
+                        continue
+                    }
+
+                    var tryNextPath = false
+                    response.use { raw ->
+                        if (raw.isSuccessful) {
+                            val rawBody = raw.body?.string().orEmpty()
+                            if (rawBody.isBlank()) error("Empty response from ${url.encodedPath}")
+                            return@withContext json.decodeFromString<CommunityPost>(rawBody)
+                        }
+                        if (raw.code == 404 || raw.code == 405) {
+                            lastError = IllegalStateException("HTTP ${raw.code} at ${url.encodedPath}")
+                            tryNextPath = true
+                            return@use
+                        }
+                        error("Community post failed (${raw.code}) at ${url.encodedPath}")
+                    }
+                    if (tryNextPath) {
+                        continue
+                    }
+                }
+            }
+            throw (lastError ?: IllegalStateException("Community post endpoint unavailable"))
+        }
 
     suspend fun createCommunityEvent(
         title: String,
@@ -332,7 +582,7 @@ class PetSocialRepository(
         suburb: String,
         date: String,
         groupId: String? = null,
-    ): CommunityEvent = api.createEvent(
+    ): CommunityEvent = createCommunityEventWithFallback(
         CommunityEventCreateRequest(
             userId = userId,
             title = title,
@@ -340,8 +590,84 @@ class PetSocialRepository(
             suburb = suburb,
             date = date,
             groupId = groupId,
-        )
+        ),
     )
+
+    private suspend fun createCommunityEventWithFallback(payload: CommunityEventCreateRequest): CommunityEvent {
+        return runCatching { api.createEvent(payload) }
+            .recoverCatching { error ->
+                val retryableHttp = error as? HttpException
+                if (retryableHttp == null || (retryableHttp.code() != 404 && retryableHttp.code() != 405)) {
+                    throw error
+                }
+                postCommunityEventViaFallbackPath(payload)
+            }
+            .getOrThrow()
+    }
+
+    private suspend fun postCommunityEventViaFallbackPath(payload: CommunityEventCreateRequest): CommunityEvent =
+        withContext(Dispatchers.IO) {
+            val mediaType = "application/json".toMediaType()
+            val requestBody = json.encodeToString(payload).toRequestBody(mediaType)
+            val candidatePaths = listOf(
+                "community/events",
+                "community/events/",
+                "events",
+                "events/",
+                "api/community/events",
+                "api/community/events/",
+            )
+            val baseCandidates = resolveBaseCandidates()
+            var lastError: Throwable? = null
+
+            for (base in baseCandidates) {
+                val baseHttpUrl = base.toHttpUrlOrNull() ?: continue
+                for (path in candidatePaths) {
+                    val url = baseHttpUrl.newBuilder()
+                        .encodedPath("/")
+                        .apply {
+                            path.split("/")
+                                .filter { it.isNotBlank() }
+                                .forEach { addPathSegment(it) }
+                        }
+                        .build()
+                    val request = Request.Builder()
+                        .url(url)
+                        .post(requestBody)
+                        .apply {
+                            if (authToken.isNotBlank()) {
+                                header("Authorization", "Bearer $authToken")
+                            }
+                        }
+                        .build()
+                    val response = try {
+                        httpClient.newCall(request).execute()
+                    } catch (error: Exception) {
+                        lastError = error
+                        continue
+                    }
+
+                    var tryNextPath = false
+                    response.use { raw ->
+                        if (raw.isSuccessful) {
+                            val rawBody = raw.body?.string().orEmpty()
+                            if (rawBody.isBlank()) error("Empty response from ${url.encodedPath}")
+                            return@withContext json.decodeFromString<CommunityEvent>(rawBody)
+                        }
+                        if (raw.code == 404 || raw.code == 405) {
+                            lastError = IllegalStateException("HTTP ${raw.code} at ${url.encodedPath}")
+                            tryNextPath = true
+                            return@use
+                        }
+                        error("Community event failed (${raw.code}) at ${url.encodedPath}")
+                    }
+                    if (tryNextPath) {
+                        continue
+                    }
+                }
+            }
+            throw (lastError ?: IllegalStateException("Community event endpoint unavailable"))
+        }
 
     suspend fun rsvpCommunityEvent(eventId: String, attending: Boolean): CommunityEvent = api.rsvpEvent(
         eventId = eventId,

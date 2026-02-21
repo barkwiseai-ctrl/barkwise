@@ -2,6 +2,7 @@ package com.petsocial.app.ui
 
 import android.Manifest
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -94,11 +95,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
         }
     }
     val fallbackBaseUrl = remember {
-        if (!BuildConfig.USE_MOCK_DATA && BuildConfig.ENVIRONMENT.lowercase() == "staging") {
-            BuildConfig.PRODUCTION_API_BASE_URL
-        } else {
-            null
-        }
+        null
     }
     val api = remember {
         if (BuildConfig.USE_MOCK_DATA) {
@@ -176,12 +173,23 @@ fun PetSocialApp(initialDeepLink: String? = null) {
     }
 
     val tabs = listOf(
-        TabItem(AppTab.Services, "Services"),
+        TabItem(AppTab.Services, "Listings"),
         TabItem(AppTab.Community, "Community"),
         TabItem(AppTab.BarkAI, "BarkAI"),
         TabItem(AppTab.Messages, "Messages"),
         TabItem(AppTab.Profile, "Profile"),
     )
+    val shouldHandleBack = state.selectedProviderDetails != null ||
+        state.selectedMessageThreadId != null ||
+        state.selectedTab != AppTab.Services
+
+    BackHandler(enabled = shouldHandleBack) {
+        when {
+            state.selectedProviderDetails != null -> vm.closeProviderDetails()
+            state.selectedMessageThreadId != null -> vm.clearMessageThreadSelection()
+            state.selectedTab != AppTab.Services -> vm.switchTab(AppTab.Services)
+        }
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -202,7 +210,9 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                             selected = state.selectedTab == item.tab,
                             onClick = {
                                 vm.switchTab(item.tab)
-                                vm.loadHomeData()
+                                if (item.tab != AppTab.BarkAI) {
+                                    vm.loadHomeData()
+                                }
                             },
                             label = {
                                 Text(
@@ -244,7 +254,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                     selectedRangeKm = state.serviceMaxDistanceKm,
                     currentLocationSuburb = state.currentLocationSuburb,
                     isUsingCurrentLocation = state.selectedRangeCenter == "current",
-                    showRangeSelector = state.selectedTab != AppTab.Services,
+                    showRangeSelector = state.selectedTab != AppTab.Services && state.selectedTab != AppTab.Community,
                     suburbLocked = BuildConfig.ENVIRONMENT.lowercase() == "staging",
                     onManualSuburbApply = { suburb ->
                         vm.updateSuburb(suburb)
@@ -330,6 +340,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         onSearchQueryChange = vm::updateServicesSearchQuery,
                         onSortByChange = vm::updateServicesSortBy,
                         onFilterChange = vm::updateServiceFilters,
+                        onCreateService = { vm.switchTab(AppTab.Profile) },
                         onBook = vm::requestBooking,
                         onViewDetails = vm::loadProviderDetails,
                         onLoadAvailability = vm::loadAvailability,
@@ -344,6 +355,10 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         profileSuggestion = state.profileSuggestion,
                         a2uiProfileCard = state.a2uiProfileCard,
                         a2uiProviderCard = state.a2uiProviderCard,
+                        barkThreads = state.barkThreads,
+                        selectedBarkThreadId = state.selectedBarkThreadId,
+                        onSelectBarkThread = vm::selectBarkThread,
+                        onNewBarkThread = vm::startNewBarkThread,
                         onSend = vm::sendChat,
                         onCtaClick = vm::handleCta,
                         onAcceptProfile = vm::acceptProfileCard,
@@ -354,15 +369,19 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         loading = state.loading,
                         suburb = state.selectedSuburb,
                         postsSortBy = state.postsSortBy,
+                        selectedGroupId = state.selectedCommunityGroupId,
                         groups = state.groups,
                         groupPetRosters = state.groupPetRosters,
                         latestGroupInvites = state.latestGroupInvites,
                         posts = state.posts,
                         events = state.communityEvents,
+                        onOpenGroup = vm::openCommunityGroup,
+                        onDismissSelectedGroup = vm::clearSelectedCommunityGroup,
                         onJoinGroup = vm::joinGroup,
                         onCreateGroupInvite = vm::createGroupInvite,
                         onClearGroupInvite = vm::clearGroupInvite,
                         onPostsSortChange = vm::updatePostsSortBy,
+                        onCreateGroupPost = vm::createCommunityGroupPost,
                         onCreateLostFound = vm::createLostFoundPost,
                         onCreateEvent = vm::createCommunityEvent,
                         onRsvpEvent = vm::rsvpEvent,
@@ -383,28 +402,23 @@ fun PetSocialApp(initialDeepLink: String? = null) {
 
                     AppTab.Profile -> ProfileScreen(
                         profileInfo = state.profileInfo,
-                        isServiceProvider = state.isServiceProvider,
                         activeUserId = state.activeUserId,
                         allProviders = state.providers,
                         ownerBookings = state.ownerBookings,
                         joinedGroups = state.groups.filter { group -> group.membershipStatus == "member" },
                         createdGroups = state.groups.filter { group -> group.ownerUserId == state.activeUserId },
-                        joinedEvents = state.joinedEvents,
-                        favouriteProviders = state.providers.filter { provider -> state.favoriteProviderIds.contains(provider.id) },
                         providerListings = state.providerListings,
                         providerConfig = state.providerConfig,
                         providerBookings = state.providerBookings,
                         calendarEvents = state.calendarEvents,
                         selectedCalendarRole = state.selectedCalendarRole,
                         notifications = state.notifications,
+                        onOpenCommunityGroup = vm::openCommunityGroup,
                         onSaveProfile = vm::saveProfileInfo,
-                        onToggleServiceProvider = vm::setServiceProviderMode,
-                        onEditOwnerBooking = vm::requestBookingEdit,
-                        onCancelOwnerBooking = vm::cancelOwnerBooking,
-                        onLeaveEvent = vm::leaveEvent,
-                        onRemoveFavourite = vm::removeFavourite,
+                        onCreateProviderListing = vm::createProviderListing,
                         onEditProviderListing = vm::editProviderListing,
                         onCancelProviderListing = vm::cancelProviderListing,
+                        onRestoreProviderListing = vm::restoreProviderListing,
                         onSaveProviderConfig = vm::saveProviderConfig,
                         onConfirmProviderBooking = vm::confirmProviderBooking,
                         onCancelProviderBooking = vm::cancelProviderBooking,
@@ -531,13 +545,11 @@ private fun HeroHeader(
                         style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
                     )
                 }
-                if (!compact) {
-                    Text(
-                        "Ask, book, and connect locally",
-                        color = Color.White.copy(alpha = 0.88f),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
+                Text(
+                    "Barkwise AI for dog owners: trusted answers, local social groups, and vetted groomers",
+                    color = Color.White.copy(alpha = 0.88f),
+                    style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                )
             }
             rosterPet?.let { pet ->
                 HeaderRosterChip(pet = pet)
@@ -571,14 +583,21 @@ private fun SearchScopeBar(
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("Search scope", style = MaterialTheme.typography.labelMedium)
-        if (suburbLocked) {
-            Text(
-                text = "Suburb locked for testing: $selectedSuburb",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Search scope", style = MaterialTheme.typography.labelMedium)
+            if (suburbLocked) {
+                Text(
+                    text = selectedSuburb,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
+        if (suburbLocked) return
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.horizontalScroll(rememberScrollState()),
