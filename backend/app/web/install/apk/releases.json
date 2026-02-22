@@ -1,5 +1,11 @@
 [
   {
+    "version": "v20260222-073226-186692b",
+    "published_at_utc": "2026-02-22T07:32:26Z",
+    "file": "/install/apk/releases/barkwise-staging-v20260222-073226-186692b.apk",
+    "sha256": "95007f034ce31943bf7838a6dc2ff30c5f2a2d0f5b8c8265852bf888456aaf24"
+  },
+  {
     "version": "v20260219-095311-dbbe0b5",
     "published_at_utc": "2026-02-19T09:53:11Z",
     "file": "/install/apk/releases/barkwise-staging-v20260219-095311-dbbe0b5.apk",
