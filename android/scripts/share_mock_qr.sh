@@ -85,6 +85,7 @@ QR_URL_PRIMARY="https://quickchart.io/qr?size=700&text=${ENCODED_LANDING_URL}"
 QR_URL_FALLBACK_1="https://api.qrserver.com/v1/create-qr-code/?size=700x700&data=${ENCODED_LANDING_URL}"
 QR_URL_FALLBACK_2="https://chart.googleapis.com/chart?cht=qr&chs=700x700&chl=${ENCODED_LANDING_URL}"
 QR_URL="$QR_URL_PRIMARY"
+QR_PNG_PATH="$SHARE_DIR/qr.png"
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
   echo "Building dev debug APK (mock data enabled)..."
@@ -102,6 +103,7 @@ fi
 
 mkdir -p "$SHARE_DIR"
 cp "$APK_SOURCE" "$SHARE_DIR/$APK_NAME"
+rm -f "$QR_PNG_PATH"
 
 APK_SHA256=""
 if command -v shasum >/dev/null 2>&1; then
@@ -198,13 +200,19 @@ if [[ "$LAN_IP" == "127.0.0.1" && -z "$USER_BASE_URL" ]]; then
 fi
 
 if command -v curl >/dev/null 2>&1; then
+  qr_downloaded=0
   for candidate in "$QR_URL_PRIMARY" "$QR_URL_FALLBACK_1" "$QR_URL_FALLBACK_2"; do
-    if curl -fsSL "$candidate" -o "$SHARE_DIR/qr.png" >/dev/null 2>&1; then
+    if curl -fsSL "$candidate" -o "$QR_PNG_PATH" >/dev/null 2>&1; then
+      qr_downloaded=1
       echo "QR image URL: $candidate"
-      echo "QR PNG:       $SHARE_DIR/qr.png"
+      echo "QR PNG:       $QR_PNG_PATH"
       break
     fi
   done
+  if [[ "$qr_downloaded" != "1" ]]; then
+    rm -f "$QR_PNG_PATH"
+    echo "Warning: unable to download QR PNG from all providers."
+  fi
 fi
 
 if [[ "$START_SERVER" == "1" ]]; then

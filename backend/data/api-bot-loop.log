@@ -1,0 +1,587 @@
+[2026-02-22T10:08:34Z] API bot loop started. Interval=6h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-22T10:08:34Z] Starting API bot cycle. base_url=http://localhost:8000 users=user_1,user_2,user_3,user_4 concurrency=4 iterations=40
+{
+  "base_url": "http://localhost:8000",
+  "users": {
+    "user_1": {
+      "group_posts": [],
+      "login": {
+        "ok": false,
+        "payload": null,
+        "status": 0
+      },
+      "lost_found": [],
+      "providers": []
+    },
+    "user_2": {
+      "group_posts": [],
+      "login": {
+        "ok": false,
+        "payload": null,
+        "status": 0
+      },
+      "lost_found": [],
+      "providers": []
+    },
+    "user_3": {
+      "group_posts": [],
+      "login": {
+        "ok": false,
+        "payload": null,
+        "status": 0
+      },
+      "lost_found": [],
+      "providers": []
+    },
+    "user_4": {
+      "group_posts": [],
+      "login": {
+        "ok": false,
+        "payload": null,
+        "status": 0
+      },
+      "lost_found": [],
+      "providers": []
+    }
+  }
+}
+[2026-02-22T10:08:34Z] Seed activity completed with exit_code=2
+{
+  "actions": {
+    "auth_login": {
+      "attempts": 4,
+      "avg_latency_ms": 7.31,
+      "errors": 4,
+      "p95_latency_ms": 7.72,
+      "status_codes": {
+        "0": 4
+      },
+      "success": 0
+    }
+  },
+  "duration_seconds": 0.01,
+  "total_attempts": 4,
+  "total_errors": 4
+}
+[2026-02-22T10:08:34Z] Bot activity completed with exit_code=2 summary=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-runs/summary-20260222T100834Z.json
+[2026-02-22T10:08:34Z] Sleeping for 6h
+[2026-02-22T10:10:07Z] API bot loop started. Interval=6h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-22T10:10:07Z] Starting API bot cycle. base_url=http://localhost:8000 users=user_1,user_2,user_3,user_4 concurrency=4 iterations=40
+[2026-02-23T10:22:29Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T10:22:29Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,annika,annika,user_1,user_2,user_3,user_4 concurrency=4 iterations=40
+[2026-02-23T10:35:54Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T10:35:54Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+[2026-02-23T10:37:26Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T10:37:26Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+[2026-02-23T10:37:36Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T10:37:36Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+[2026-02-23T10:37:55Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T10:37:55Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+[2026-02-23T10:38:50Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T10:38:50Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+[2026-02-23T10:52:41Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T10:52:41Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+[2026-02-23T11:02:59Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T11:02:59Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+[2026-02-23T11:07:16Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T11:07:16Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+{
+  "actions": {
+    "auth_login": {
+      "attempts": 6,
+      "avg_latency_ms": 57.69,
+      "errors": 0,
+      "p95_latency_ms": 58.05,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "auth_me": {
+      "attempts": 8,
+      "avg_latency_ms": 3.57,
+      "errors": 0,
+      "p95_latency_ms": 4.7,
+      "status_codes": {
+        "200": 8
+      },
+      "success": 8
+    },
+    "community_browse": {
+      "attempts": 32,
+      "avg_latency_ms": 4.69,
+      "errors": 0,
+      "p95_latency_ms": 6.84,
+      "status_codes": {
+        "200": 32
+      },
+      "success": 32
+    },
+    "community_collenso_add_member": {
+      "attempts": 5,
+      "avg_latency_ms": 2.16,
+      "errors": 0,
+      "p95_latency_ms": 4.15,
+      "status_codes": {
+        "200": 5
+      },
+      "success": 5
+    },
+    "community_collenso_forced_day_report": {
+      "attempts": 6,
+      "avg_latency_ms": 3.45,
+      "errors": 1,
+      "p95_latency_ms": 4.91,
+      "status_codes": {
+        "200": 5,
+        "429": 1
+      },
+      "success": 5
+    },
+    "community_create_annika_forced_post": {
+      "attempts": 2,
+      "avg_latency_ms": 0.93,
+      "errors": 2,
+      "p95_latency_ms": 1.01,
+      "status_codes": {
+        "429": 2
+      },
+      "success": 0
+    },
+    "community_create_collenso_day_report": {
+      "attempts": 5,
+      "avg_latency_ms": 3.37,
+      "errors": 1,
+      "p95_latency_ms": 4.46,
+      "status_codes": {
+        "200": 4,
+        "429": 1
+      },
+      "success": 4
+    },
+    "community_create_collenso_interaction_report": {
+      "attempts": 1,
+      "avg_latency_ms": 3.46,
+      "errors": 0,
+      "p95_latency_ms": 3.46,
+      "status_codes": {
+        "200": 1
+      },
+      "success": 1
+    },
+    "community_lookup_collenso_group": {
+      "attempts": 6,
+      "avg_latency_ms": 5.24,
+      "errors": 0,
+      "p95_latency_ms": 5.71,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "community_send_analytics": {
+      "attempts": 17,
+      "avg_latency_ms": 3.47,
+      "errors": 0,
+      "p95_latency_ms": 4.35,
+      "status_codes": {
+        "200": 17
+      },
+      "success": 17
+    },
+    "events_browse": {
+      "attempts": 22,
+      "avg_latency_ms": 3.55,
+      "errors": 0,
+      "p95_latency_ms": 5.04,
+      "status_codes": {
+        "200": 22
+      },
+      "success": 22
+    },
+    "groups_browse": {
+      "attempts": 24,
+      "avg_latency_ms": 3.57,
+      "errors": 0,
+      "p95_latency_ms": 5.51,
+      "status_codes": {
+        "200": 24
+      },
+      "success": 24
+    },
+    "notifications_check": {
+      "attempts": 25,
+      "avg_latency_ms": 2.5,
+      "errors": 0,
+      "p95_latency_ms": 3.99,
+      "status_codes": {
+        "200": 25
+      },
+      "success": 25
+    },
+    "notifications_register_device": {
+      "attempts": 25,
+      "avg_latency_ms": 3.45,
+      "errors": 1,
+      "p95_latency_ms": 5.6,
+      "status_codes": {
+        "200": 24,
+        "429": 1
+      },
+      "success": 24
+    },
+    "services_browse": {
+      "attempts": 10,
+      "avg_latency_ms": 9.96,
+      "errors": 0,
+      "p95_latency_ms": 15.56,
+      "status_codes": {
+        "200": 10
+      },
+      "success": 10
+    }
+  },
+  "duration_seconds": 30.24,
+  "total_attempts": 194,
+  "total_errors": 5
+}
+[2026-02-23T11:07:46Z] Bot activity completed with exit_code=2 summary=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-runs/summary-20260223T110716Z.json
+[2026-02-23T11:07:46Z] Sleeping for 3h
+[2026-02-23T11:08:26Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+Traceback (most recent call last):
+  File "/Users/yingxu/public-repos/pet-social-app/backend/scripts/api_bots.py", line 712, in <module>
+    raise SystemExit(main())
+  File "/Users/yingxu/public-repos/pet-social-app/backend/scripts/api_bots.py", line 697, in main
+    future.result()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/concurrent/futures/_base.py", line 440, in result
+    self._condition.wait(timeout)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/threading.py", line 312, in wait
+    waiter.acquire()
+KeyboardInterrupt
+[2026-02-23T11:08:56Z] Bot activity completed with exit_code=130 summary=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-runs/summary-20260223T110826Z.json
+[2026-02-23T11:08:56Z] Sleeping for 3h
+[2026-02-23T11:09:11Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T11:09:11Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+{
+  "actions": {
+    "auth_login": {
+      "attempts": 6,
+      "avg_latency_ms": 9.52,
+      "errors": 0,
+      "p95_latency_ms": 10.16,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "auth_me": {
+      "attempts": 8,
+      "avg_latency_ms": 4.3,
+      "errors": 0,
+      "p95_latency_ms": 5.55,
+      "status_codes": {
+        "200": 8
+      },
+      "success": 8
+    },
+    "community_browse": {
+      "attempts": 34,
+      "avg_latency_ms": 5.07,
+      "errors": 0,
+      "p95_latency_ms": 6.92,
+      "status_codes": {
+        "200": 34
+      },
+      "success": 34
+    },
+    "community_collenso_add_member": {
+      "attempts": 5,
+      "avg_latency_ms": 1.63,
+      "errors": 0,
+      "p95_latency_ms": 3.09,
+      "status_codes": {
+        "200": 5
+      },
+      "success": 5
+    },
+    "community_collenso_forced_day_report": {
+      "attempts": 6,
+      "avg_latency_ms": 2.3,
+      "errors": 6,
+      "p95_latency_ms": 3.34,
+      "status_codes": {
+        "429": 6
+      },
+      "success": 0
+    },
+    "community_create_annika_forced_post": {
+      "attempts": 1,
+      "avg_latency_ms": 0.8,
+      "errors": 1,
+      "p95_latency_ms": 0.8,
+      "status_codes": {
+        "429": 1
+      },
+      "success": 0
+    },
+    "community_create_collenso_day_report": {
+      "attempts": 5,
+      "avg_latency_ms": 3.62,
+      "errors": 5,
+      "p95_latency_ms": 4.84,
+      "status_codes": {
+        "429": 5
+      },
+      "success": 0
+    },
+    "community_create_collenso_interaction_report": {
+      "attempts": 1,
+      "avg_latency_ms": 4.05,
+      "errors": 1,
+      "p95_latency_ms": 4.05,
+      "status_codes": {
+        "429": 1
+      },
+      "success": 0
+    },
+    "community_lookup_collenso_group": {
+      "attempts": 6,
+      "avg_latency_ms": 5.28,
+      "errors": 0,
+      "p95_latency_ms": 5.95,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "community_send_analytics": {
+      "attempts": 19,
+      "avg_latency_ms": 3.9,
+      "errors": 0,
+      "p95_latency_ms": 5.49,
+      "status_codes": {
+        "200": 19
+      },
+      "success": 19
+    },
+    "events_browse": {
+      "attempts": 21,
+      "avg_latency_ms": 4.02,
+      "errors": 0,
+      "p95_latency_ms": 5.37,
+      "status_codes": {
+        "200": 21
+      },
+      "success": 21
+    },
+    "groups_browse": {
+      "attempts": 24,
+      "avg_latency_ms": 4.67,
+      "errors": 0,
+      "p95_latency_ms": 9.72,
+      "status_codes": {
+        "200": 24
+      },
+      "success": 24
+    },
+    "notifications_check": {
+      "attempts": 22,
+      "avg_latency_ms": 3.56,
+      "errors": 0,
+      "p95_latency_ms": 5.6,
+      "status_codes": {
+        "200": 22
+      },
+      "success": 22
+    },
+    "notifications_register_device": {
+      "attempts": 7,
+      "avg_latency_ms": 3.68,
+      "errors": 2,
+      "p95_latency_ms": 5.55,
+      "status_codes": {
+        "200": 5,
+        "429": 2
+      },
+      "success": 5
+    },
+    "services_browse": {
+      "attempts": 10,
+      "avg_latency_ms": 13.55,
+      "errors": 0,
+      "p95_latency_ms": 16.88,
+      "status_codes": {
+        "200": 10
+      },
+      "success": 10
+    }
+  },
+  "duration_seconds": 30.2,
+  "total_attempts": 175,
+  "total_errors": 15
+}
+[2026-02-23T11:09:41Z] Bot activity completed with exit_code=2 summary=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-runs/summary-20260223T110911Z.json
+[2026-02-23T11:09:41Z] Sleeping for 3h
+[2026-02-23T11:10:42Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T11:10:42Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+[2026-02-23T11:13:50Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T11:13:50Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+{
+  "actions": {
+    "auth_login": {
+      "attempts": 6,
+      "avg_latency_ms": 8.96,
+      "errors": 0,
+      "p95_latency_ms": 9.48,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "auth_me": {
+      "attempts": 8,
+      "avg_latency_ms": 4.96,
+      "errors": 0,
+      "p95_latency_ms": 7.57,
+      "status_codes": {
+        "200": 8
+      },
+      "success": 8
+    },
+    "community_browse": {
+      "attempts": 34,
+      "avg_latency_ms": 5.49,
+      "errors": 0,
+      "p95_latency_ms": 8.81,
+      "status_codes": {
+        "200": 34
+      },
+      "success": 34
+    },
+    "community_collenso_add_member": {
+      "attempts": 5,
+      "avg_latency_ms": 2.22,
+      "errors": 0,
+      "p95_latency_ms": 3.62,
+      "status_codes": {
+        "200": 5
+      },
+      "success": 5
+    },
+    "community_collenso_forced_day_report": {
+      "attempts": 6,
+      "avg_latency_ms": 3.29,
+      "errors": 0,
+      "p95_latency_ms": 3.89,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "community_create_annika_forced_post": {
+      "attempts": 1,
+      "avg_latency_ms": 0.98,
+      "errors": 0,
+      "p95_latency_ms": 0.98,
+      "status_codes": {
+        "200": 1
+      },
+      "success": 1
+    },
+    "community_create_collenso_day_report": {
+      "attempts": 5,
+      "avg_latency_ms": 3.16,
+      "errors": 0,
+      "p95_latency_ms": 4.26,
+      "status_codes": {
+        "200": 5
+      },
+      "success": 5
+    },
+    "community_create_collenso_interaction_report": {
+      "attempts": 1,
+      "avg_latency_ms": 5.14,
+      "errors": 0,
+      "p95_latency_ms": 5.14,
+      "status_codes": {
+        "200": 1
+      },
+      "success": 1
+    },
+    "community_lookup_collenso_group": {
+      "attempts": 6,
+      "avg_latency_ms": 5.09,
+      "errors": 0,
+      "p95_latency_ms": 5.68,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "community_send_analytics": {
+      "attempts": 19,
+      "avg_latency_ms": 4.42,
+      "errors": 0,
+      "p95_latency_ms": 9.08,
+      "status_codes": {
+        "200": 19
+      },
+      "success": 19
+    },
+    "events_browse": {
+      "attempts": 21,
+      "avg_latency_ms": 4.03,
+      "errors": 0,
+      "p95_latency_ms": 7.75,
+      "status_codes": {
+        "200": 21
+      },
+      "success": 21
+    },
+    "groups_browse": {
+      "attempts": 24,
+      "avg_latency_ms": 4.38,
+      "errors": 0,
+      "p95_latency_ms": 6.49,
+      "status_codes": {
+        "200": 24
+      },
+      "success": 24
+    },
+    "notifications_check": {
+      "attempts": 22,
+      "avg_latency_ms": 3.45,
+      "errors": 0,
+      "p95_latency_ms": 5.92,
+      "status_codes": {
+        "200": 22
+      },
+      "success": 22
+    },
+    "notifications_register_device": {
+      "attempts": 6,
+      "avg_latency_ms": 3.92,
+      "errors": 0,
+      "p95_latency_ms": 5.21,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "services_browse": {
+      "attempts": 10,
+      "avg_latency_ms": 14.28,
+      "errors": 0,
+      "p95_latency_ms": 28.72,
+      "status_codes": {
+        "200": 10
+      },
+      "success": 10
+    }
+  },
+  "duration_seconds": 30.23,
+  "total_attempts": 174,
+  "total_errors": 0
+}
+[2026-02-23T11:14:20Z] Bot activity completed with exit_code=0 summary=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-runs/summary-20260223T111350Z.json
+[2026-02-23T11:14:20Z] Sleeping for 3h

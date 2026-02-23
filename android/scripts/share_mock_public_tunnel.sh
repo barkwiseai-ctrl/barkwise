@@ -11,6 +11,9 @@ TUNNEL="${TUNNEL:-auto}" # auto|localhostrun|cloudflared|ngrok
 RETRY_SECONDS="${RETRY_SECONDS:-2}"
 MAX_RETRIES="${MAX_RETRIES:-60}"
 BIND_HOSTS="${BIND_HOSTS:-0.0.0.0 127.0.0.1}"
+STATE_FILE="$SHARE_DIR/public-tunnel-state.txt"
+TESTER_GUIDE_FILE="$SHARE_DIR/tester-instructions.txt"
+QR_PUBLIC_PNG="$SHARE_DIR/qr-public.png"
 
 cleanup() {
   if [[ -n "${HTTP_PID:-}" ]] && kill -0 "$HTTP_PID" >/dev/null 2>&1; then
@@ -44,6 +47,28 @@ require_cmd() {
     echo "Missing required command: $cmd"
     exit 1
   fi
+}
+
+write_state() {
+  local status="$1"
+  local reason="$2"
+  local landing_url="${3:-}"
+  local apk_url="${4:-}"
+  cat > "$STATE_FILE" <<EOF
+STATUS=${status}
+REASON=${reason}
+LANDING_URL=${landing_url}
+APK_URL=${apk_url}
+UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+EOF
+}
+
+fail_with_state() {
+  local message="$1"
+  echo "$message"
+  rm -f "$QR_PUBLIC_PNG" "$TESTER_GUIDE_FILE"
+  write_state "FAILED" "$message"
+  exit 1
 }
 
 urlencode() {
@@ -137,16 +162,18 @@ start_http_server() {
 echo "Preparing mock APK and local landing page..."
 require_cmd python3
 require_cmd curl
+mkdir -p "$SHARE_DIR"
+rm -f "$QR_PUBLIC_PNG" "$TESTER_GUIDE_FILE"
+write_state "STARTING" "Preparing APK and local share server"
 (
   cd "$ROOT_DIR"
   SKIP_BUILD="$SKIP_BUILD" START_SERVER=0 APK_NAME="$APK_NAME" ./android/scripts/share_mock_qr.sh >/dev/null
 )
 
 if ! start_http_server; then
-  echo "Local share server did not become ready on http://127.0.0.1:${PORT}/index.html"
   echo "Server log:"
   tail -n 60 /tmp/barkwise-mock-http.log || true
-  exit 1
+  fail_with_state "Local share server did not become ready on http://127.0.0.1:${PORT}/index.html"
 fi
 
 TUNNEL_KIND="$(pick_tunnel)"
@@ -191,10 +218,9 @@ else
 fi
 
 if [[ -z "$PUBLIC_BASE_URL" ]]; then
-  echo "Could not detect public URL automatically yet."
   echo "Check logs: $TUNNEL_LOG"
   tail -n 80 "$TUNNEL_LOG" || true
-  exit 1
+  fail_with_state "Could not detect public URL automatically yet"
 fi
 
 LANDING_URL="${PUBLIC_BASE_URL}/index.html"
@@ -206,15 +232,13 @@ QR_URL_FALLBACK_2="https://chart.googleapis.com/chart?cht=qr&chs=700x700&chl=${E
 QR_URL="$QR_URL_PRIMARY"
 
 if ! wait_for_http_ok "$LANDING_URL"; then
-  echo "Public landing page did not become reachable: $LANDING_URL"
   echo "Check logs: $TUNNEL_LOG"
-  exit 1
+  fail_with_state "Public landing page did not become reachable: $LANDING_URL"
 fi
 
 if ! wait_for_http_ok "$APK_URL"; then
-  echo "Public APK URL did not become reachable: $APK_URL"
   echo "Check logs: $TUNNEL_LOG"
-  exit 1
+  fail_with_state "Public APK URL did not become reachable: $APK_URL"
 fi
 
 echo
@@ -223,17 +247,28 @@ echo "Landing URL:  ${LANDING_URL}"
 echo "Direct APK:   ${APK_URL}"
 echo "QR image URL: ${QR_URL}"
 
+write_state "LIVE" "Tunnel healthy" "$LANDING_URL" "$APK_URL"
+cat >> "$STATE_FILE" <<EOF
+QR_URL=${QR_URL}
+EOF
+
 if command -v curl >/dev/null 2>&1; then
+  qr_downloaded=0
   for candidate in "$QR_URL_PRIMARY" "$QR_URL_FALLBACK_1" "$QR_URL_FALLBACK_2"; do
-    if curl -fsSL "$candidate" -o "$SHARE_DIR/qr-public.png" >/dev/null 2>&1; then
+    if curl -fsSL "$candidate" -o "$QR_PUBLIC_PNG" >/dev/null 2>&1; then
+      qr_downloaded=1
       echo "QR image URL: ${candidate}"
-      echo "QR PNG:       $SHARE_DIR/qr-public.png"
+      echo "QR PNG:       $QR_PUBLIC_PNG"
       break
     fi
   done
+  if [[ "$qr_downloaded" != "1" ]]; then
+    rm -f "$QR_PUBLIC_PNG"
+    echo "Warning: unable to download public QR PNG from all providers."
+  fi
 fi
 
-cat > "$SHARE_DIR/tester-instructions.txt" <<EOF
+cat > "$TESTER_GUIDE_FILE" <<EOF
 BarkWise mock install is live.
 
 1) Open on phone browser:
@@ -245,7 +280,7 @@ BarkWise mock install is live.
 Direct APK:
 ${APK_URL}
 EOF
-echo "Tester guide: $SHARE_DIR/tester-instructions.txt"
+echo "Tester guide: $TESTER_GUIDE_FILE"
 
 echo
 echo "Keep this terminal running while testers install."

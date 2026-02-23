@@ -1,6 +1,6 @@
 from app.models import Booking, CommunityEvent, CommunityPost, EventRsvpRecord, Group, GroupJoinRecord, Review, ServiceProvider
 
-KNOWN_SUBURBS = ["Surry Hills", "Newtown", "Redfern"]
+KNOWN_SUBURBS = ["Surry Hills", "Newtown", "Redfern", "Sunshine West"]
 
 providers: list[ServiceProvider] = [
     ServiceProvider(
@@ -44,6 +44,118 @@ reviews: list[Review] = [
 bookings: list[Booking] = []
 
 community_posts: list[CommunityPost] = [
+    CommunityPost(
+        id="p_collenso_annika_1",
+        type="group_post",
+        created_by="annika",
+        title="Collenso day report: Annika",
+        body=(
+            "Annika (black golden retriever/poodle cross) was goofy and friendly with every dog today. "
+            "She kept bouncing into play bows and invited nervous dogs into calmer play loops."
+        ),
+        suburb="Sunshine West",
+        created_at="2026-02-22T08:15:00Z",
+        photo_urls=[
+            "https://images.unsplash.com/photo-1518717758536-85ae29035b6d",
+            "https://images.unsplash.com/photo-1548199973-03cce0bbc87b",
+        ],
+    ),
+    CommunityPost(
+        id="p_collenso_snowy_1",
+        type="group_post",
+        created_by="snowy",
+        title="Collenso day report: Snowy",
+        body=(
+            "Snowy (black and white bull arab) started timid, then jumped into chase play. "
+            "He still thinks he is tiny and accidentally trampled a smaller dog during a tight turn."
+        ),
+        suburb="Sunshine West",
+        created_at="2026-02-22T08:40:00Z",
+        photo_urls=[
+            "https://images.unsplash.com/photo-1530281700549-e82e7bf110d6",
+            "https://images.unsplash.com/photo-1517423440428-a5a00ad493e8",
+        ],
+    ),
+    CommunityPost(
+        id="p_collenso_sesame_1",
+        type="group_post",
+        created_by="sesame",
+        title="Collenso interaction report: Sesame and Buddy",
+        body=(
+            "Sesame (brown/black border collie-poodle cross, schnauzer-like face) dominated fetch sprints. "
+            "She became defensive when Buddy got near her ball, and both had to be pulled apart after escalation."
+        ),
+        suburb="Sunshine West",
+        created_at="2026-02-22T09:05:00Z",
+        photo_urls=[
+            "https://images.unsplash.com/photo-1525253013412-55c1a69a5738",
+            "https://images.unsplash.com/photo-1522276498395-f4f68f7f8454",
+        ],
+    ),
+    CommunityPost(
+        id="p_collenso_pepsi_1",
+        type="group_post",
+        created_by="pepsi",
+        title="Collenso day report: Pepsi",
+        body=(
+            "Pepsi (brown/tan staffie-jack russell cross) played tough and physical today. "
+            "He was wary of men early, then gradually trusted a new male handler after calm introductions."
+        ),
+        suburb="Sunshine West",
+        created_at="2026-02-22T09:35:00Z",
+        photo_urls=[
+            "https://images.unsplash.com/photo-1601758228041-f3b2795255f1",
+            "https://images.unsplash.com/photo-1516734212186-65266f4f17c8",
+        ],
+    ),
+    CommunityPost(
+        id="p_collenso_billie_1",
+        type="group_post",
+        created_by="billie",
+        title="Collenso day report: Billie",
+        body=(
+            "Billie (tan boxer cross) is older but still full of love and joined every play cluster. "
+            "She alternated affectionate check-ins with short, energetic bursts."
+        ),
+        suburb="Sunshine West",
+        created_at="2026-02-22T10:00:00Z",
+        photo_urls=[
+            "https://images.unsplash.com/photo-1517849845537-4d257902454a",
+            "https://images.unsplash.com/photo-1543466835-00a7907e9de1",
+        ],
+    ),
+    CommunityPost(
+        id="p_collenso_buddy_1",
+        type="group_post",
+        created_by="buddy",
+        title="Collenso day report: Buddy",
+        body=(
+            "Buddy (mostly black cavoodle with white spots) played socially with most dogs. "
+            "He had another escalating conflict cycle with Sesame and neither backed down without intervention."
+        ),
+        suburb="Sunshine West",
+        created_at="2026-02-22T10:20:00Z",
+        photo_urls=[
+            "https://images.unsplash.com/photo-1507146426996-ef05306b995a",
+            "https://images.unsplash.com/photo-1518717758536-85ae29035b6d",
+        ],
+    ),
+    CommunityPost(
+        id="p_collenso_newdog_1",
+        type="group_post",
+        created_by="annika",
+        title="Collenso newcomer report: Maple",
+        body=(
+            "New dog Maple (tan kelpie cross) joined today. "
+            "Maple mirrored Annika's play bows, gave Snowy cautious space, and settled into a gentle loop with Billie."
+        ),
+        suburb="Sunshine West",
+        created_at="2026-02-22T10:45:00Z",
+        photo_urls=[
+            "https://images.unsplash.com/photo-1543466835-00a7907e9de1",
+            "https://images.unsplash.com/photo-1537151608828-ea2b11777ee8",
+        ],
+    ),
     CommunityPost(
         id="p_dogpark_1",
         type="group_post",
@@ -234,6 +346,14 @@ groups: list[Group] = [
     Group(id="g_official_surryhills", name="Surry Hills Official Pet Community", suburb="Surry Hills", member_count=342, official=True),
     Group(id="g_official_newtown", name="Newtown Official Pet Community", suburb="Newtown", member_count=221, official=True),
     Group(id="g_official_redfern", name="Redfern Official Pet Community", suburb="Redfern", member_count=167, official=True),
+    Group(
+        id="g_user_collenso_dogpark",
+        name="Collenso Dog Park",
+        suburb="Sunshine West",
+        member_count=6,
+        official=False,
+        owner_user_id="annika",
+    ),
     Group(id="g_user_dogpark_surry", name="Surry Hills Dog Park Crew", suburb="Surry Hills", member_count=26, official=False, owner_user_id="user_3"),
     Group(id="g_user_1", name="Surry Hills Corgi Club", suburb="Surry Hills", member_count=18, official=False, owner_user_id="user_1"),
     Group(id="g_user_2", name="Inner West Puppy Parents", suburb="Newtown", member_count=46, official=False, owner_user_id="user_2"),
@@ -247,6 +367,12 @@ groups: list[Group] = [
 ]
 
 group_memberships: list[GroupJoinRecord] = [
+    GroupJoinRecord(group_id="g_user_collenso_dogpark", user_id="annika", status="member"),
+    GroupJoinRecord(group_id="g_user_collenso_dogpark", user_id="snowy", status="member"),
+    GroupJoinRecord(group_id="g_user_collenso_dogpark", user_id="sesame", status="member"),
+    GroupJoinRecord(group_id="g_user_collenso_dogpark", user_id="pepsi", status="member"),
+    GroupJoinRecord(group_id="g_user_collenso_dogpark", user_id="billie", status="member"),
+    GroupJoinRecord(group_id="g_user_collenso_dogpark", user_id="buddy", status="member"),
     GroupJoinRecord(group_id="g_user_dogpark_surry", user_id="user_1", status="member"),
     GroupJoinRecord(group_id="g_user_dogpark_surry", user_id="user_2", status="member"),
     GroupJoinRecord(group_id="g_user_dogpark_surry", user_id="user_3", status="member"),
@@ -295,6 +421,16 @@ group_memberships: list[GroupJoinRecord] = [
 
 community_events: list[CommunityEvent] = [
     CommunityEvent(
+        id="evt_000",
+        title="Collenso Structured Play Window",
+        description="Ball boundaries, decompression breaks, and supervised partner rotations.",
+        suburb="Sunshine West",
+        date="2026-02-23T07:30:00Z",
+        group_id="g_user_collenso_dogpark",
+        attendee_count=6,
+        created_by="annika",
+    ),
+    CommunityEvent(
         id="evt_001",
         title="Surry Hills Puppy Social",
         description="Casual socialization circle at Prince Alfred Park.",
@@ -327,6 +463,12 @@ community_events: list[CommunityEvent] = [
 ]
 
 event_rsvps: list[EventRsvpRecord] = [
+    EventRsvpRecord(event_id="evt_000", user_id="annika", status="attending"),
+    EventRsvpRecord(event_id="evt_000", user_id="snowy", status="attending"),
+    EventRsvpRecord(event_id="evt_000", user_id="sesame", status="attending"),
+    EventRsvpRecord(event_id="evt_000", user_id="pepsi", status="attending"),
+    EventRsvpRecord(event_id="evt_000", user_id="billie", status="attending"),
+    EventRsvpRecord(event_id="evt_000", user_id="buddy", status="attending"),
     EventRsvpRecord(event_id="evt_001", user_id="guest_user", status="attending"),
     EventRsvpRecord(event_id="evt_002", user_id="user_2", status="attending"),
 ]

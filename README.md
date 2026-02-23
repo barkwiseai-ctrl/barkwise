@@ -4,6 +4,28 @@ Executive summary: [EXECUTIVE_SUMMARY.md](/Users/yingxu/public-repos/pet-social-
 
 Last updated: 2026-02-18
 
+## MVP Scope Freeze (Current)
+
+Primary scope only:
+- Journey A: Meet up at a park to socialize dogs.
+- Journey B: Book a groomer.
+
+Journey A includes:
+- Local group discovery.
+- Park meetup event browsing and RSVP.
+- Privacy-safe check-in sharing to member group only.
+- Group follow-up in community surfaces.
+
+Journey B includes:
+- Groomer discovery/filtering.
+- Groomer detail and availability.
+- Booking request/confirmation and status tracking.
+
+Out of scope until MVP ship:
+- Feature work not directly improving Journey A or Journey B completion.
+- New category expansions and non-critical social experiments.
+- Net-new flows that increase complexity without improving reliability/safety.
+
 ## Major Feature Changes/Additions
 
 - Services marketplace completed for dog walking and grooming, including category filtering, provider details, and in-chat provider listing submission.
@@ -16,6 +38,9 @@ Last updated: 2026-02-18
 - Auth/session hardening added with bearer token endpoints (`/auth/login`, `/auth/me`) and optional strict enforcement via `AUTH_REQUIRED=true`.
 - Notification infrastructure added with user notification feed and read-state API (`/notifications`).
 - Deploy-ready basics added: backend Dockerfile, root docker-compose, backend CI workflow, and API smoke tests.
+
+Security runbook:
+- `/Users/yingxu/public-repos/pet-social-app/backend/SECURITY_OPERATIONS.md`
 
 ## Backend Run
 
@@ -46,6 +71,68 @@ Route telemetry summary from logs:
 ```bash
 cd /Users/yingxu/public-repos/pet-social-app/backend
 python3 scripts/route_telemetry_report.py /path/to/backend.log --json-out /tmp/route-telemetry-summary.json
+```
+
+Security metrics quick check:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app/backend
+AUTH_TOKEN="<admin-token>" ./scripts/security_rate_limits.py snapshot --requester-user-id user_1
+```
+
+Security metrics snapshot export:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app/backend
+AUTH_TOKEN="<admin-token>" ./scripts/export_security_rate_limits_snapshot.py --requester-user-id user_1
+./scripts/cleanup_security_rate_limits_snapshots.py --retain-days 14 --dry-run
+AUTH_TOKEN="<admin-token>" ./scripts/run_security_rate_limits_maintenance.sh
+AUTH_TOKEN="<admin-token>" ./scripts/check_security_rate_limits_thresholds.py --requester-user-id user_1 --total-limit 200 --surface-limit auth_login=80 --surface-limit chat_chat=100 --surface-limit notifications_register_device=40
+AUTH_TOKEN="<admin-token>" ALERT_WEBHOOK_URL="https://hooks.slack.com/services/XXX/YYY/ZZZ" ALERT_WEBHOOK_KIND="slack" ALERT_ENV="staging" ./scripts/check_security_rate_limits_thresholds.py --requester-user-id user_1 --total-limit 200 --surface-limit auth_login=80 --surface-limit chat_chat=100 --surface-limit notifications_register_device=40
+./scripts/reset_security_alert_state.py --dry-run
+```
+
+Synthetic API bot scripts (Collenso Dog Park realism simulation):
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app/backend
+python3 scripts/api_bots.py --base-url http://localhost:8000 --concurrency 6 --iterations 24 --json-out /tmp/api-bot-summary.json
+```
+
+- Simulates persona-driven behavior for `annika`, `snowy`, `sesame`, `pepsi`, `billie`, and `buddy`.
+- Ensures and uses the group `Collenso Dog Park`, then produces photo-heavy day reports and interaction posts.
+- Annika stays super active via forced photo posts (`--annika-force-posts`).
+- Add `--read-only` to disable write actions.
+
+Seed generic synthetic activity data quickly:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app/backend
+python3 scripts/api_bot_seed_activity.py --base-url http://localhost:8000 --users annika,snowy,sesame,pepsi,billie,buddy
+```
+
+Run autonomous API bot loop every few hours:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app/backend
+./scripts/run_api_bots_loop.sh
+```
+
+- Default interval is 3 hours (`INTERVAL_HOURS=3`).
+- Defaults model Collenso-specific users and group settings:
+  - `USERS=annika,snowy,sesame,pepsi,billie,buddy`
+  - `COLLENSO_GROUP_NAME="Collenso Dog Park"`
+  - `COLLENSO_SUBURB="Sunshine West"`
+  - `COLLENSO_OWNER=annika`
+  - `ANNIKA_FORCE_POSTS=2`
+- Generic seeding is disabled by default for realism (`SEED_EACH_CYCLE=0`).
+- Logs: `/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log`
+- Per-cycle summaries: `/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-runs/summary-<timestamp>.json`
+- Override behavior with env vars, for example:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app/backend
+BASE_URL=http://localhost:8000 USERS=annika,snowy,sesame,pepsi,billie,buddy INTERVAL_HOURS=3 ANNIKA_FORCE_POSTS=3 COLLENSO_GROUP_NAME=\"Collenso Dog Park\" COLLENSO_SUBURB=\"Sunshine West\" CONCURRENCY=6 ITERATIONS=24 ./scripts/run_api_bots_loop.sh
 ```
 
 Browser beta (for iPhone Safari + desktop):
@@ -85,6 +172,15 @@ Auth hardening controls:
 export AUTH_REQUIRED=true
 export AUTH_SECRET="replace-this-in-prod"
 export AUTH_TOKEN_TTL_HOURS=24
+export AUTH_LOGIN_FAILURE_LIMIT=8
+export AUTH_LOGIN_FAILURE_WINDOW_SECONDS=600
+export NOTIFICATIONS_DEVICE_REGISTER_RATE_LIMIT_MAX=6
+export NOTIFICATIONS_DEVICE_REGISTER_RATE_LIMIT_WINDOW_SECONDS=300
+export CHAT_RATE_LIMIT_WINDOW_SECONDS=60
+export CHAT_RATE_LIMIT_MAX_REQUESTS=12
+export CHAT_STREAM_RATE_LIMIT_MAX_REQUESTS=6
+export CHAT_ACTION_RATE_LIMIT_MAX_REQUESTS=10
+export SECURITY_AUDIT_METRICS_PATH=/absolute/path/to/security_audit_metrics.json
 ```
 
 FCM push setup (backend + Android):
@@ -118,6 +214,35 @@ cd /Users/yingxu/public-repos/pet-social-app/android
 ./gradlew :app:installDevDebug
 ./gradlew :app:installStagingDebug
 ./gradlew :app:installProdRelease
+```
+
+Keep Android staging app routed to local backend (auto-heal `adb reverse`):
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app
+./android/scripts/start_staging_local_routing.sh
+```
+
+- Watches device connectivity and keeps `tcp:8000 -> tcp:8000` active.
+- Logs: `/Users/yingxu/public-repos/pet-social-app/android/share/staging-routing/adb-reverse-watchdog.log`
+- Auto-start at macOS login (launchd):
+
+```bash
+launchctl bootstrap gui/$(id -u) /Users/yingxu/Library/LaunchAgents/com.petsocial.staging-routing-watchdog.plist
+launchctl kickstart -k gui/$(id -u)/com.petsocial.staging-routing-watchdog
+```
+
+- Disable login auto-start:
+
+```bash
+launchctl bootout gui/$(id -u) /Users/yingxu/Library/LaunchAgents/com.petsocial.staging-routing-watchdog.plist
+```
+
+- Stop with:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app
+./android/scripts/stop_staging_local_routing.sh
 ```
 
 Share mock build by QR (Android):

@@ -336,18 +336,144 @@ class ProviderSubmitRequest(BaseModel):
 
 class CommunityPostCreate(BaseModel):
     type: Literal["lost_found", "group_post"]
+    user_id: Optional[str] = None
     title: str
     body: str
     suburb: str
+    alert_type: Optional[Literal["lost", "found"]] = None
+    alert_status: Optional[Literal["open", "reunited", "owner_found", "expired"]] = None
+    pet_name: Optional[str] = None
+    pet_traits: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    last_seen_location: Optional[str] = None
+    contact_pref: Optional[str] = None
+    photo_urls: list[str] = Field(default_factory=list)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
 
 
 class CommunityPost(BaseModel):
     id: str
     type: Literal["lost_found", "group_post"]
+    created_by: Optional[str] = None
     title: str
     body: str
     suburb: str
     created_at: Optional[str] = None
+    alert_type: Optional[Literal["lost", "found"]] = None
+    alert_status: Optional[Literal["open", "reunited", "owner_found", "expired"]] = None
+    pet_name: Optional[str] = None
+    pet_traits: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    last_seen_location: Optional[str] = None
+    contact_pref: Optional[str] = None
+    photo_urls: list[str] = Field(default_factory=list)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    resolved_at: Optional[str] = None
+    resolved_note: Optional[str] = None
+    follow_up_due_at: Optional[str] = None
+    expires_at: Optional[str] = None
+
+
+class CommunityPostResolveRequest(BaseModel):
+    requester_user_id: Optional[str] = None
+    status: Literal["reunited", "owner_found", "expired"]
+    note: str = ""
+
+
+class CommunityPostUpdateRequest(BaseModel):
+    requester_user_id: Optional[str] = None
+    title: Optional[str] = None
+    body: Optional[str] = None
+    pet_name: Optional[str] = None
+    pet_traits: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    last_seen_location: Optional[str] = None
+    contact_pref: Optional[str] = None
+    photo_urls: Optional[list[str]] = None
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    clear_last_seen_at: bool = False
+
+
+class CommunityPostPhotoUploadResponse(BaseModel):
+    url: str
+    content_type: str
+    size_bytes: int
+
+
+class CommunityPostPhotoUploadRequest(BaseModel):
+    requester_user_id: str
+    filename: str
+    content_type: str
+    data_base64: str
+
+
+class CommunityReportCreateRequest(BaseModel):
+    reporter_user_id: str
+    target_type: Literal["post", "user"]
+    target_id: str
+    reason: str
+    details: str = ""
+
+
+class CommunityReport(BaseModel):
+    id: str
+    reporter_user_id: str
+    target_type: Literal["post", "user"]
+    target_id: str
+    reason: str
+    details: str = ""
+    status: Literal["pending", "dismissed", "action_taken"] = "pending"
+    created_at: str
+    resolved_at: Optional[str] = None
+    resolved_by: Optional[str] = None
+    resolution_note: Optional[str] = None
+
+
+class CommunityReportResolveRequest(BaseModel):
+    requester_user_id: str
+    action: Literal["dismissed", "action_taken"]
+    note: str = ""
+
+
+class CommunityBlockUserRequest(BaseModel):
+    requester_user_id: str
+    target_user_id: str
+
+
+class CommunityBlockUserResponse(BaseModel):
+    requester_user_id: str
+    blocked_user_ids: list[str] = Field(default_factory=list)
+
+
+class CommunityAnalyticsEventCreateRequest(BaseModel):
+    user_id: str
+    event: str
+    category: Literal["community", "lost_found"] = "community"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    duration_ms: Optional[int] = None
+
+
+class CommunityDiagnosticEventCreateRequest(BaseModel):
+    user_id: str
+    kind: Literal["crash", "perf", "error"] = "error"
+    message: str
+    context: Dict[str, Any] = Field(default_factory=dict)
+    duration_ms: Optional[int] = None
+
+
+class CommunityFunnelMetrics(BaseModel):
+    window_hours: int
+    community_feed_views: int = 0
+    lost_found_feed_views: int = 0
+    lost_found_create_attempts: int = 0
+    lost_found_create_successes: int = 0
+    lost_found_resolution_actions: int = 0
+    moderation_reports_submitted: int = 0
+    blocks_submitted: int = 0
+    lost_found_create_conversion_pct: float = 0.0
 
 
 class Group(BaseModel):

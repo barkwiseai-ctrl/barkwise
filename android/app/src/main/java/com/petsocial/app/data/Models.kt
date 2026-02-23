@@ -342,18 +342,156 @@ data class ProfileActionRequest(
 data class CommunityPost(
     val id: String,
     val type: String,
+    @SerialName("created_by") val createdBy: String? = null,
     val title: String,
     val body: String,
     val suburb: String,
     @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("alert_type") val alertType: String? = null,
+    @SerialName("alert_status") val alertStatus: String? = null,
+    @SerialName("pet_name") val petName: String? = null,
+    @SerialName("pet_traits") val petTraits: String? = null,
+    @SerialName("last_seen_at") val lastSeenAt: String? = null,
+    @SerialName("last_seen_location") val lastSeenLocation: String? = null,
+    @SerialName("contact_pref") val contactPref: String? = null,
+    @SerialName("photo_urls") val photoUrls: List<String> = emptyList(),
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    @SerialName("resolved_at") val resolvedAt: String? = null,
+    @SerialName("resolved_note") val resolvedNote: String? = null,
+    @SerialName("follow_up_due_at") val followUpDueAt: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
 )
 
 @Serializable
 data class CommunityPostCreate(
     val type: String,
+    @SerialName("user_id") val userId: String? = null,
     val title: String,
     val body: String,
     val suburb: String,
+    @SerialName("alert_type") val alertType: String? = null,
+    @SerialName("alert_status") val alertStatus: String? = null,
+    @SerialName("pet_name") val petName: String? = null,
+    @SerialName("pet_traits") val petTraits: String? = null,
+    @SerialName("last_seen_at") val lastSeenAt: String? = null,
+    @SerialName("last_seen_location") val lastSeenLocation: String? = null,
+    @SerialName("contact_pref") val contactPref: String? = null,
+    @SerialName("photo_urls") val photoUrls: List<String> = emptyList(),
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+)
+
+@Serializable
+data class CommunityPostResolveRequest(
+    @SerialName("requester_user_id") val requesterUserId: String? = null,
+    val status: String,
+    val note: String = "",
+)
+
+@Serializable
+data class CommunityPostUpdateRequest(
+    @SerialName("requester_user_id") val requesterUserId: String? = null,
+    val title: String? = null,
+    val body: String? = null,
+    @SerialName("pet_name") val petName: String? = null,
+    @SerialName("pet_traits") val petTraits: String? = null,
+    @SerialName("last_seen_at") val lastSeenAt: String? = null,
+    @SerialName("last_seen_location") val lastSeenLocation: String? = null,
+    @SerialName("contact_pref") val contactPref: String? = null,
+    @SerialName("photo_urls") val photoUrls: List<String>? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    @SerialName("clear_last_seen_at") val clearLastSeenAt: Boolean = false,
+)
+
+@Serializable
+data class CommunityPostPhotoUploadResponse(
+    val url: String,
+    @SerialName("content_type") val contentType: String,
+    @SerialName("size_bytes") val sizeBytes: Int,
+)
+
+@Serializable
+data class CommunityPostPhotoUploadRequest(
+    @SerialName("requester_user_id") val requesterUserId: String,
+    val filename: String,
+    @SerialName("content_type") val contentType: String,
+    @SerialName("data_base64") val dataBase64: String,
+)
+
+@Serializable
+data class CommunityReportCreateRequest(
+    @SerialName("reporter_user_id") val reporterUserId: String,
+    @SerialName("target_type") val targetType: String,
+    @SerialName("target_id") val targetId: String,
+    val reason: String,
+    val details: String = "",
+)
+
+@Serializable
+data class CommunityReport(
+    val id: String,
+    @SerialName("reporter_user_id") val reporterUserId: String,
+    @SerialName("target_type") val targetType: String,
+    @SerialName("target_id") val targetId: String,
+    val reason: String,
+    val details: String = "",
+    val status: String,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("resolved_at") val resolvedAt: String? = null,
+    @SerialName("resolved_by") val resolvedBy: String? = null,
+    @SerialName("resolution_note") val resolutionNote: String? = null,
+)
+
+@Serializable
+data class CommunityReportResolveRequest(
+    @SerialName("requester_user_id") val requesterUserId: String,
+    val action: String,
+    val note: String = "",
+)
+
+@Serializable
+data class CommunityBlockUserRequest(
+    @SerialName("requester_user_id") val requesterUserId: String,
+    @SerialName("target_user_id") val targetUserId: String,
+)
+
+@Serializable
+data class CommunityBlockUserResponse(
+    @SerialName("requester_user_id") val requesterUserId: String,
+    @SerialName("blocked_user_ids") val blockedUserIds: List<String> = emptyList(),
+)
+
+@Serializable
+data class CommunityAnalyticsEventCreateRequest(
+    @SerialName("user_id") val userId: String,
+    val event: String,
+    val category: String = "community",
+    val metadata: Map<String, String> = emptyMap(),
+    @SerialName("duration_ms") val durationMs: Int? = null,
+)
+
+@Serializable
+data class CommunityDiagnosticEventCreateRequest(
+    @SerialName("user_id") val userId: String,
+    val kind: String = "error",
+    val message: String,
+    val context: Map<String, String> = emptyMap(),
+    @SerialName("duration_ms") val durationMs: Int? = null,
+)
+
+@Serializable
+data class CommunityFunnelMetrics(
+    @SerialName("window_hours") val windowHours: Int,
+    @SerialName("community_feed_views") val communityFeedViews: Int = 0,
+    @SerialName("lost_found_feed_views") val lostFoundFeedViews: Int = 0,
+    @SerialName("lost_found_create_attempts") val lostFoundCreateAttempts: Int = 0,
+    @SerialName("lost_found_create_successes") val lostFoundCreateSuccesses: Int = 0,
+    @SerialName("lost_found_resolution_actions") val lostFoundResolutionActions: Int = 0,
+    @SerialName("moderation_reports_submitted") val moderationReportsSubmitted: Int = 0,
+    @SerialName("blocks_submitted") val blocksSubmitted: Int = 0,
+    @SerialName("lost_found_create_conversion_pct") val lostFoundCreateConversionPct: Double = 0.0,
 )
 
 @Serializable

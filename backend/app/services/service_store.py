@@ -627,6 +627,351 @@ class ServiceStore:
             ("r_sw_4", "svc_sw_4", "Sasha", 5, "Great finish and clear communication."),
             ("r_sw_5", "svc_sw_5", "Dylan", 4, "Premium service worth it for seniors."),
         ]
+        now = datetime.utcnow()
+        today = date.today()
+        seed_quote_requests = [
+            (
+                "qr_seed_1",
+                "user_2",
+                "dog_walking",
+                "Surry Hills",
+                "Weekday mornings",
+                "Labrador, leash-trained, high energy",
+                "Need recurring slots",
+                "responded",
+                (now - timedelta(days=4)).isoformat(),
+                (now - timedelta(days=4) + timedelta(minutes=35)).isoformat(),
+            ),
+            (
+                "qr_seed_2",
+                "user_4",
+                "grooming",
+                "Surry Hills",
+                "Saturday 10:00-12:00",
+                "Toy cavoodle, sensitive skin",
+                "Prefer low-noise handling",
+                "responded",
+                (now - timedelta(days=3)).isoformat(),
+                (now - timedelta(days=3) + timedelta(minutes=25)).isoformat(),
+            ),
+            (
+                "qr_seed_3",
+                "user_1",
+                "dog_walking",
+                "Newtown",
+                "Weekday evenings",
+                "2-year old mix breed, medium activity",
+                "",
+                "responded",
+                (now - timedelta(days=2)).isoformat(),
+                (now - timedelta(days=2) + timedelta(minutes=20)).isoformat(),
+            ),
+            (
+                "qr_seed_4",
+                "user_3",
+                "grooming",
+                "Redfern",
+                "Sunday afternoons",
+                "Senior corgi, anxiety around dryers",
+                "",
+                "pending",
+                (now - timedelta(minutes=45)).isoformat(),
+                (now - timedelta(minutes=45)).isoformat(),
+            ),
+        ]
+        seed_quote_targets = [
+            (
+                "qrt_seed_1",
+                "qr_seed_1",
+                "svc_2",
+                "user_2",
+                "accepted",
+                "Can do recurring mornings.",
+                (now - timedelta(days=4)).isoformat(),
+                (now - timedelta(days=4) + timedelta(minutes=20)).isoformat(),
+                1,
+                0,
+            ),
+            (
+                "qrt_seed_2",
+                "qr_seed_1",
+                "svc_1",
+                "user_1",
+                "declined",
+                "Morning route already full.",
+                (now - timedelta(days=4)).isoformat(),
+                (now - timedelta(days=4) + timedelta(minutes=34)).isoformat(),
+                1,
+                0,
+            ),
+            (
+                "qrt_seed_3",
+                "qr_seed_2",
+                "svc_2",
+                "user_2",
+                "accepted",
+                "Can take this slot.",
+                (now - timedelta(days=3)).isoformat(),
+                (now - timedelta(days=3) + timedelta(minutes=15)).isoformat(),
+                1,
+                0,
+            ),
+            (
+                "qrt_seed_4",
+                "qr_seed_2",
+                "svc_7",
+                "user_1",
+                "accepted",
+                "Happy to help with sensitive-skin package.",
+                (now - timedelta(days=3)).isoformat(),
+                (now - timedelta(days=3) + timedelta(minutes=22)).isoformat(),
+                1,
+                0,
+            ),
+            (
+                "qrt_seed_5",
+                "qr_seed_3",
+                "svc_2",
+                "user_2",
+                "declined",
+                "Booked out for evening slots.",
+                (now - timedelta(days=2)).isoformat(),
+                (now - timedelta(days=2) + timedelta(minutes=17)).isoformat(),
+                1,
+                0,
+            ),
+            (
+                "qrt_seed_6",
+                "qr_seed_3",
+                "svc_4",
+                "user_4",
+                "accepted",
+                "Can confirm weekday evening walk.",
+                (now - timedelta(days=2)).isoformat(),
+                (now - timedelta(days=2) + timedelta(minutes=13)).isoformat(),
+                1,
+                0,
+            ),
+            (
+                "qrt_seed_7",
+                "qr_seed_4",
+                "svc_10",
+                "user_4",
+                "pending",
+                "",
+                (now - timedelta(minutes=45)).isoformat(),
+                None,
+                1,
+                0,
+            ),
+        ]
+        seed_bookings = [
+            (
+                "bk_seed_1",
+                "user_2",
+                "svc_1",
+                "Milo",
+                (today + timedelta(days=1)).isoformat(),
+                "09:00",
+                "Sensitive skin package",
+                "requested",
+                (now - timedelta(hours=2)).isoformat(),
+            ),
+            (
+                "bk_seed_2",
+                "user_1",
+                "svc_3",
+                "Luna",
+                (today + timedelta(days=2)).isoformat(),
+                "11:00",
+                "Please keep session short",
+                "provider_confirmed",
+                (now - timedelta(days=1)).isoformat(),
+            ),
+            (
+                "bk_seed_3",
+                "user_4",
+                "svc_6",
+                "Maple",
+                (today - timedelta(days=1)).isoformat(),
+                "15:00",
+                "Completed with route photos",
+                "completed",
+                (now - timedelta(days=2)).isoformat(),
+            ),
+            (
+                "bk_seed_4",
+                "user_3",
+                "svc_8",
+                "Scout",
+                (today + timedelta(days=3)).isoformat(),
+                "13:00",
+                "Needs reschedule due to work",
+                "reschedule_requested",
+                (now - timedelta(hours=6)).isoformat(),
+            ),
+            (
+                "bk_seed_5",
+                "user_2",
+                "svc_7",
+                "Nala",
+                today.isoformat(),
+                "17:00",
+                "Anxious around dryers",
+                "in_progress",
+                (now - timedelta(hours=4)).isoformat(),
+            ),
+            (
+                "bk_seed_6",
+                "user_amy",
+                "svc_10",
+                "Archie",
+                (today + timedelta(days=4)).isoformat(),
+                "11:00",
+                "",
+                "provider_confirmed",
+                (now - timedelta(hours=3)).isoformat(),
+            ),
+            (
+                "bk_seed_7",
+                "user_mia",
+                "svc_sw_1",
+                "Coco",
+                (today + timedelta(days=2)).isoformat(),
+                "09:00",
+                "",
+                "requested",
+                (now - timedelta(minutes=90)).isoformat(),
+            ),
+        ]
+        seed_booking_history = [
+            (
+                "bkh_seed_1",
+                "bk_seed_1",
+                "user_2",
+                "none",
+                "requested",
+                "booking requested",
+                (now - timedelta(hours=2)).isoformat(),
+            ),
+            (
+                "bkh_seed_2",
+                "bk_seed_2",
+                "user_1",
+                "none",
+                "requested",
+                "booking requested",
+                (now - timedelta(days=1)).isoformat(),
+            ),
+            (
+                "bkh_seed_3",
+                "bk_seed_2",
+                "user_3",
+                "requested",
+                "provider_confirmed",
+                "confirmed by provider",
+                (now - timedelta(hours=20)).isoformat(),
+            ),
+            (
+                "bkh_seed_4",
+                "bk_seed_3",
+                "user_4",
+                "provider_confirmed",
+                "completed",
+                "service completed",
+                (now - timedelta(days=1, hours=2)).isoformat(),
+            ),
+        ]
+        seed_blackouts = [
+            (
+                "bo_seed_1",
+                "svc_1",
+                (today + timedelta(days=4)).isoformat(),
+                "13:00",
+                "Clinic training block",
+                "user_1",
+                (now - timedelta(hours=3)).isoformat(),
+            ),
+            (
+                "bo_seed_2",
+                "svc_8",
+                (today + timedelta(days=2)).isoformat(),
+                "15:00",
+                "Equipment maintenance",
+                "user_2",
+                (now - timedelta(hours=5)).isoformat(),
+            ),
+        ]
+        seed_vet_profiles = [
+            (
+                "user_1",
+                82,
+                196,
+                10,
+                8.7,
+                10,
+                2,
+                (now + timedelta(days=3)).isoformat(),
+                now.isoformat(),
+            ),
+            (
+                "user_3",
+                64,
+                148,
+                8,
+                6.56,
+                8,
+                3,
+                (now + timedelta(days=4)).isoformat(),
+                now.isoformat(),
+            ),
+        ]
+        seed_vet_sessions = [
+            (
+                "vcs_seed_1",
+                "user_1",
+                24,
+                0.88,
+                "Dermatitis triage prompts",
+                "Added escalation guidance",
+                28,
+                (now - timedelta(days=2)).isoformat(),
+            ),
+            (
+                "vcs_seed_2",
+                "user_3",
+                18,
+                0.84,
+                "Grooming stress checks",
+                "Reinforced low-noise handling tips",
+                20,
+                (now - timedelta(days=1)).isoformat(),
+            ),
+        ]
+        seed_vet_verifications = [
+            (
+                "vver_seed_1",
+                "svc_3",
+                "user_1",
+                "approved",
+                0.91,
+                "Consistent hygiene and stress-aware process.",
+                (now - timedelta(days=12)).isoformat(),
+                (now + timedelta(days=78)).isoformat(),
+                19,
+            ),
+            (
+                "vver_seed_2",
+                "svc_7",
+                "user_3",
+                "approved",
+                0.87,
+                "Strong handling quality for anxious dogs.",
+                (now - timedelta(days=8)).isoformat(),
+                (now + timedelta(days=84)).isoformat(),
+                17,
+            ),
+        ]
 
         with self._lock:
             with self._connect() as conn:
@@ -677,6 +1022,141 @@ class ServiceStore:
                 conn.executemany(
                     "INSERT OR IGNORE INTO reviews (id, provider_id, author, rating, comment) VALUES (?, ?, ?, ?, ?)",
                     seed_reviews,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO quote_requests (
+                        id, user_id, category, suburb, preferred_window, pet_details, note, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        user_id = excluded.user_id,
+                        category = excluded.category,
+                        suburb = excluded.suburb,
+                        preferred_window = excluded.preferred_window,
+                        pet_details = excluded.pet_details,
+                        note = excluded.note,
+                        status = excluded.status,
+                        created_at = excluded.created_at,
+                        updated_at = excluded.updated_at
+                    """,
+                    seed_quote_requests,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO quote_request_targets (
+                        id, quote_request_id, provider_id, owner_user_id, status, response_message, created_at,
+                        responded_at, reminder_15_sent, reminder_60_sent
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        quote_request_id = excluded.quote_request_id,
+                        provider_id = excluded.provider_id,
+                        owner_user_id = excluded.owner_user_id,
+                        status = excluded.status,
+                        response_message = excluded.response_message,
+                        created_at = excluded.created_at,
+                        responded_at = excluded.responded_at,
+                        reminder_15_sent = excluded.reminder_15_sent,
+                        reminder_60_sent = excluded.reminder_60_sent
+                    """,
+                    seed_quote_targets,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO bookings (
+                        id, owner_user_id, provider_id, pet_name, booking_date, time_slot, note, status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        owner_user_id = excluded.owner_user_id,
+                        provider_id = excluded.provider_id,
+                        pet_name = excluded.pet_name,
+                        booking_date = excluded.booking_date,
+                        time_slot = excluded.time_slot,
+                        note = excluded.note,
+                        status = excluded.status,
+                        created_at = excluded.created_at
+                    """,
+                    seed_bookings,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO booking_status_history (
+                        id, booking_id, actor_user_id, from_status, to_status, note, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        booking_id = excluded.booking_id,
+                        actor_user_id = excluded.actor_user_id,
+                        from_status = excluded.from_status,
+                        to_status = excluded.to_status,
+                        note = excluded.note,
+                        created_at = excluded.created_at
+                    """,
+                    seed_booking_history,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO provider_blackout_slots (
+                        id, provider_id, slot_date, time_slot, reason, created_by, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        provider_id = excluded.provider_id,
+                        slot_date = excluded.slot_date,
+                        time_slot = excluded.time_slot,
+                        reason = excluded.reason,
+                        created_by = excluded.created_by,
+                        created_at = excluded.created_at
+                    """,
+                    seed_blackouts,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO vet_profiles (
+                        user_id, spotlight_minutes, coaching_minutes, coaching_sessions, quality_score_sum,
+                        quality_score_count, grooming_reviews_count, highlighted_until, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        spotlight_minutes = excluded.spotlight_minutes,
+                        coaching_minutes = excluded.coaching_minutes,
+                        coaching_sessions = excluded.coaching_sessions,
+                        quality_score_sum = excluded.quality_score_sum,
+                        quality_score_count = excluded.quality_score_count,
+                        grooming_reviews_count = excluded.grooming_reviews_count,
+                        highlighted_until = excluded.highlighted_until,
+                        updated_at = excluded.updated_at
+                    """,
+                    seed_vet_profiles,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO vet_coach_sessions (
+                        id, user_id, duration_minutes, quality_score, topic, note, minutes_earned, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        user_id = excluded.user_id,
+                        duration_minutes = excluded.duration_minutes,
+                        quality_score = excluded.quality_score,
+                        topic = excluded.topic,
+                        note = excluded.note,
+                        minutes_earned = excluded.minutes_earned,
+                        created_at = excluded.created_at
+                    """,
+                    seed_vet_sessions,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO vet_groomer_verifications (
+                        id, provider_id, vet_user_id, decision, confidence_score, note, created_at, valid_until, spotlight_minutes_earned
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        provider_id = excluded.provider_id,
+                        vet_user_id = excluded.vet_user_id,
+                        decision = excluded.decision,
+                        confidence_score = excluded.confidence_score,
+                        note = excluded.note,
+                        created_at = excluded.created_at,
+                        valid_until = excluded.valid_until,
+                        spotlight_minutes_earned = excluded.spotlight_minutes_earned
+                    """,
+                    seed_vet_verifications,
                 )
 
                 conn.commit()
@@ -1236,7 +1716,7 @@ class ServiceStore:
                       AND p.category = ?
                       AND p.suburb = ?
                       AND po.user_id != ?
-                    ORDER BY p.rating DESC, p.review_count DESC
+                    ORDER BY p.rating DESC, p.review_count DESC, p.rowid DESC
                     LIMIT 20
                     """,
                     (category, cleaned_suburb, user_id),
@@ -1250,7 +1730,7 @@ class ServiceStore:
                         WHERE p.status = 'active'
                           AND p.category = ?
                           AND po.user_id != ?
-                        ORDER BY p.rating DESC, p.review_count DESC
+                        ORDER BY p.rating DESC, p.review_count DESC, p.rowid DESC
                         LIMIT 20
                         """,
                         (category, user_id),

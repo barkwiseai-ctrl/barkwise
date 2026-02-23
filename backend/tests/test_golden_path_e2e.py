@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -44,7 +45,8 @@ def test_golden_path_login_services_booking_chat_notifications_read():
     providers = search.json()
     assert any(item["id"] == provider_id for item in providers)
 
-    availability = client.get(f"/services/providers/{provider_id}/availability", params={"date": "2026-02-21"})
+    booking_date = (datetime.utcnow().date() + timedelta(days=1)).isoformat()
+    availability = client.get(f"/services/providers/{provider_id}/availability", params={"date": booking_date})
     assert availability.status_code == 200
     slots = availability.json()
     assert isinstance(slots, list)
@@ -59,7 +61,7 @@ def test_golden_path_login_services_booking_chat_notifications_read():
             "user_id": customer_user,
             "provider_id": provider_id,
             "pet_name": "Milo",
-            "date": "2026-02-21",
+            "date": booking_date,
             "time_slot": time_slot,
             "note": "Golden path booking",
         },
@@ -77,7 +79,11 @@ def test_golden_path_login_services_booking_chat_notifications_read():
     assert isinstance(chat.json().get("answer"), str)
     assert chat.json().get("answer")
 
-    owner_notifications = client.get("/notifications", params={"user_id": owner_user})
+    owner_notifications = client.get(
+        "/notifications",
+        params={"user_id": owner_user},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
     assert owner_notifications.status_code == 200
     notifications = owner_notifications.json()
     assert notifications

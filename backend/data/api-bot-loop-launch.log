@@ -1,0 +1,5 @@
+zsh:1: command not found: setsid
+[2026-02-23T11:13:50Z] API bot loop started. Interval=3h log_file=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-loop.log
+[2026-02-23T11:13:50Z] Starting API bot cycle. base_url=http://localhost:8000 users=annika,snowy,sesame,pepsi,billie,buddy concurrency=6 iterations=24
+[2026-02-23T11:14:20Z] Bot activity completed with exit_code=0 summary=/Users/yingxu/public-repos/pet-social-app/backend/data/api-bot-runs/summary-20260223T111350Z.json
+[2026-02-23T11:14:20Z] Sleeping for 3h

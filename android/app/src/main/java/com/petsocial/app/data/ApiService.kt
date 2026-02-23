@@ -8,7 +8,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -175,13 +177,83 @@ interface ApiService {
     @GET("community/posts")
     suspend fun getPosts(
         @Query("suburb") suburb: String? = null,
+        @Query("post_type") postType: String? = null,
         @Query("user_id") userId: String? = null,
         @Query("q") query: String? = null,
         @Query("sort_by") sortBy: String? = null,
+        @Query("alert_type") alertType: String? = null,
+        @Query("alert_status") alertStatus: String? = null,
+        @Query("open_only") openOnly: Boolean? = null,
+        @Query("recent_hours") recentHours: Int? = null,
+        @Query("center_lat") centerLat: Double? = null,
+        @Query("center_lng") centerLng: Double? = null,
+        @Query("max_distance_km") maxDistanceKm: Double? = null,
     ): List<CommunityPost>
 
     @POST("community/posts")
     suspend fun createPost(@Body payload: CommunityPostCreate): CommunityPost
+
+    @POST("community/posts/{postId}/resolve")
+    suspend fun resolvePost(
+        @Path("postId") postId: String,
+        @Body payload: CommunityPostResolveRequest,
+    ): CommunityPost
+
+    @PATCH("community/posts/{postId}")
+    suspend fun updatePost(
+        @Path("postId") postId: String,
+        @Body payload: CommunityPostUpdateRequest,
+    ): CommunityPost
+
+    @DELETE("community/posts/{postId}")
+    suspend fun deletePost(
+        @Path("postId") postId: String,
+        @Query("requester_user_id") requesterUserId: String,
+    ): Map<String, String>
+
+    @POST("community/posts/uploads")
+    suspend fun uploadCommunityPostPhoto(
+        @Body payload: CommunityPostPhotoUploadRequest,
+    ): CommunityPostPhotoUploadResponse
+
+    @POST("community/moderation/reports")
+    suspend fun createModerationReport(@Body payload: CommunityReportCreateRequest): CommunityReport
+
+    @GET("community/moderation/reports")
+    suspend fun getModerationReports(
+        @Query("requester_user_id") requesterUserId: String,
+        @Query("include_resolved") includeResolved: Boolean = false,
+    ): List<CommunityReport>
+
+    @POST("community/moderation/reports/{reportId}/resolve")
+    suspend fun resolveModerationReport(
+        @Path("reportId") reportId: String,
+        @Body payload: CommunityReportResolveRequest,
+    ): CommunityReport
+
+    @POST("community/moderation/blocks")
+    suspend fun blockUser(@Body payload: CommunityBlockUserRequest): CommunityBlockUserResponse
+
+    @DELETE("community/moderation/blocks")
+    suspend fun unblockUser(
+        @Query("requester_user_id") requesterUserId: String,
+        @Query("target_user_id") targetUserId: String,
+    ): CommunityBlockUserResponse
+
+    @GET("community/moderation/blocks")
+    suspend fun getBlockedUsers(@Query("requester_user_id") requesterUserId: String): CommunityBlockUserResponse
+
+    @POST("community/analytics/events")
+    suspend fun createCommunityAnalyticsEvent(@Body payload: CommunityAnalyticsEventCreateRequest): Map<String, String>
+
+    @GET("community/analytics/funnel")
+    suspend fun getCommunityFunnel(
+        @Query("requester_user_id") requesterUserId: String? = null,
+        @Query("window_hours") windowHours: Int = 168,
+    ): CommunityFunnelMetrics
+
+    @POST("community/diagnostics/events")
+    suspend fun createCommunityDiagnosticEvent(@Body payload: CommunityDiagnosticEventCreateRequest): Map<String, String>
 
     @GET("community/events")
     suspend fun getEvents(

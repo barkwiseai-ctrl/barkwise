@@ -9,6 +9,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 class MockApiService private constructor() : ApiService {
+    private val now = Instant.now()
     private val providers = mutableListOf(
         ServiceProvider(
             id = "provider_1",
@@ -30,7 +31,15 @@ class MockApiService private constructor() : ApiService {
             responseTimeMinutes = 18,
             localBookersThisMonth = 14,
             sharedGroupBookers = 5,
+            quoteSprintTier = "gold",
+            quoteResponseRatePct = 93,
+            quoteResponseStreak = 4,
+            vetChecked = true,
+            vetCheckedUntil = now.plus(82, ChronoUnit.DAYS).toString(),
+            vetCheckedBy = "user_3",
             socialProof = listOf(
+                "Vet-checked until ${now.plus(82, ChronoUnit.DAYS).toString().take(10)}",
+                "Quote Sprint Gold • 93% response rate • 4 streak",
                 "Used by 14 pet owners in Surry Hills this month",
                 "5 members from your groups booked this provider",
                 "Typically responds in about 18 min",
@@ -38,112 +47,483 @@ class MockApiService private constructor() : ApiService {
         ),
         ServiceProvider(
             id = "provider_2",
-            name = "Sesame Gentle Trim Co.",
-            category = "grooming",
-            suburb = "Darlinghurst",
-            rating = 4.7,
-            reviewCount = 88,
-            priceFrom = 58,
-            description = "Express tidy trims, wash and blow-dry.",
-            fullDescription = "Fast turnarounds for regular coat maintenance and hygiene clips.",
+            name = "Sesame City Striders",
+            category = "dog_walking",
+            suburb = "Surry Hills",
+            rating = 4.8,
+            reviewCount = 91,
+            priceFrom = 29,
+            description = "Daily solo and pair walks with route photos.",
+            fullDescription = "Structured 30-60 minute walks with post-walk behavior notes.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/doodle,dog,grooming?lock=102",
+                "https://loremflickr.com/640/640/dog,walking,city?lock=102",
             ),
-            latitude = -33.8777,
-            longitude = 151.2219,
+            latitude = -33.8854,
+            longitude = 151.2131,
             ownerUserId = "user_1",
             ownerLabel = "Sesame",
-            responseTimeMinutes = 31,
-            localBookersThisMonth = 9,
-            sharedGroupBookers = 3,
+            responseTimeMinutes = 15,
+            localBookersThisMonth = 18,
+            sharedGroupBookers = 7,
+            quoteSprintTier = "platinum",
+            quoteResponseRatePct = 97,
+            quoteResponseStreak = 6,
             socialProof = listOf(
-                "Used by 9 pet owners in Darlinghurst this month",
-                "3 members from your groups booked this provider",
-                "Typically responds in about 31 min",
+                "Quote Sprint Platinum • 97% response rate • 6 streak",
+                "Used by 18 pet owners in Surry Hills this month",
+                "7 members from your groups booked this provider",
+                "Typically responds in about 15 min",
             ),
         ),
         ServiceProvider(
             id = "provider_3",
-            name = "Tommy Tiny Paws Grooming",
-            category = "grooming",
-            suburb = "Redfern",
-            rating = 4.8,
-            reviewCount = 102,
-            priceFrom = 67,
-            description = "Toy-breed specialist grooming with coat-safe products.",
-            fullDescription = "Gentle handling for small breeds, face tidy, nails, and paw care.",
+            name = "Snowy Neighborhood Walk Co",
+            category = "dog_walking",
+            suburb = "Newtown",
+            rating = 4.7,
+            reviewCount = 84,
+            priceFrom = 26,
+            description = "Reliable weekday pack walks for social dogs.",
+            fullDescription = "Small-group walks with hydration checks and photo updates.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/brown,toy,dog,cavoodle?lock=103",
+                "https://loremflickr.com/640/640/dog,park,walk?lock=103",
             ),
-            latitude = -33.8935,
-            longitude = 151.2048,
-            ownerUserId = "user_4",
-            ownerLabel = "Tommy",
-            responseTimeMinutes = 22,
-            localBookersThisMonth = 11,
+            latitude = -33.8990,
+            longitude = 151.1764,
+            ownerUserId = "user_2",
+            ownerLabel = "Snowy",
+            responseTimeMinutes = 28,
+            localBookersThisMonth = 10,
             sharedGroupBookers = 4,
             socialProof = listOf(
-                "Used by 11 pet owners in Redfern this month",
+                "Used by 10 pet owners in Newtown this month",
                 "4 members from your groups booked this provider",
-                "Typically responds in about 22 min",
+                "Typically responds in about 28 min",
             ),
         ),
         ServiceProvider(
             id = "provider_4",
-            name = "Tommy Cocoa Coat Spa",
+            name = "Snowy Gentle Groom Lab",
             category = "grooming",
-            suburb = "Surry Hills",
+            suburb = "Newtown",
             rating = 4.6,
-            reviewCount = 71,
-            priceFrom = 64,
-            description = "Brown-coat brightening wash, conditioning, and tidy styling.",
-            fullDescription = "Salon-style finish for toy cavoodles and poodle mixes.",
+            reviewCount = 66,
+            priceFrom = 54,
+            description = "Express tidy trims and sensitive-skin wash plans.",
+            fullDescription = "Fast but gentle sessions for routine coat maintenance.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/toy,cavoodle,dog?lock=104",
+                "https://loremflickr.com/640/640/grooming,dog,newtown?lock=104",
             ),
-            latitude = -33.8860,
-            longitude = 151.2101,
-            ownerUserId = "user_4",
-            ownerLabel = "Tommy",
-            responseTimeMinutes = 44,
-            localBookersThisMonth = 7,
+            latitude = -33.8976,
+            longitude = 151.1783,
+            ownerUserId = "user_2",
+            ownerLabel = "Snowy",
+            responseTimeMinutes = 34,
+            localBookersThisMonth = 8,
             sharedGroupBookers = 2,
             socialProof = listOf(
-                "Used by 7 pet owners in Surry Hills this month",
+                "Used by 8 pet owners in Newtown this month",
                 "2 members from your groups booked this provider",
-                "Typically responds in about 44 min",
+                "Typically responds in about 34 min",
+            ),
+        ),
+        ServiceProvider(
+            id = "provider_5",
+            name = "Anika Redfern Rover Routes",
+            category = "dog_walking",
+            suburb = "Redfern",
+            rating = 4.9,
+            reviewCount = 119,
+            priceFrom = 31,
+            description = "Morning and evening walks with behavior notes.",
+            fullDescription = "Consistent solo walks for energetic and anxious dogs.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/dog,redfern,walk?lock=105",
+            ),
+            latitude = -33.8927,
+            longitude = 151.2037,
+            ownerUserId = "user_3",
+            ownerLabel = "Anika",
+            responseTimeMinutes = 19,
+            localBookersThisMonth = 16,
+            sharedGroupBookers = 6,
+            quoteSprintTier = "silver",
+            quoteResponseRatePct = 81,
+            quoteResponseStreak = 3,
+            highlightedVet = "Anika",
+            highlightedVetUntil = now.plus(4, ChronoUnit.DAYS).toString(),
+            socialProof = listOf(
+                "Quote Sprint Silver • 81% response rate • 3 streak",
+                "Used by 16 pet owners in Redfern this month",
+                "6 members from your groups booked this provider",
+                "Typically responds in about 19 min",
+                "Highlighted vet owner until ${now.plus(4, ChronoUnit.DAYS).toString().take(10)}",
+            ),
+        ),
+        ServiceProvider(
+            id = "provider_6",
+            name = "Anika Calm Coat Studio",
+            category = "grooming",
+            suburb = "Redfern",
+            rating = 4.8,
+            reviewCount = 97,
+            priceFrom = 59,
+            description = "Low-stress grooming for seniors and anxious pets.",
+            fullDescription = "One-on-one appointments with coat and skin notes every visit.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/grooming,senior,dog?lock=106",
+            ),
+            latitude = -33.8918,
+            longitude = 151.2055,
+            ownerUserId = "user_3",
+            ownerLabel = "Anika",
+            responseTimeMinutes = 23,
+            localBookersThisMonth = 12,
+            sharedGroupBookers = 5,
+            vetChecked = true,
+            vetCheckedUntil = now.plus(64, ChronoUnit.DAYS).toString(),
+            vetCheckedBy = "user_1",
+            highlightedVet = "Anika",
+            highlightedVetUntil = now.plus(4, ChronoUnit.DAYS).toString(),
+            socialProof = listOf(
+                "Vet-checked until ${now.plus(64, ChronoUnit.DAYS).toString().take(10)}",
+                "Used by 12 pet owners in Redfern this month",
+                "5 members from your groups booked this provider",
+                "Typically responds in about 23 min",
+                "Highlighted vet owner until ${now.plus(4, ChronoUnit.DAYS).toString().take(10)}",
+            ),
+        ),
+        ServiceProvider(
+            id = "provider_7",
+            name = "Tommy Tiny Paws Grooming",
+            category = "grooming",
+            suburb = "Surry Hills",
+            rating = 4.7,
+            reviewCount = 108,
+            priceFrom = 63,
+            description = "Toy-breed specialist grooming with coat-safe products.",
+            fullDescription = "Face tidy, nails, and paw care for small breeds.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/brown,toy,dog,cavoodle?lock=107",
+            ),
+            latitude = -33.8862,
+            longitude = 151.2104,
+            ownerUserId = "user_4",
+            ownerLabel = "Tommy",
+            responseTimeMinutes = 27,
+            localBookersThisMonth = 13,
+            sharedGroupBookers = 3,
+            quoteSprintTier = "bronze",
+            quoteResponseRatePct = 66,
+            quoteResponseStreak = 2,
+            socialProof = listOf(
+                "Quote Sprint Bronze • 66% response rate • 2 streak",
+                "Used by 13 pet owners in Surry Hills this month",
+                "3 members from your groups booked this provider",
+                "Typically responds in about 27 min",
+            ),
+        ),
+        ServiceProvider(
+            id = "provider_8",
+            name = "Tommy Park Pack Walks",
+            category = "dog_walking",
+            suburb = "Redfern",
+            rating = 4.5,
+            reviewCount = 62,
+            priceFrom = 25,
+            description = "Budget-friendly weekday and weekend park walks.",
+            fullDescription = "Short and medium route options with simple status updates.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/dog,walk,park?lock=108",
+            ),
+            latitude = -33.8940,
+            longitude = 151.2022,
+            ownerUserId = "user_4",
+            ownerLabel = "Tommy",
+            responseTimeMinutes = 38,
+            localBookersThisMonth = 6,
+            sharedGroupBookers = 2,
+            socialProof = listOf(
+                "Used by 6 pet owners in Redfern this month",
+                "2 members from your groups booked this provider",
+                "Typically responds in about 38 min",
+            ),
+        ),
+        ServiceProvider(
+            id = "provider_9",
+            name = "West Paws Walk Club",
+            category = "dog_walking",
+            suburb = "Sunshine West",
+            rating = 4.6,
+            reviewCount = 41,
+            priceFrom = 24,
+            description = "Local weekday walk club for Sunshine West families.",
+            fullDescription = "Recurring slots focused on predictable routines and safety checks.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/dog,sunshine,west?lock=109",
+            ),
+            latitude = -37.7921,
+            longitude = 144.8169,
+            ownerUserId = "user_2",
+            ownerLabel = "Snowy",
+            responseTimeMinutes = 32,
+            localBookersThisMonth = 5,
+            sharedGroupBookers = 1,
+            socialProof = listOf(
+                "Used by 5 pet owners in Sunshine West this month",
+                "1 members from your groups booked this provider",
+                "Typically responds in about 32 min",
+            ),
+        ),
+        ServiceProvider(
+            id = "provider_10",
+            name = "Sunshine Coat Care",
+            category = "grooming",
+            suburb = "Sunshine West",
+            rating = 4.8,
+            reviewCount = 55,
+            priceFrom = 52,
+            description = "Neighbourhood grooming studio with gentle handling.",
+            fullDescription = "Wash, dry, tidy trim, and coat-care notes in every session.",
+            imageUrls = listOf(
+                "https://loremflickr.com/640/640/dog,grooming,melbourne?lock=110",
+            ),
+            latitude = -37.7914,
+            longitude = 144.8158,
+            ownerUserId = "user_4",
+            ownerLabel = "Tommy",
+            responseTimeMinutes = 29,
+            localBookersThisMonth = 7,
+            sharedGroupBookers = 2,
+            vetChecked = true,
+            vetCheckedUntil = now.plus(43, ChronoUnit.DAYS).toString(),
+            vetCheckedBy = "user_1",
+            socialProof = listOf(
+                "Vet-checked until ${now.plus(43, ChronoUnit.DAYS).toString().take(10)}",
+                "Used by 7 pet owners in Sunshine West this month",
+                "2 members from your groups booked this provider",
+                "Typically responds in about 29 min",
             ),
         ),
     )
-    private val quoteRequests = mutableMapOf<String, ServiceQuoteRequestView>()
-    private val vetProfiles = mutableMapOf<String, VetCoachProfile>()
-    private val providerVetVerifications = mutableMapOf<String, VetGroomerVerification>()
-    private val groupBadges = mutableMapOf<String, MutableSet<String>>()
-    private val groupMemberRewardPoints = mutableMapOf<Pair<String, String>, MutableMap<String, Int>>()
-    private val groupChallengeContributions = mutableMapOf<Triple<String, String, String>, Int>()
     private val reviewsByProvider = mutableMapOf(
         "provider_1" to mutableListOf(
             Review("review_1", "provider_1", "Sam", 5, "Excellent groom. Coat came back fluffy and even."),
             Review("review_2", "provider_1", "June", 5, "Great updates and really gentle handling."),
         ),
         "provider_2" to mutableListOf(
-            Review("review_3", "provider_2", "Mia", 4, "Good tidy trim and easy booking flow."),
+            Review("review_3", "provider_2", "Mia", 5, "Great walker and quick updates after every walk."),
+            Review("review_4", "provider_2", "Leo", 4, "Reliable timing for morning walks."),
         ),
         "provider_3" to mutableListOf(
-            Review("review_4", "provider_3", "Harper", 5, "Perfect for small dogs, very patient staff."),
-            Review("review_5", "provider_3", "Noah", 4, "Great cut and nails, pickup was on time."),
+            Review("review_5", "provider_3", "Harper", 5, "Pack walks are calm and well supervised."),
+            Review("review_6", "provider_3", "Noah", 4, "Good communication and route photos."),
         ),
         "provider_4" to mutableListOf(
-            Review("review_6", "provider_4", "Ava", 5, "My toy cavoodle looked amazing after the spa package."),
+            Review("review_7", "provider_4", "Ava", 5, "Quick tidy clip and easy handover."),
+        ),
+        "provider_5" to mutableListOf(
+            Review("review_8", "provider_5", "Ivy", 5, "Best walker in Redfern for energetic dogs."),
+            Review("review_9", "provider_5", "Piper", 4, "Great behavior notes."),
+        ),
+        "provider_6" to mutableListOf(
+            Review("review_10", "provider_6", "Nora", 5, "Handled our senior dog gently."),
+            Review("review_11", "provider_6", "Ben", 5, "Excellent de-shed and coat advice."),
+        ),
+        "provider_7" to mutableListOf(
+            Review("review_12", "provider_7", "Luca", 4, "Solid groom and nail work."),
+        ),
+        "provider_8" to mutableListOf(
+            Review("review_13", "provider_8", "Maya", 4, "Good value walks for weekdays."),
+        ),
+        "provider_9" to mutableListOf(
+            Review("review_14", "provider_9", "Elise", 5, "Great with shy rescue dogs."),
+        ),
+        "provider_10" to mutableListOf(
+            Review("review_15", "provider_10", "Jules", 5, "Calm grooming setup and clear updates."),
         ),
     )
+    private val quoteRequests = mutableMapOf(
+        "quote_1" to ServiceQuoteRequestView(
+            quoteRequest = ServiceQuoteRequest(
+                id = "quote_1",
+                userId = "user_2",
+                category = "grooming",
+                suburb = "Surry Hills",
+                preferredWindow = "Weekday mornings",
+                petDetails = "Toy poodle, sensitive skin",
+                note = "Needs gentle products",
+                status = "responded",
+                createdAt = now.minus(3, ChronoUnit.DAYS).toString(),
+                updatedAt = now.minus(3, ChronoUnit.DAYS).plus(40, ChronoUnit.MINUTES).toString(),
+            ),
+            targets = listOf(
+                ServiceQuoteTarget(
+                    providerId = "provider_1",
+                    providerName = "Sesame Suds Studio",
+                    ownerUserId = "user_1",
+                    status = "accepted",
+                    responseMessage = "Yes, we can do morning pickup.",
+                    createdAt = now.minus(3, ChronoUnit.DAYS).toString(),
+                    respondedAt = now.minus(3, ChronoUnit.DAYS).plus(18, ChronoUnit.MINUTES).toString(),
+                    reminder15Sent = true,
+                    reminder60Sent = false,
+                ),
+                ServiceQuoteTarget(
+                    providerId = "provider_7",
+                    providerName = "Tommy Tiny Paws Grooming",
+                    ownerUserId = "user_4",
+                    status = "declined",
+                    responseMessage = "No suitable slots this week.",
+                    createdAt = now.minus(3, ChronoUnit.DAYS).toString(),
+                    respondedAt = now.minus(3, ChronoUnit.DAYS).plus(41, ChronoUnit.MINUTES).toString(),
+                    reminder15Sent = true,
+                    reminder60Sent = false,
+                ),
+            ),
+        ),
+        "quote_2" to ServiceQuoteRequestView(
+            quoteRequest = ServiceQuoteRequest(
+                id = "quote_2",
+                userId = "user_4",
+                category = "dog_walking",
+                suburb = "Redfern",
+                preferredWindow = "Evening slots",
+                petDetails = "2-year old lab, high energy",
+                note = "",
+                status = "responded",
+                createdAt = now.minus(2, ChronoUnit.DAYS).toString(),
+                updatedAt = now.minus(2, ChronoUnit.DAYS).plus(22, ChronoUnit.MINUTES).toString(),
+            ),
+            targets = listOf(
+                ServiceQuoteTarget(
+                    providerId = "provider_5",
+                    providerName = "Anika Redfern Rover Routes",
+                    ownerUserId = "user_3",
+                    status = "accepted",
+                    responseMessage = "Happy to take this request.",
+                    createdAt = now.minus(2, ChronoUnit.DAYS).toString(),
+                    respondedAt = now.minus(2, ChronoUnit.DAYS).plus(12, ChronoUnit.MINUTES).toString(),
+                    reminder15Sent = false,
+                    reminder60Sent = false,
+                ),
+                ServiceQuoteTarget(
+                    providerId = "provider_8",
+                    providerName = "Tommy Park Pack Walks",
+                    ownerUserId = "user_4",
+                    status = "accepted",
+                    responseMessage = "Can do weekend backup slot.",
+                    createdAt = now.minus(2, ChronoUnit.DAYS).toString(),
+                    respondedAt = now.minus(2, ChronoUnit.DAYS).plus(21, ChronoUnit.MINUTES).toString(),
+                    reminder15Sent = true,
+                    reminder60Sent = false,
+                ),
+            ),
+        ),
+        "quote_3" to ServiceQuoteRequestView(
+            quoteRequest = ServiceQuoteRequest(
+                id = "quote_3",
+                userId = "user_1",
+                category = "grooming",
+                suburb = "Newtown",
+                preferredWindow = "Saturday afternoon",
+                petDetails = "Senior corgi, anxiety around dryers",
+                note = "",
+                status = "pending",
+                createdAt = now.minus(45, ChronoUnit.MINUTES).toString(),
+                updatedAt = now.minus(45, ChronoUnit.MINUTES).toString(),
+            ),
+            targets = listOf(
+                ServiceQuoteTarget(
+                    providerId = "provider_4",
+                    providerName = "Snowy Gentle Groom Lab",
+                    ownerUserId = "user_2",
+                    status = "pending",
+                    createdAt = now.minus(45, ChronoUnit.MINUTES).toString(),
+                    respondedAt = null,
+                    reminder15Sent = true,
+                    reminder60Sent = false,
+                ),
+            ),
+        ),
+    )
+    private val vetProfiles = mutableMapOf(
+        "user_1" to VetCoachProfile(
+            userId = "user_1",
+            spotlightMinutes = 86,
+            coachingMinutes = 210,
+            coachingSessions = 11,
+            coachQualityScore = 0.88,
+            highlightedUntil = now.plus(3, ChronoUnit.DAYS).toString(),
+            badgeTier = "gold",
+        ),
+        "user_3" to VetCoachProfile(
+            userId = "user_3",
+            spotlightMinutes = 64,
+            coachingMinutes = 154,
+            coachingSessions = 8,
+            coachQualityScore = 0.83,
+            highlightedUntil = now.plus(4, ChronoUnit.DAYS).toString(),
+            badgeTier = "silver",
+        ),
+    )
+    private val providerVetVerifications = mutableMapOf(
+        "provider_6" to VetGroomerVerification(
+            id = "mock_vver_1",
+            providerId = "provider_6",
+            vetUserId = "user_1",
+            decision = "approved",
+            confidenceScore = 0.92,
+            note = "Consistent hygiene process and low-stress handling.",
+            createdAt = now.minus(26, ChronoUnit.DAYS).toString(),
+            validUntil = now.plus(64, ChronoUnit.DAYS).toString(),
+            spotlightMinutesEarned = 19,
+        ),
+        "provider_10" to VetGroomerVerification(
+            id = "mock_vver_2",
+            providerId = "provider_10",
+            vetUserId = "user_3",
+            decision = "approved",
+            confidenceScore = 0.86,
+            note = "Strong handling quality for anxious dogs.",
+            createdAt = now.minus(10, ChronoUnit.DAYS).toString(),
+            validUntil = now.plus(43, ChronoUnit.DAYS).toString(),
+            spotlightMinutesEarned = 17,
+        ),
+    )
+    private val groupBadges = mutableMapOf<String, MutableSet<String>>(
+        "group_1" to mutableSetOf("Pack Builder"),
+        "group_5" to mutableSetOf("Clean Park Collective"),
+    )
+    private val groupMemberRewardPoints = mutableMapOf<Pair<String, String>, MutableMap<String, Int>>(
+        ("group_1" to "user_1") to mutableMapOf("pack_builder" to 4, "clean_park_streak" to 2),
+        ("group_1" to "user_2") to mutableMapOf("pack_builder" to 2, "clean_park_streak" to 1),
+        ("group_2" to "user_3") to mutableMapOf("pack_builder" to 3, "clean_park_streak" to 4),
+        ("group_3" to "user_2") to mutableMapOf("pack_builder" to 2, "clean_park_streak" to 2),
+        ("group_5" to "user_3") to mutableMapOf("pack_builder" to 3, "clean_park_streak" to 5),
+    )
+    private val groupChallengeContributions = mutableMapOf<Triple<String, String, String>, Int>(
+        Triple("group_1", "pack_builder", "user_1") to 4,
+        Triple("group_1", "clean_park_streak", "user_1") to 2,
+        Triple("group_1", "pack_builder", "user_2") to 2,
+        Triple("group_2", "clean_park_streak", "user_3") to 4,
+        Triple("group_3", "pack_builder", "user_2") to 2,
+        Triple("group_5", "clean_park_streak", "user_3") to 5,
+        Triple("group_5", "pack_builder", "user_1") to 3,
+    )
     private val groupMembers = mutableMapOf(
-        "group_1" to mutableSetOf("user_1", "user_2"),
-        "group_2" to mutableSetOf("user_3"),
+        "group_1" to mutableSetOf("user_1", "user_2", "user_4", "user_jules", "user_ivy", "user_omar"),
+        "group_2" to mutableSetOf("user_3", "user_1", "user_mina", "user_ken"),
+        "group_3" to mutableSetOf("user_2", "user_3", "user_lara", "user_zoe", "user_hugo"),
+        "group_4" to mutableSetOf("user_4", "user_2", "user_amy"),
+        "group_5" to mutableSetOf("user_3", "user_1", "user_2", "user_nia", "user_toby"),
     )
     private val groupPendingMembers = mutableMapOf(
-        "group_1" to mutableSetOf("user_4"),
-        "group_2" to mutableSetOf<String>(),
+        "group_1" to mutableSetOf("user_5"),
+        "group_2" to mutableSetOf("user_6"),
+        "group_3" to mutableSetOf("user_7"),
+        "group_4" to mutableSetOf<String>(),
+        "group_5" to mutableSetOf("user_8", "user_9"),
     )
     private val groupInvites = mutableMapOf<String, GroupInvite>()
     private val groups = mutableListOf(
@@ -151,7 +531,7 @@ class MockApiService private constructor() : ApiService {
             id = "group_1",
             name = "Surry Hills Dog Parents",
             suburb = "Surry Hills",
-            memberCount = 2,
+            memberCount = 6,
             official = true,
             ownerUserId = "user_1",
         ),
@@ -159,7 +539,29 @@ class MockApiService private constructor() : ApiService {
             id = "group_2",
             name = "Redfern Weekend Walks",
             suburb = "Redfern",
-            memberCount = 1,
+            memberCount = 4,
+            ownerUserId = "user_3",
+        ),
+        Group(
+            id = "group_3",
+            name = "Newtown Puppy Parents",
+            suburb = "Newtown",
+            memberCount = 5,
+            official = true,
+            ownerUserId = "user_2",
+        ),
+        Group(
+            id = "group_4",
+            name = "Inner West Grooming Tips",
+            suburb = "Newtown",
+            memberCount = 3,
+            ownerUserId = "user_4",
+        ),
+        Group(
+            id = "group_5",
+            name = "Surry Hills Clean Park Crew",
+            suburb = "Surry Hills",
+            memberCount = 5,
             ownerUserId = "user_3",
         ),
     )
@@ -170,7 +572,71 @@ class MockApiService private constructor() : ApiService {
             title = "Found leash near Prince Alfred Park",
             body = "Blue leash dropped at the off-leash area. Message me to claim.",
             suburb = "Surry Hills",
-            createdAt = Instant.now().minus(2, ChronoUnit.HOURS).toString(),
+            createdAt = now.minus(2, ChronoUnit.HOURS).toString(),
+        ),
+        CommunityPost(
+            id = "post_2",
+            type = "group_post",
+            title = "Dog park check-in: Luna",
+            body = "Luna joined the Saturday fetch circle.",
+            suburb = "Surry Hills",
+            createdAt = now.minus(5, ChronoUnit.HOURS).toString(),
+        ),
+        CommunityPost(
+            id = "post_3",
+            type = "group_post",
+            title = "Then vs Now card for Milo",
+            body = "Milo's confidence is way up after 6 months of training.",
+            suburb = "Redfern",
+            createdAt = now.minus(1, ChronoUnit.DAYS).toString(),
+        ),
+        CommunityPost(
+            id = "post_4",
+            type = "lost_found",
+            title = "Missing terrier near King Street",
+            body = "Brown terrier with green harness, last seen near station.",
+            suburb = "Newtown",
+            createdAt = now.minus(1, ChronoUnit.DAYS).plus(3, ChronoUnit.HOURS).toString(),
+        ),
+        CommunityPost(
+            id = "post_5",
+            type = "group_post",
+            title = "Cleanup check-in at Redfern Oval",
+            body = "Group logged 9 cleanup bags this week.",
+            suburb = "Redfern",
+            createdAt = now.minus(2, ChronoUnit.DAYS).toString(),
+        ),
+        CommunityPost(
+            id = "post_6",
+            type = "group_post",
+            title = "Best rainy-day enrichment toys?",
+            body = "Share puzzle feeders and scent-game ideas for apartment dogs.",
+            suburb = "Newtown",
+            createdAt = now.minus(3, ChronoUnit.DAYS).toString(),
+        ),
+        CommunityPost(
+            id = "post_7",
+            type = "lost_found",
+            title = "Found harness at Sydney Park gate",
+            body = "Black harness with yellow tag now at cafe counter nearby.",
+            suburb = "Newtown",
+            createdAt = now.minus(4, ChronoUnit.DAYS).toString(),
+        ),
+        CommunityPost(
+            id = "post_8",
+            type = "group_post",
+            title = "Pack Builder milestone hit",
+            body = "Surry Hills Dog Parents welcomed 5 new members this month.",
+            suburb = "Surry Hills",
+            createdAt = now.minus(5, ChronoUnit.DAYS).toString(),
+        ),
+        CommunityPost(
+            id = "post_9",
+            type = "group_post",
+            title = "Groomer shortlist thread",
+            body = "Posting vet-reviewed groomers and response times.",
+            suburb = "Redfern",
+            createdAt = now.minus(6, ChronoUnit.DAYS).toString(),
         ),
     )
     private val events = mutableListOf(
@@ -181,38 +647,259 @@ class MockApiService private constructor() : ApiService {
             suburb = "Surry Hills",
             date = LocalDate.now().plusDays(2).toString(),
             groupId = "group_1",
-            attendeeCount = 1,
+            attendeeCount = 4,
             createdBy = "user_1",
             status = "approved",
         ),
+        CommunityEvent(
+            id = "event_2",
+            title = "Recall Basics in Newtown",
+            description = "Trainer-led recall workshop for adolescent dogs.",
+            suburb = "Newtown",
+            date = LocalDate.now().plusDays(4).toString(),
+            groupId = "group_3",
+            attendeeCount = 5,
+            createdBy = "user_2",
+            status = "approved",
+        ),
+        CommunityEvent(
+            id = "event_3",
+            title = "Redfern Twilight Walk",
+            description = "40-minute walk with rest and hydration stop.",
+            suburb = "Redfern",
+            date = LocalDate.now().plusDays(1).toString(),
+            groupId = "group_2",
+            attendeeCount = 3,
+            createdBy = "user_3",
+            status = "approved",
+        ),
+        CommunityEvent(
+            id = "event_4",
+            title = "Community Clean Park Hour",
+            description = "Group cleanup plus dog social check-ins.",
+            suburb = "Surry Hills",
+            date = LocalDate.now().plusDays(6).toString(),
+            groupId = "group_5",
+            attendeeCount = 6,
+            createdBy = "user_3",
+            status = "approved",
+        ),
+        CommunityEvent(
+            id = "event_5",
+            title = "Grooming Demo Night",
+            description = "Live demo on coat-safe brushing routines.",
+            suburb = "Newtown",
+            date = LocalDate.now().plusDays(7).toString(),
+            groupId = "group_4",
+            attendeeCount = 2,
+            createdBy = "user_4",
+            status = "pending",
+        ),
     )
     private val eventAttendees = mutableMapOf(
-        "event_1" to mutableSetOf("user_2"),
+        "event_1" to mutableSetOf("user_2", "user_4", "user_jules", "user_ivy"),
+        "event_2" to mutableSetOf("user_1", "user_3", "user_lara", "user_zoe", "user_hugo"),
+        "event_3" to mutableSetOf("user_1", "user_mina", "user_ken"),
+        "event_4" to mutableSetOf("user_1", "user_2", "user_3", "user_nia", "user_toby", "user_omar"),
+        "event_5" to mutableSetOf("user_4", "user_2"),
     )
-    private val bookings = mutableListOf<BookingResponse>()
-    private val providerBlackouts = mutableMapOf<String, MutableList<ProviderBlackout>>()
+    private val bookings = mutableListOf(
+        BookingResponse(
+            id = "booking_1",
+            ownerUserId = "user_2",
+            providerId = "provider_1",
+            petName = "Milo",
+            date = LocalDate.now().plusDays(1).toString(),
+            timeSlot = "09:00",
+            note = "Anxious with dryers, please go slow.",
+            status = "requested",
+        ),
+        BookingResponse(
+            id = "booking_2",
+            ownerUserId = "user_1",
+            providerId = "provider_8",
+            petName = "Luna",
+            date = LocalDate.now().plusDays(2).toString(),
+            timeSlot = "11:00",
+            note = "Prefer shaded route.",
+            status = "provider_confirmed",
+        ),
+        BookingResponse(
+            id = "booking_3",
+            ownerUserId = "user_4",
+            providerId = "provider_3",
+            petName = "Maple",
+            date = LocalDate.now().minusDays(1).toString(),
+            timeSlot = "15:00",
+            note = "Completed smoothly.",
+            status = "completed",
+        ),
+        BookingResponse(
+            id = "booking_4",
+            ownerUserId = "user_3",
+            providerId = "provider_4",
+            petName = "Scout",
+            date = LocalDate.now().plusDays(3).toString(),
+            timeSlot = "13:00",
+            note = "Needs reschedule due to work conflict.",
+            status = "reschedule_requested",
+        ),
+        BookingResponse(
+            id = "booking_5",
+            ownerUserId = "user_2",
+            providerId = "provider_6",
+            petName = "Nala",
+            date = LocalDate.now().toString(),
+            timeSlot = "17:00",
+            note = "Sensitive skin package.",
+            status = "in_progress",
+        ),
+    )
+    private val providerBlackouts = mutableMapOf(
+        "provider_1" to mutableListOf(
+            ProviderBlackout(
+                id = "blackout_1",
+                providerId = "provider_1",
+                date = LocalDate.now().plusDays(4).toString(),
+                timeSlot = "13:00",
+                reason = "Clinic training block",
+            ),
+        ),
+        "provider_4" to mutableListOf(
+            ProviderBlackout(
+                id = "blackout_2",
+                providerId = "provider_4",
+                date = LocalDate.now().plusDays(2).toString(),
+                timeSlot = "15:00",
+                reason = "Equipment maintenance",
+            ),
+        ),
+    )
     private val conversationByUser = mutableMapOf<String, MutableList<ChatTurn>>()
     private val notifications = mutableListOf(
         AppNotification(
             id = "notif_1",
             userId = "user_2",
-            title = "Booking updated",
-            body = "Your groomer confirmed tomorrow's booking.",
+            title = "Quote response received",
+            body = "Sesame Suds Studio accepted your grooming quote request.",
             category = "booking",
             read = false,
-            createdAt = Instant.now().minus(1, ChronoUnit.HOURS).toString(),
-            deepLink = "messages",
+            createdAt = now.minus(1, ChronoUnit.HOURS).toString(),
+            deepLink = "quote:quote_1",
+        ),
+        AppNotification(
+            id = "notif_2",
+            userId = "user_1",
+            title = "New booking request",
+            body = "Milo requested 09:00 tomorrow for Sesame Suds Studio.",
+            category = "booking",
+            read = false,
+            createdAt = now.minus(2, ChronoUnit.HOURS).toString(),
+            deepLink = "booking:booking_1",
+        ),
+        AppNotification(
+            id = "notif_3",
+            userId = "user_3",
+            title = "Group challenge completed",
+            body = "Surry Hills Clean Park Crew unlocked a community badge.",
+            category = "community",
+            read = false,
+            createdAt = now.minus(4, ChronoUnit.HOURS).toString(),
+            deepLink = "group:group_5",
+        ),
+        AppNotification(
+            id = "notif_4",
+            userId = "user_4",
+            title = "Listing reviewed by vet",
+            body = "Sunshine Coat Care is now Vet-Checked.",
+            category = "booking",
+            read = true,
+            createdAt = now.minus(1, ChronoUnit.DAYS).toString(),
+            deepLink = "provider:provider_10",
+        ),
+        AppNotification(
+            id = "notif_5",
+            userId = "user_2",
+            title = "Event RSVP update",
+            body = "3 more members are attending Recall Basics in Newtown.",
+            category = "community",
+            read = true,
+            createdAt = now.minus(1, ChronoUnit.DAYS).toString(),
+            deepLink = "event:event_2",
+        ),
+        AppNotification(
+            id = "notif_6",
+            userId = "user_1",
+            title = "Community reward unlocked",
+            body = "You hit 5 Clean Park points in Surry Hills Dog Parents.",
+            category = "community",
+            read = false,
+            createdAt = now.minus(3, ChronoUnit.DAYS).toString(),
+            deepLink = "group:group_1",
+        ),
+        AppNotification(
+            id = "notif_7",
+            userId = "user_3",
+            title = "Vet spotlight active",
+            body = "Your highlighted vet badge is now live across your listings.",
+            category = "system",
+            read = true,
+            createdAt = now.minus(2, ChronoUnit.DAYS).toString(),
+            deepLink = "profile",
+        ),
+        AppNotification(
+            id = "notif_8",
+            userId = "user_4",
+            title = "Quote request reminder",
+            body = "Please respond to quote request for Tommy Tiny Paws Grooming.",
+            category = "booking",
+            read = false,
+            createdAt = now.minus(44, ChronoUnit.MINUTES).toString(),
+            deepLink = "quote:quote_3",
         ),
     )
-    private var bookingCounter = 1
+    private var bookingCounter = 6
     private var holdCounter = 1
-    private var postCounter = 2
-    private var eventCounter = 2
-    private var groupCounter = 3
-    private var blackoutCounter = 1
-    private var quoteCounter = 1
-    private var vetCoachSessionCounter = 1
-    private var vetVerificationCounter = 1
+    private var postCounter = 10
+    private var eventCounter = 6
+    private var groupCounter = 6
+    private var blackoutCounter = 3
+    private var quoteCounter = 4
+    private var vetCoachSessionCounter = 3
+    private var vetVerificationCounter = 3
+    private var moderationReportCounter = 1
+    private val blockedUsersByUser = mutableMapOf<String, MutableSet<String>>()
+    private val moderationReports = mutableListOf<CommunityReport>()
+    private val analyticsEvents = mutableListOf<Pair<Instant, CommunityAnalyticsEventCreateRequest>>()
+
+    private fun derivePostOwner(post: CommunityPost): String {
+        val explicit = post.createdBy?.trim().orEmpty()
+        if (explicit.isNotEmpty()) return explicit
+        val slot = kotlin.math.abs(post.id.hashCode()) % 4
+        return "user_${slot + 1}"
+    }
+
+    private fun suburbCenter(suburb: String): Pair<Double, Double>? = when (suburb.lowercase()) {
+        "surry hills" -> -33.8886 to 151.2094
+        "newtown" -> -33.8981 to 151.1742
+        "redfern" -> -33.8928 to 151.2040
+        else -> null
+    }
+
+    private fun withDerivedPostFields(post: CommunityPost): CommunityPost {
+        val owner = derivePostOwner(post)
+        if (post.latitude != null && post.longitude != null && post.createdBy != null) {
+            return post
+        }
+        val center = suburbCenter(post.suburb)
+        val lat = post.latitude ?: center?.first
+        val lng = post.longitude ?: center?.second
+        return post.copy(
+            createdBy = owner,
+            latitude = lat,
+            longitude = lng,
+        )
+    }
 
     override suspend fun getProviders(
         category: String?,
@@ -937,13 +1624,11 @@ class MockApiService private constructor() : ApiService {
             memberCount = members.size,
             ownerUserId = invite.inviterUserId,
         ).also { groups += it }
-        if (group != null) {
-            val idx = groups.indexOfFirst { it.id == group.id }
-            if (idx >= 0) {
-                groups[idx] = group.copy(memberCount = members.size)
-            } else {
-                groups += group.copy(memberCount = members.size)
-            }
+        val idx = groups.indexOfFirst { it.id == group.id }
+        if (idx >= 0) {
+            groups[idx] = group.copy(memberCount = members.size)
+        } else {
+            groups += group.copy(memberCount = members.size)
         }
         applyGroupGrowthReward(
             groupId = invite.groupId,
@@ -1017,34 +1702,235 @@ class MockApiService private constructor() : ApiService {
 
     override suspend fun getPosts(
         suburb: String?,
+        postType: String?,
         userId: String?,
         query: String?,
         sortBy: String?,
+        alertType: String?,
+        alertStatus: String?,
+        openOnly: Boolean?,
+        recentHours: Int?,
+        centerLat: Double?,
+        centerLng: Double?,
+        maxDistanceKm: Double?,
     ): List<CommunityPost> {
-        val filtered = posts.filter { post ->
+        val blocked = userId?.let { blockedUsersByUser[it].orEmpty() }.orEmpty()
+        val cutoff = recentHours?.let { Instant.now().minus(it.toLong(), ChronoUnit.HOURS) }
+        val filtered = posts.map { post -> withDerivedPostFields(post) }.filter { post ->
+            val owner = derivePostOwner(post)
             val matchesSuburb = suburb.isNullOrBlank() || post.suburb.equals(suburb, ignoreCase = true)
+            val matchesPostType = postType.isNullOrBlank() || post.type == postType
+            val matchesAlertType = alertType.isNullOrBlank() || post.alertType.equals(alertType, ignoreCase = true)
+            val matchesAlertStatus = alertStatus.isNullOrBlank() || post.alertStatus.equals(alertStatus, ignoreCase = true)
+            val matchesOpenOnly = openOnly != true || post.type != "lost_found" || (post.alertStatus ?: "open") == "open"
+            val matchesRecency = cutoff == null || runCatching { Instant.parse(post.createdAt.orEmpty()) }.getOrNull()?.isAfter(cutoff) == true
             val matchesQuery = query.isNullOrBlank() ||
                 post.title.contains(query, ignoreCase = true) ||
                 post.body.contains(query, ignoreCase = true)
-            matchesSuburb && matchesQuery
+            val visibleForViewer = owner !in blocked
+            matchesSuburb && matchesPostType && matchesAlertType && matchesAlertStatus && matchesOpenOnly && matchesRecency && matchesQuery && visibleForViewer
+        }
+        val distanceFiltered = if (maxDistanceKm != null && centerLat != null && centerLng != null) {
+            filtered.filter { post ->
+                val lat = post.latitude ?: return@filter false
+                val lng = post.longitude ?: return@filter false
+                distanceKm(centerLat, centerLng, lat, lng) <= maxDistanceKm
+            }
+        } else {
+            filtered
         }
         return when (sortBy) {
-            "newest" -> filtered.sortedByDescending { it.createdAt.orEmpty() }
-            else -> filtered
+            "newest" -> distanceFiltered.sortedByDescending { it.createdAt.orEmpty() }
+            "lost_found" -> distanceFiltered
+                .filter { it.type == "lost_found" }
+                .sortedWith(
+                    compareBy<CommunityPost> { post -> (post.alertStatus ?: "open") != "open" }
+                        .thenByDescending { it.createdAt.orEmpty() },
+                )
+            else -> distanceFiltered
         }
     }
 
     override suspend fun createPost(payload: CommunityPostCreate): CommunityPost {
+        val owner = payload.userId?.takeIf { it.isNotBlank() } ?: "guest_user"
         val created = CommunityPost(
             id = "post_${postCounter++}",
             type = payload.type,
+            createdBy = owner,
             title = payload.title,
             body = payload.body,
             suburb = payload.suburb,
             createdAt = Instant.now().toString(),
+            alertType = payload.alertType,
+            alertStatus = if (payload.type == "lost_found") "open" else null,
+            petName = payload.petName,
+            petTraits = payload.petTraits,
+            lastSeenAt = payload.lastSeenAt,
+            lastSeenLocation = payload.lastSeenLocation,
+            contactPref = payload.contactPref,
+            photoUrls = payload.photoUrls,
+            latitude = payload.latitude,
+            longitude = payload.longitude,
+            resolvedAt = null,
+            resolvedNote = null,
+            followUpDueAt = if (payload.type == "lost_found") Instant.now().plus(12, ChronoUnit.HOURS).toString() else null,
+            expiresAt = if (payload.type == "lost_found") Instant.now().plus(72, ChronoUnit.HOURS).toString() else null,
         )
-        posts.add(0, created)
-        return created
+        val enriched = withDerivedPostFields(created)
+        posts.add(0, enriched)
+        return enriched
+    }
+
+    override suspend fun resolvePost(postId: String, payload: CommunityPostResolveRequest): CommunityPost {
+        val postIndex = posts.indexOfFirst { post -> post.id == postId }
+        if (postIndex < 0) error("Post not found: $postId")
+        val current = withDerivedPostFields(posts[postIndex])
+        if (current.type != "lost_found") error("Only lost/found posts can be resolved")
+        val requester = payload.requesterUserId?.takeIf { it.isNotBlank() } ?: "guest_user"
+        if (derivePostOwner(current) != requester) error("Only post owner can resolve this alert")
+        val updated = current.copy(
+            alertStatus = payload.status,
+            resolvedAt = Instant.now().toString(),
+            resolvedNote = payload.note.ifBlank { null },
+        )
+        posts[postIndex] = updated
+        return updated
+    }
+
+    override suspend fun updatePost(postId: String, payload: CommunityPostUpdateRequest): CommunityPost {
+        val index = posts.indexOfFirst { it.id == postId }
+        if (index < 0) error("Post not found: $postId")
+        val current = withDerivedPostFields(posts[index])
+        val requester = payload.requesterUserId?.takeIf { it.isNotBlank() } ?: "guest_user"
+        if (derivePostOwner(current) != requester) error("Only post owner can update this post")
+        val updated = current.copy(
+            title = payload.title?.takeIf { it.isNotBlank() } ?: current.title,
+            body = payload.body?.takeIf { it.isNotBlank() } ?: current.body,
+            petName = payload.petName ?: current.petName,
+            petTraits = payload.petTraits ?: current.petTraits,
+            lastSeenAt = when {
+                payload.clearLastSeenAt -> null
+                payload.lastSeenAt != null -> payload.lastSeenAt
+                else -> current.lastSeenAt
+            },
+            lastSeenLocation = payload.lastSeenLocation ?: current.lastSeenLocation,
+            contactPref = payload.contactPref ?: current.contactPref,
+            photoUrls = payload.photoUrls ?: current.photoUrls,
+            latitude = payload.latitude ?: current.latitude,
+            longitude = payload.longitude ?: current.longitude,
+        )
+        posts[index] = updated
+        return updated
+    }
+
+    override suspend fun deletePost(postId: String, requesterUserId: String): Map<String, String> {
+        val index = posts.indexOfFirst { it.id == postId }
+        if (index < 0) error("Post not found: $postId")
+        val current = withDerivedPostFields(posts[index])
+        if (derivePostOwner(current) != requesterUserId) error("Only post owner can delete this post")
+        posts.removeAt(index)
+        return mapOf("status" to "deleted", "post_id" to postId)
+    }
+
+    override suspend fun uploadCommunityPostPhoto(payload: CommunityPostPhotoUploadRequest): CommunityPostPhotoUploadResponse {
+        val size = runCatching { java.util.Base64.getDecoder().decode(payload.dataBase64).size }.getOrDefault(0)
+        return CommunityPostPhotoUploadResponse(
+            url = "https://mock.barkwise.app/uploads/${payload.requesterUserId}/${payload.filename}",
+            contentType = payload.contentType,
+            sizeBytes = size,
+        )
+    }
+
+    override suspend fun createModerationReport(payload: CommunityReportCreateRequest): CommunityReport {
+        val report = CommunityReport(
+            id = "report_${moderationReportCounter++}",
+            reporterUserId = payload.reporterUserId,
+            targetType = payload.targetType,
+            targetId = payload.targetId,
+            reason = payload.reason,
+            details = payload.details,
+            status = "pending",
+            createdAt = Instant.now().toString(),
+        )
+        moderationReports.add(0, report)
+        return report
+    }
+
+    override suspend fun getModerationReports(requesterUserId: String, includeResolved: Boolean): List<CommunityReport> {
+        val adminUsers = setOf("admin", "user_1", "user_3")
+        if (requesterUserId !in adminUsers) error("Only moderators can view report queue")
+        return if (includeResolved) moderationReports.toList() else moderationReports.filter { it.status == "pending" }
+    }
+
+    override suspend fun resolveModerationReport(
+        reportId: String,
+        payload: CommunityReportResolveRequest,
+    ): CommunityReport {
+        val index = moderationReports.indexOfFirst { it.id == reportId }
+        if (index < 0) error("Report not found: $reportId")
+        val updated = moderationReports[index].copy(
+            status = payload.action,
+            resolvedAt = Instant.now().toString(),
+            resolvedBy = payload.requesterUserId,
+            resolutionNote = payload.note.ifBlank { null },
+        )
+        moderationReports[index] = updated
+        return updated
+    }
+
+    override suspend fun blockUser(payload: CommunityBlockUserRequest): CommunityBlockUserResponse {
+        val blocked = blockedUsersByUser.getOrPut(payload.requesterUserId) { mutableSetOf() }
+        blocked += payload.targetUserId
+        return CommunityBlockUserResponse(
+            requesterUserId = payload.requesterUserId,
+            blockedUserIds = blocked.toList().sorted(),
+        )
+    }
+
+    override suspend fun unblockUser(requesterUserId: String, targetUserId: String): CommunityBlockUserResponse {
+        val blocked = blockedUsersByUser.getOrPut(requesterUserId) { mutableSetOf() }
+        blocked -= targetUserId
+        return CommunityBlockUserResponse(
+            requesterUserId = requesterUserId,
+            blockedUserIds = blocked.toList().sorted(),
+        )
+    }
+
+    override suspend fun getBlockedUsers(requesterUserId: String): CommunityBlockUserResponse {
+        val blocked = blockedUsersByUser.getOrPut(requesterUserId) { mutableSetOf() }
+        return CommunityBlockUserResponse(
+            requesterUserId = requesterUserId,
+            blockedUserIds = blocked.toList().sorted(),
+        )
+    }
+
+    override suspend fun createCommunityAnalyticsEvent(payload: CommunityAnalyticsEventCreateRequest): Map<String, String> {
+        analyticsEvents += Instant.now() to payload
+        return mapOf("status" to "ok")
+    }
+
+    override suspend fun getCommunityFunnel(requesterUserId: String?, windowHours: Int): CommunityFunnelMetrics {
+        val cutoff = Instant.now().minus(windowHours.toLong(), ChronoUnit.HOURS)
+        val recent = analyticsEvents.filter { (createdAt, _) -> createdAt.isAfter(cutoff) }.map { it.second }
+        fun count(name: String): Int = recent.count { it.event == name }
+        val attempts = count("lost_found_create_attempted")
+        val successes = count("lost_found_create_succeeded")
+        val conversion = if (attempts > 0) (successes * 100.0) / attempts else 0.0
+        return CommunityFunnelMetrics(
+            windowHours = windowHours,
+            communityFeedViews = count("community_feed_viewed"),
+            lostFoundFeedViews = count("lost_found_feed_viewed"),
+            lostFoundCreateAttempts = attempts,
+            lostFoundCreateSuccesses = successes,
+            lostFoundResolutionActions = count("lost_found_resolved"),
+            moderationReportsSubmitted = count("moderation_report_submitted"),
+            blocksSubmitted = count("community_block_submitted"),
+            lostFoundCreateConversionPct = conversion,
+        )
+    }
+
+    override suspend fun createCommunityDiagnosticEvent(payload: CommunityDiagnosticEventCreateRequest): Map<String, String> {
+        return mapOf("status" to "ok")
     }
 
     override suspend fun getEvents(suburb: String?, userId: String?): List<CommunityEvent> {

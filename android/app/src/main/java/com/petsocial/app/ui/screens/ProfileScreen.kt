@@ -20,15 +20,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.petsocial.app.BuildConfig
 import com.petsocial.app.data.CalendarEvent
+import com.petsocial.app.data.CommunityFunnelMetrics
+import com.petsocial.app.data.CommunityReport
 import com.petsocial.app.data.Group
 import com.petsocial.app.data.AppNotification
 import com.petsocial.app.data.ServiceProvider
@@ -53,12 +58,17 @@ import com.petsocial.app.ui.ProfileInfo
 import com.petsocial.app.ui.ProviderBooking
 import com.petsocial.app.ui.ProviderConfig
 import com.petsocial.app.ui.ProviderListing
+import com.petsocial.app.ui.HomeLoadMetrics
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.time.Instant
 import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.time.temporal.ChronoUnit
 
 private data class PendingAction(
     val title: String,
@@ -80,6 +90,18 @@ fun ProfileScreen(
     calendarEvents: List<CalendarEvent>,
     selectedCalendarRole: String,
     notifications: List<AppNotification>,
+    latestHomeLoadMetrics: HomeLoadMetrics?,
+    homeLoadHistory: List<HomeLoadMetrics>,
+    acknowledgedCommunityNotificationIds: Set<String>,
+    acknowledgedMessageNotificationIds: Set<String>,
+    selectedNotificationFilter: String,
+    notifyFollowedGroupAlerts: Boolean,
+    notifySavedPostUpdates: Boolean,
+    notifySafetyAlerts: Boolean,
+    isCommunityModerator: Boolean,
+    moderationReports: List<CommunityReport>,
+    communityFunnelMetrics: CommunityFunnelMetrics?,
+    blockedUserIds: List<String>,
     onOpenCommunityGroup: (String) -> Unit,
     onSaveProfile: (ProfileInfo) -> Unit,
     onCreateProviderListing: (
@@ -104,6 +126,14 @@ fun ProfileScreen(
     onCancelProviderBooking: (String) -> Unit,
     onCalendarRoleChange: (String) -> Unit,
     onMarkNotificationRead: (String) -> Unit,
+    onMarkNotificationIdsRead: (List<String>) -> Unit,
+    onMarkAllNotificationsRead: () -> Unit,
+    onClearLocalNotificationIds: (List<String>) -> Unit,
+    onClearLocalNotifications: () -> Unit,
+    onOpenNotificationDeepLink: (AppNotification) -> Unit,
+    onUpdateNotificationPreferences: (followedGroupAlerts: Boolean, savedPostUpdates: Boolean, safetyAlerts: Boolean) -> Unit,
+    onResolveModerationReport: (reportId: String, action: String, note: String) -> Unit,
+    onUnblockCommunityUser: (targetUserId: String) -> Unit,
     onSwitchAccount: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -126,12 +156,14 @@ fun ProfileScreen(
     var calendarExpanded by rememberSaveable { mutableStateOf(false) }
     var testMatrixExpanded by rememberSaveable { mutableStateOf(false) }
     var notificationsExpanded by rememberSaveable { mutableStateOf(false) }
+    var communitySafetyExpanded by rememberSaveable { mutableStateOf(false) }
     var appShareExpanded by rememberSaveable { mutableStateOf(false) }
     var testAccountExpanded by rememberSaveable { mutableStateOf(false) }
     var showAccountPicker by rememberSaveable { mutableStateOf(false) }
     var showProfileEditor by rememberSaveable { mutableStateOf(false) }
     var showCreateListingDialog by rememberSaveable { mutableStateOf(false) }
     var showEditListingDialog by rememberSaveable { mutableStateOf(false) }
+    var collapsedNotificationBuckets by rememberSaveable { mutableStateOf(setOf<String>()) }
     var listingName by rememberSaveable { mutableStateOf("") }
     var listingCategory by rememberSaveable { mutableStateOf("dog_walking") }
     var listingSuburb by rememberSaveable(profileInfo.suburb) { mutableStateOf(profileInfo.suburb) }
@@ -145,6 +177,7 @@ fun ProfileScreen(
     var editingListingImageUrls by rememberSaveable { mutableStateOf("") }
 
     var pendingAction by remember { mutableStateOf<PendingAction?>(null) }
+    var notificationFilter by rememberSaveable { mutableStateOf("all") }
     val testAccounts = listOf(
         "user_1" to "Sesame",
         "user_2" to "Snowy",
@@ -159,8 +192,30 @@ fun ProfileScreen(
     val incomingProviderBookings = remember(providerBookings) {
         providerBookings.filter { it.status in incomingStatuses }
     }
+    val filteredNotifications = remember(notifications, notificationFilter) {
+        notifications.filter { notification ->
+            when (notificationFilter) {
+                "community" -> notification.category.startsWith("community")
+                "messages" -> notification.category.contains("message")
+                "safety" -> notification.category.contains("safety") || notification.category.contains("moderation")
+                else -> true
+            }
+        }
+    }
+    val groupedNotifications = remember(filteredNotifications) {
+        val limited = filteredNotifications.take(20)
+        NotificationTimeBucket.entries.associateWith { bucket ->
+            limited.filter { notification -> notificationBucketFor(notification.createdAt) == bucket }
+        }
+    }
     val managedProviderBookings = remember(providerBookings) {
         providerBookings.filterNot { it.status in incomingStatuses }
+    }
+    LaunchedEffect(selectedNotificationFilter) {
+        notificationFilter = when (selectedNotificationFilter) {
+            "community", "messages", "safety" -> selectedNotificationFilter
+            else -> "all"
+        }
     }
     @OptIn(ExperimentalFoundationApi::class)
     LazyColumn(
@@ -206,6 +261,55 @@ fun ProfileScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        latestHomeLoadMetrics?.let { metrics ->
+                            Text(
+                                "Load ${metrics.totalMs}ms (fetch ${metrics.fetchMs}ms, apply ${metrics.applyMs}ms) • ${metrics.source}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (homeLoadHistory.isNotEmpty()) {
+                            val totals = homeLoadHistory.map { it.totalMs.toDouble() }
+                            val p50 = percentile(totals, 0.50)
+                            val p95 = percentile(totals, 0.95)
+                            val latestTotalMs = latestHomeLoadMetrics?.totalMs
+                            Text(
+                                "Perf history (${homeLoadHistory.size} loads): p50 ${p50.toLong()}ms • p95 ${p95.toLong()}ms",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            val trendLabel = latestTotalMs?.let { latest ->
+                                val baseline = recentBaselineMedian(homeLoadHistory)
+                                val trend = classifyTrend(latestMs = latest.toDouble(), baselineMs = baseline)
+                                "Trend: ${trend.label} (${trend.percentDeltaLabel})"
+                            }
+                            if (trendLabel != null) {
+                                Text(
+                                    trendLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            val sparkline = homeLoadSparkline(homeLoadHistory)
+                            if (sparkline.isNotBlank()) {
+                                Text(
+                                    "Recent: $sparkline",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (homeLoadHistory.size >= 5 && latestTotalMs != null && latestTotalMs > p95) {
+                                AssistChip(
+                                    onClick = {},
+                                    label = {
+                                        Text(
+                                            "Slow load warning: ${latestTotalMs}ms > p95 ${p95.toLong()}ms",
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    },
+                                )
+                            }
+                        }
                         Button(onClick = { showProfileEditor = true }) {
                             Text("Edit my profile")
                         }
@@ -222,22 +326,193 @@ fun ProfileScreen(
             )
         }
         if (notificationsExpanded) {
-            if (notifications.isEmpty()) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Notification preferences", style = MaterialTheme.typography.titleSmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = notifyFollowedGroupAlerts,
+                                onClick = {
+                                    onUpdateNotificationPreferences(
+                                        !notifyFollowedGroupAlerts,
+                                        notifySavedPostUpdates,
+                                        notifySafetyAlerts,
+                                    )
+                                },
+                                label = { Text("Followed groups") },
+                            )
+                            FilterChip(
+                                selected = notifySavedPostUpdates,
+                                onClick = {
+                                    onUpdateNotificationPreferences(
+                                        notifyFollowedGroupAlerts,
+                                        !notifySavedPostUpdates,
+                                        notifySafetyAlerts,
+                                    )
+                                },
+                                label = { Text("Saved alerts") },
+                            )
+                            FilterChip(
+                                selected = notifySafetyAlerts,
+                                onClick = {
+                                    onUpdateNotificationPreferences(
+                                        notifyFollowedGroupAlerts,
+                                        notifySavedPostUpdates,
+                                        !notifySafetyAlerts,
+                                    )
+                                },
+                                label = { Text("Safety") },
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = notificationFilter == "all",
+                                onClick = { notificationFilter = "all" },
+                                label = { Text("All") },
+                            )
+                            FilterChip(
+                                selected = notificationFilter == "community",
+                                onClick = { notificationFilter = "community" },
+                                label = { Text("Community") },
+                            )
+                            FilterChip(
+                                selected = notificationFilter == "messages",
+                                onClick = { notificationFilter = "messages" },
+                                label = { Text("Messages") },
+                            )
+                            FilterChip(
+                                selected = notificationFilter == "safety",
+                                onClick = { notificationFilter = "safety" },
+                                label = { Text("Safety") },
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = onMarkAllNotificationsRead) {
+                                Text("Mark local read")
+                            }
+                            OutlinedButton(onClick = onClearLocalNotifications) {
+                                Text("Clear local")
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    collapsedNotificationBuckets = NotificationTimeBucket.entries
+                                        .map { bucket -> bucket.name }
+                                        .toSet()
+                                },
+                            ) {
+                                Text("Collapse all")
+                            }
+                            OutlinedButton(onClick = { collapsedNotificationBuckets = emptySet() }) {
+                                Text("Expand all")
+                            }
+                        }
+                    }
+                }
+            }
+            if (filteredNotifications.isEmpty()) {
                 item { Text("No notifications yet", style = MaterialTheme.typography.bodySmall) }
             } else {
-                items(notifications.take(20)) { notification ->
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(notification.title, style = MaterialTheme.typography.titleSmall)
-                            Text(notification.body, style = MaterialTheme.typography.bodySmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                StatusBadge(if (notification.read) "read" else "unread")
-                                if (!notification.read) {
-                                    TextButton(onClick = { onMarkNotificationRead(notification.id) }) {
-                                        Text("Mark read")
+                NotificationTimeBucket.entries.forEach { bucket ->
+                    val bucketNotifications = groupedNotifications[bucket].orEmpty()
+                    if (bucketNotifications.isNotEmpty()) {
+                        val unreadInBucket = bucketNotifications.count { notification -> !notification.read }
+                        val unreadIdsInBucket = bucketNotifications
+                            .asSequence()
+                            .filter { notification -> !notification.read }
+                            .map { notification -> notification.id }
+                            .toList()
+                        val localIdsInBucket = bucketNotifications
+                            .asSequence()
+                            .map { notification -> notification.id }
+                            .filter { id -> id.startsWith("local:") }
+                            .toList()
+                        val isCollapsed = bucket.name in collapsedNotificationBuckets
+                        stickyHeader {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surface),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "${bucket.label} ($unreadInBucket unread)",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                TextButton(
+                                    onClick = {
+                                        collapsedNotificationBuckets = if (isCollapsed) {
+                                            collapsedNotificationBuckets - bucket.name
+                                        } else {
+                                            collapsedNotificationBuckets + bucket.name
+                                        }
+                                    },
+                                ) {
+                                    Text(if (isCollapsed) "Show" else "Hide")
+                                }
+                                TextButton(
+                                    enabled = unreadIdsInBucket.isNotEmpty(),
+                                    onClick = { onMarkNotificationIdsRead(unreadIdsInBucket) },
+                                ) {
+                                    Text("Mark read")
+                                }
+                                TextButton(
+                                    enabled = localIdsInBucket.isNotEmpty(),
+                                    onClick = { onClearLocalNotificationIds(localIdsInBucket) },
+                                ) {
+                                    Text("Clear local")
+                                }
+                            }
+                        }
+                        if (!isCollapsed) {
+                            items(bucketNotifications, key = { notification -> notification.id }) { notification ->
+                            val isCommunityNotification = notification.category.startsWith("community") || notification.category.contains("group")
+                            val isMessageNotification = notification.category.contains("message")
+                            val isAcknowledged = when {
+                                isCommunityNotification -> notification.id in acknowledgedCommunityNotificationIds
+                                isMessageNotification -> notification.id in acknowledgedMessageNotificationIds
+                                else -> notification.read
+                            }
+                            val isNew = !notification.read && !isAcknowledged
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        if (isNew) {
+                                            Spacer(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .background(
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        shape = RoundedCornerShape(99.dp),
+                                                    ),
+                                            )
+                                        }
+                                        Text(notification.title, style = MaterialTheme.typography.titleSmall)
+                                    }
+                                    Text(notification.body, style = MaterialTheme.typography.bodySmall)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        StatusBadge(if (notification.read) "read" else "unread")
+                                        if (!notification.deepLink.isNullOrBlank()) {
+                                            TextButton(onClick = { onOpenNotificationDeepLink(notification) }) {
+                                                Text("Open")
+                                            }
+                                        }
+                                        if (!notification.read) {
+                                            TextButton(onClick = { onMarkNotificationRead(notification.id) }) {
+                                                Text("Mark read")
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -298,6 +573,127 @@ fun ProfileScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.clickable { onOpenCommunityGroup(group.id) },
                     )
+                }
+            }
+        }
+
+        item {
+            val sectionCount = blockedUserIds.size + if (isCommunityModerator) moderationReports.size else 0
+            SectionHeader(
+                title = "Community safety ($sectionCount)",
+                expanded = communitySafetyExpanded,
+                onToggle = { communitySafetyExpanded = !communitySafetyExpanded },
+            )
+        }
+        if (communitySafetyExpanded) {
+            if (blockedUserIds.isEmpty()) {
+                item { Text("No blocked users", style = MaterialTheme.typography.bodySmall) }
+            } else {
+                items(blockedUserIds) { blockedUserId ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "Blocked: ${accountDisplayName(blockedUserId)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            TextButton(onClick = { onUnblockCommunityUser(blockedUserId) }) {
+                                Text("Unblock")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (isCommunityModerator) {
+                item {
+                    Text(
+                        "Moderation queue",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
+                if (moderationReports.isEmpty()) {
+                    item { Text("No open reports", style = MaterialTheme.typography.bodySmall) }
+                } else {
+                    items(moderationReports) { report ->
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    "${report.targetType.replace("_", " ")} • ${report.reason}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Text(
+                                    "Reporter: ${accountDisplayName(report.reporterUserId)} • ${report.createdAt.toLocalDateString()}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (report.details.isNotBlank()) {
+                                    Text(report.details, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = {
+                                            onResolveModerationReport(
+                                                report.id,
+                                                "action_taken",
+                                                "Handled by moderator from profile queue",
+                                            )
+                                        },
+                                    ) {
+                                        Text("Action taken")
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            onResolveModerationReport(
+                                                report.id,
+                                                "dismissed",
+                                                "Dismissed by moderator from profile queue",
+                                            )
+                                        },
+                                    ) {
+                                        Text("Dismiss")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                communityFunnelMetrics?.let { funnel ->
+                    item {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text("Community funnel (${funnel.windowHours}h)", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "Feed views: ${funnel.communityFeedViews} • Lost/found views: ${funnel.lostFoundFeedViews}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    "Create attempts: ${funnel.lostFoundCreateAttempts} • Successes: ${funnel.lostFoundCreateSuccesses} • Conversion: ${"%.1f".format(funnel.lostFoundCreateConversionPct)}%",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    "Resolved alerts: ${funnel.lostFoundResolutionActions} • Reports: ${funnel.moderationReportsSubmitted} • Blocks: ${funnel.blocksSubmitted}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1186,4 +1582,84 @@ private fun accountPhotoUrl(userId: String): String = when (userId) {
     "user_3" -> "https://loremflickr.com/640/640/cavoodle,dog?lock=203"
     "user_4" -> "https://loremflickr.com/640/640/brown,toy,dog,cavoodle?lock=204"
     else -> "https://images.unsplash.com/photo-1517849845537-4d257902454a"
+}
+
+private enum class NotificationTimeBucket(val label: String) {
+    Today("Today"),
+    ThisWeek("This week"),
+    Earlier("Earlier"),
+}
+
+private fun notificationBucketFor(createdAt: String): NotificationTimeBucket {
+    val date = parseNotificationLocalDate(createdAt) ?: return NotificationTimeBucket.Earlier
+    val today = LocalDate.now()
+    return when {
+        date == today -> NotificationTimeBucket.Today
+        ChronoUnit.DAYS.between(date, today) in 1..7 -> NotificationTimeBucket.ThisWeek
+        else -> NotificationTimeBucket.Earlier
+    }
+}
+
+private fun parseNotificationLocalDate(raw: String): LocalDate? {
+    return runCatching {
+        Instant.parse(raw)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+    }.recoverCatching {
+        OffsetDateTime.parse(raw)
+            .atZoneSameInstant(ZoneId.systemDefault())
+            .toLocalDate()
+    }.getOrNull()
+}
+
+private fun percentile(values: List<Double>, quantile: Double): Double {
+    if (values.isEmpty()) return 0.0
+    val sorted = values.sorted()
+    val q = quantile.coerceIn(0.0, 1.0)
+    val position = (sorted.size - 1) * q
+    val lowerIndex = kotlin.math.floor(position).toInt()
+    val upperIndex = kotlin.math.ceil(position).toInt()
+    if (lowerIndex == upperIndex) return sorted[lowerIndex]
+    val weight = position - lowerIndex
+    return (sorted[lowerIndex] * (1.0 - weight)) + (sorted[upperIndex] * weight)
+}
+
+private data class LoadTrend(
+    val label: String,
+    val percentDeltaLabel: String,
+)
+
+private fun recentBaselineMedian(history: List<HomeLoadMetrics>): Double {
+    if (history.size <= 1) return history.lastOrNull()?.totalMs?.toDouble() ?: 0.0
+    val withoutLatest = history.dropLast(1)
+    return percentile(withoutLatest.map { metric -> metric.totalMs.toDouble() }, 0.50)
+}
+
+private fun classifyTrend(latestMs: Double, baselineMs: Double): LoadTrend {
+    if (baselineMs <= 0.0) return LoadTrend(label = "stable", percentDeltaLabel = "0%")
+    val deltaPct = ((latestMs - baselineMs) / baselineMs) * 100.0
+    val rounded = kotlin.math.round(deltaPct)
+    val absRounded = kotlin.math.abs(rounded).toLong()
+    val signedLabel = if (rounded > 0) "+${absRounded}%" else "${rounded.toLong()}%"
+    val label = when {
+        deltaPct <= -8.0 -> "improving"
+        deltaPct >= 8.0 -> "regressing"
+        else -> "stable"
+    }
+    return LoadTrend(label = label, percentDeltaLabel = signedLabel)
+}
+
+private fun homeLoadSparkline(history: List<HomeLoadMetrics>): String {
+    if (history.isEmpty()) return ""
+    val recent = history.takeLast(8).map { metric -> metric.totalMs.toDouble() }
+    val min = recent.minOrNull() ?: return ""
+    val max = recent.maxOrNull() ?: return ""
+    if (recent.size == 1 || max <= min) return recent.joinToString(" ") { value -> "${value.toLong()}ms" }
+    val levels = "▁▂▃▄▅▆▇█"
+    val bars = recent.map { value ->
+        val normalized = ((value - min) / (max - min)).coerceIn(0.0, 1.0)
+        val index = kotlin.math.round(normalized * (levels.length - 1)).toInt()
+        levels[index]
+    }.joinToString("")
+    return "$bars (${recent.last().toLong()}ms)"
 }

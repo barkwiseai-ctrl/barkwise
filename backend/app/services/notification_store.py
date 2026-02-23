@@ -10,7 +10,49 @@ from app.services.push_sender import push_sender
 class NotificationStore:
     def __init__(self):
         self._lock = Lock()
-        self._notifications: List[NotificationRecord] = []
+        now = datetime.now(timezone.utc)
+        self._notifications: List[NotificationRecord] = [
+            NotificationRecord(
+                id="ntf_seed_1",
+                user_id="user_2",
+                title="Quote response received",
+                body="A provider accepted your latest quote request.",
+                category="booking",
+                read=False,
+                created_at=(now).isoformat(),
+                deep_link="quote:qr_seed_2",
+            ),
+            NotificationRecord(
+                id="ntf_seed_2",
+                user_id="user_1",
+                title="New booking request",
+                body="Milo requested a 09:00 grooming slot.",
+                category="booking",
+                read=False,
+                created_at=(now).isoformat(),
+                deep_link="booking:bk_seed_1",
+            ),
+            NotificationRecord(
+                id="ntf_seed_3",
+                user_id="user_3",
+                title="Community reward unlocked",
+                body="Your group advanced in Clean Park Streak.",
+                category="community",
+                read=False,
+                created_at=(now).isoformat(),
+                deep_link="group:g_user_dogpark_surry",
+            ),
+            NotificationRecord(
+                id="ntf_seed_4",
+                user_id="user_4",
+                title="Listing reviewed by vet",
+                body="Your grooming listing was marked Vet-Checked.",
+                category="booking",
+                read=True,
+                created_at=(now).isoformat(),
+                deep_link="provider:svc_7",
+            ),
+        ]
         self._device_tokens: Dict[str, set[str]] = {}
 
     def register_device_token(self, user_id: str, device_token: str) -> None:

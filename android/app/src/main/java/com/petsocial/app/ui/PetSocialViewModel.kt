@@ -11,7 +11,10 @@ import com.petsocial.app.data.ChatTurn
 import com.petsocial.app.data.CalendarEvent
 import com.petsocial.app.data.BookingResponse
 import com.petsocial.app.data.CommunityEvent
+import com.petsocial.app.data.CommunityFunnelMetrics
 import com.petsocial.app.data.CommunityPost
+import com.petsocial.app.data.CommunityPostCreate
+import com.petsocial.app.data.CommunityReport
 import com.petsocial.app.data.Group
 import com.petsocial.app.data.GroupInvite
 import com.petsocial.app.data.HomeCacheSnapshot
@@ -55,6 +58,8 @@ data class MessageThread(
     val participantAccountLabel: String,
     val lastMessage: String,
     val unreadCount: Int = 0,
+    val isMuted: Boolean = false,
+    val isPinned: Boolean = false,
 )
 
 data class DirectMessage(
@@ -142,6 +147,23 @@ data class BarkThread(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
+data class HomeLoadMetrics(
+    val source: String,
+    val fetchMs: Long,
+    val applyMs: Long,
+    val totalMs: Long,
+    val recordedAt: Long = System.currentTimeMillis(),
+)
+
+data class CommunityWeatherSnapshot(
+    val suburb: String,
+    val temperatureC: Int,
+    val condition: String,
+    val rainChancePercent: Int,
+    val windKph: Int,
+    val updatedAtLabel: String,
+)
+
 data class UiState(
     val providers: List<ServiceProvider> = emptyList(),
     val nearbyPetBusinesses: List<NearbyPetBusiness> = emptyList(),
@@ -168,13 +190,22 @@ data class UiState(
     val messageThreads: List<MessageThread> = emptyList(),
     val selectedMessageThreadId: String? = null,
     val directMessages: List<DirectMessage> = emptyList(),
+    val readDirectMessageIds: Set<String> = emptySet(),
+    val mutedMessageThreadIds: Set<String> = emptySet(),
+    val pinnedMessageThreadIds: Set<String> = emptySet(),
     val streamingAssistantText: String = "",
     val selectedTab: AppTab = AppTab.Services,
+    val profileNotificationFilter: String = "all",
     val selectedCategory: String? = null,
     val servicesViewMode: String = "list",
     val servicesSearchQuery: String = "",
     val servicesSortBy: String = "relevance",
     val postsSortBy: String = "relevance",
+    val communityOpenOnly: Boolean = false,
+    val communityRecentHours: Int? = null,
+    val savedCommunityPostIds: Set<String> = emptySet(),
+    val mutedCommunityKeywords: Set<String> = emptySet(),
+    val followedGroupIds: Set<String> = emptySet(),
     val selectedCommunityGroupId: String? = null,
     val selectedSuburb: String = "Surry Hills",
     val selectedRangeCenter: String = "manual",
@@ -203,7 +234,34 @@ data class UiState(
     val toastMessage: String? = null,
     val loading: Boolean = false,
     val error: String? = null,
+    val latestHomeLoadMetrics: HomeLoadMetrics? = null,
+    val homeLoadHistory: List<HomeLoadMetrics> = emptyList(),
     val notifications: List<AppNotification> = emptyList(),
+    val readLocalNotificationIds: Set<String> = emptySet(),
+    val acknowledgedCommunityNotificationIds: Set<String> = emptySet(),
+    val acknowledgedMessageNotificationIds: Set<String> = emptySet(),
+    val notifyFollowedGroupAlerts: Boolean = true,
+    val notifySavedPostUpdates: Boolean = true,
+    val notifySafetyAlerts: Boolean = true,
+    val blockedUserIds: List<String> = emptyList(),
+    val moderationReports: List<CommunityReport> = emptyList(),
+    val communityFunnelMetrics: CommunityFunnelMetrics? = null,
+    val isCommunityModerator: Boolean = false,
+    val communityWeather: CommunityWeatherSnapshot = CommunityWeatherSnapshot(
+        suburb = "Surry Hills",
+        temperatureC = 22,
+        condition = "Partly cloudy",
+        rainChancePercent = 20,
+        windKph = 12,
+        updatedAtLabel = "Just now (mock)",
+    ),
+    val autoParkCheckInEnabled: Boolean = false,
+    val autoParkCheckInRequireCrowd: Boolean = true,
+    val autoParkCheckInQuorumThreshold: Int = 3,
+    val autoParkCheckInQuorumWindowMinutes: Int = 20,
+    val autoParkCheckInQuorumCount: Int = 0,
+    val lastAutoParkCheckInGroupId: String? = null,
+    val lastAutoParkCheckInAt: String? = null,
 )
 
 private fun accountLabel(userId: String): String = when (userId) {
@@ -217,6 +275,7 @@ private fun accountLabel(userId: String): String = when (userId) {
 private const val TEST_DOG_PARK_GROUP_ID = "g_user_dogpark_surry"
 private val ENABLE_TEST_SEED_DATA = BuildConfig.USE_MOCK_DATA
 private const val STAGING_TEST_SUBURB = "Sunshine West"
+private val COMMUNITY_MODERATOR_IDS = setOf("admin", "user_1", "user_3")
 
 private fun nextActionSwitchHint(
     targetUserId: String?,
@@ -246,6 +305,20 @@ private fun ensureSeedDogParkGroup(
         },
         isAdmin = activeUserId == "user_3",
         pendingRequestCount = if (activeUserId == "user_3") 1 else 0,
+        groupBadges = listOf("Pack Builder Lv2", "Clean Crew"),
+        cooperativeScore = 87,
+        myPackBuilderPoints = when (activeUserId) {
+            "user_1" -> 145
+            "user_2" -> 122
+            "user_3" -> 168
+            else -> 64
+        },
+        myCleanParkPoints = when (activeUserId) {
+            "user_1" -> 54
+            "user_2" -> 48
+            "user_3" -> 73
+            else -> 21
+        },
     )
     return if (existing == null) {
         listOf(seeded) + groups
@@ -345,17 +418,174 @@ private fun ensureSeedProviders(
 
 private fun ensureSeedDogParkPosts(posts: List<CommunityPost>): List<CommunityPost> {
     if (!ENABLE_TEST_SEED_DATA) return posts
-    if (posts.any { it.id == "p_dogpark_seed_1" }) return posts
-    val seeded = listOf(
-        CommunityPost("p_dogpark_seed_1", "group_post", "Dog park check-in: Luna", "Luna joined the dog park crew this week.", "Surry Hills", "2026-02-18T08:00:00Z"),
-        CommunityPost("p_dogpark_seed_2", "group_post", "Dog park check-in: Milo", "Milo joined the sunrise zoomie circle.", "Surry Hills", "2026-02-17T07:00:00Z"),
-        CommunityPost("p_dogpark_seed_3", "group_post", "Dog park check-in: Maple", "Maple joined and made new friends.", "Surry Hills", "2026-02-16T18:00:00Z"),
-        CommunityPost("p_dogpark_seed_4", "group_post", "Dog park check-in: Teddy", "Teddy joined the fetch meetup.", "Surry Hills", "2026-02-15T10:00:00Z"),
-        CommunityPost("p_dogpark_seed_5", "group_post", "Dog park check-in: Nala", "Nala joined the small-dogs social.", "Surry Hills", "2026-02-14T11:15:00Z"),
-        CommunityPost("p_dogpark_seed_6", "group_post", "Dog park check-in: Archie", "Archie joined and loved agility drills.", "Surry Hills", "2026-02-13T17:25:00Z"),
-        CommunityPost("p_dogpark_seed_7", "group_post", "Dog park check-in: Poppy", "Poppy joined the evening play session.", "Surry Hills", "2026-02-12T19:30:00Z"),
+    val seedIds = setOf(
+        "p_dogpark_seed_1",
+        "p_dogpark_seed_2",
+        "p_dogpark_seed_3",
+        "p_dogpark_seed_4",
+        "p_dogpark_seed_5",
+        "p_dogpark_seed_6",
+        "p_dogpark_seed_7",
     )
-    return seeded + posts
+    if (seedIds.all { id -> posts.any { post -> post.id == id } }) return posts
+    val now = Instant.now()
+    val photoPool = fallbackPetPhotos.distinct()
+    val seeded = listOf(
+        CommunityPost(
+            id = "p_dogpark_seed_1",
+            type = "group_post",
+            title = "Photo drop: Sunrise zoomies at Surry Hills",
+            body = "Luna, Milo, and Maple just wrapped six rounds of fetch. Added a few happy faces from this morning run.",
+            suburb = "Surry Hills",
+            createdAt = now.minusSeconds(2_700).toString(),
+            photoUrls = listOf(
+                photoPool[0 % photoPool.size],
+                photoPool[1 % photoPool.size],
+                photoPool[2 % photoPool.size],
+            ),
+        ),
+        CommunityPost(
+            id = "p_dogpark_seed_2",
+            type = "group_post",
+            title = "Live thread: Water-bowl relay happening now",
+            body = "We are on the north lawn setting up shaded water bowls. Join in if you are nearby; extra bowls and poop bags ready.",
+            suburb = "Surry Hills",
+            createdAt = now.minusSeconds(5_400).toString(),
+            photoUrls = listOf(
+                photoPool[3 % photoPool.size],
+                photoPool[4 % photoPool.size],
+            ),
+        ),
+        CommunityPost(
+            id = "p_dogpark_seed_3",
+            type = "group_post",
+            title = "Then vs Now: Teddy's leash confidence",
+            body = "Six weeks ago Teddy froze near bikes. Tonight he stayed calm through the whole park loop with zero pulling.",
+            suburb = "Surry Hills",
+            createdAt = now.minusSeconds(86_400).toString(),
+            photoUrls = listOf(
+                photoPool[5 % photoPool.size],
+                photoPool[6 % photoPool.size],
+            ),
+        ),
+        CommunityPost(
+            id = "p_dogpark_seed_4",
+            type = "group_post",
+            title = "Pupcake birthday recap for Nala",
+            body = "Small-dog circle brought pupcakes, bubble machine, and a calm sniff walk. Thanks everyone for keeping it gentle.",
+            suburb = "Surry Hills",
+            createdAt = now.minusSeconds(129_600).toString(),
+            photoUrls = listOf(
+                photoPool[7 % photoPool.size],
+                photoPool[8 % photoPool.size],
+                photoPool[9 % photoPool.size],
+            ),
+        ),
+        CommunityPost(
+            id = "p_dogpark_seed_5",
+            type = "group_post",
+            title = "Cleanup crew check-in: 11 bags collected",
+            body = "Quick thank-you to everyone who did the post-play cleanup loop around the south fence and cafe entrance.",
+            suburb = "Surry Hills",
+            createdAt = now.minusSeconds(176_400).toString(),
+            photoUrls = listOf(photoPool[10 % photoPool.size]),
+        ),
+        CommunityPost(
+            id = "p_dogpark_seed_6",
+            type = "group_post",
+            title = "Agility mini-course highlights",
+            body = "Archie and Poppy flew through the tunnel and pause platform. Sharing a few shots for anyone who missed Sunday drills.",
+            suburb = "Surry Hills",
+            createdAt = now.minusSeconds(223_200).toString(),
+            photoUrls = listOf(
+                photoPool[11 % photoPool.size],
+                photoPool[12 % photoPool.size],
+            ),
+        ),
+        CommunityPost(
+            id = "p_dogpark_seed_7",
+            type = "group_post",
+            title = "Looking for tomorrow's dawn walk crew",
+            body = "Meeting 6:45am at the fountain entrance for a calm 30-minute loop before work. Reply if your pup is joining.",
+            suburb = "Surry Hills",
+            createdAt = now.minusSeconds(309_600).toString(),
+            photoUrls = listOf(
+                photoPool[2 % photoPool.size],
+                photoPool[5 % photoPool.size],
+            ),
+        ),
+    )
+    val existingById = posts.associateBy { it.id }
+    val mergedSeeds = seeded.map { seed -> existingById[seed.id] ?: seed }
+    val remainingPosts = posts.filterNot { post -> post.id in seedIds }
+    return mergedSeeds + remainingPosts
+}
+
+private fun ensureSeedDogParkEvents(
+    events: List<CommunityEvent>,
+    activeUserId: String,
+): List<CommunityEvent> {
+    if (!ENABLE_TEST_SEED_DATA) return events
+    val seedIds = setOf(
+        "event_dogpark_seed_live",
+        "event_dogpark_seed_past_1",
+        "event_dogpark_seed_past_2",
+        "event_dogpark_seed_past_3",
+    )
+    if (seedIds.all { id -> events.any { event -> event.id == id } }) return events
+    val now = Instant.now()
+    val attendingByDefault = setOf("user_1", "user_2", "user_3")
+    val seeded = listOf(
+        CommunityEvent(
+            id = "event_dogpark_seed_live",
+            title = "Live now: Surry Hills Splash Social",
+            description = "Happening now on the north lawn: splash pool lane, shaded water station, and relaxed social play.",
+            suburb = "Surry Hills",
+            date = now.plusSeconds(900).toString(),
+            groupId = TEST_DOG_PARK_GROUP_ID,
+            attendeeCount = 19,
+            createdBy = "user_3",
+            rsvpStatus = if (activeUserId in attendingByDefault) "attending" else "none",
+            status = "approved",
+        ),
+        CommunityEvent(
+            id = "event_dogpark_seed_past_1",
+            title = "Sunset Recall Ladder",
+            description = "Focused recall drills in three short rounds. Dogs with anxious greetings got a separate calm lane.",
+            suburb = "Surry Hills",
+            date = now.minusSeconds(60_000).toString(),
+            groupId = TEST_DOG_PARK_GROUP_ID,
+            attendeeCount = 14,
+            createdBy = "user_3",
+            status = "approved",
+        ),
+        CommunityEvent(
+            id = "event_dogpark_seed_past_2",
+            title = "Paws & Pastries Morning Walk",
+            description = "Easy 35-minute park loop followed by coffee and water-bowl refills outside the corner bakery.",
+            suburb = "Surry Hills",
+            date = now.minusSeconds(170_000).toString(),
+            groupId = TEST_DOG_PARK_GROUP_ID,
+            attendeeCount = 11,
+            createdBy = "user_1",
+            status = "approved",
+        ),
+        CommunityEvent(
+            id = "event_dogpark_seed_past_3",
+            title = "Then vs Now Demo Night",
+            description = "Members shared progress clips and practical training notes from the past month.",
+            suburb = "Surry Hills",
+            date = now.minusSeconds(300_000).toString(),
+            groupId = TEST_DOG_PARK_GROUP_ID,
+            attendeeCount = 17,
+            createdBy = "user_2",
+            status = "approved",
+        ),
+    )
+    val existingById = events.associateBy { it.id }
+    val mergedSeeds = seeded.map { seed -> existingById[seed.id] ?: seed }
+    val remainingEvents = events.filterNot { event -> event.id in seedIds }
+    return mergedSeeds + remainingEvents
 }
 
 private fun buildSeedDogParkRoster(
@@ -395,6 +625,8 @@ class PetSocialViewModel(
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
     private var servicesSearchJob: Job? = null
+    private var weatherTickerJob: Job? = null
+    private val recentParkPresenceSignals = mutableMapOf<String, MutableList<ParkPresenceSignal>>()
 
     init {
         if (isStagingTestBuild()) {
@@ -405,6 +637,8 @@ class PetSocialViewModel(
             )
         }
         repository.setActiveUser(_uiState.value.activeUserId)
+        refreshMockCommunityWeather()
+        startMockWeatherTicker()
     }
 
     fun loadHomeData(category: String? = _uiState.value.selectedCategory) {
@@ -415,7 +649,9 @@ class PetSocialViewModel(
             state.currentLatitude != null &&
             state.currentLongitude != null
         viewModelScope.launch {
+            val totalStartNs = System.nanoTime()
             _uiState.value = _uiState.value.copy(loading = true, error = null, selectedCategory = resolvedCategory)
+            val fetchStartNs = System.nanoTime()
             runCatching {
                 val providers = repository.loadProviders(
                     category = resolvedCategory,
@@ -433,12 +669,28 @@ class PetSocialViewModel(
                     includeInactive = true,
                 )
                 val groups = repository.loadGroups(suburb = suburb)
-                val posts = repository.loadPosts(suburb = suburb, sortBy = state.postsSortBy)
+                val posts = repository.loadPosts(
+                    suburb = suburb,
+                    postType = if (state.postsSortBy == "lost_found") "lost_found" else null,
+                    sortBy = state.postsSortBy,
+                    openOnly = if (state.communityOpenOnly) true else null,
+                    recentHours = state.communityRecentHours,
+                    centerLat = if (useCurrentLocation) state.currentLatitude else null,
+                    centerLng = if (useCurrentLocation) state.currentLongitude else null,
+                    maxDistanceKm = if (useCurrentLocation && state.serviceMaxDistanceKm != null) {
+                        state.serviceMaxDistanceKm.toDouble()
+                    } else {
+                        null
+                    },
+                )
                 val events = repository.loadEvents(suburb = suburb)
                 val ownerBookings = repository.loadOwnerBookings()
                 val providerBookings = repository.loadProviderBookings()
                 val calendarEvents = repository.loadCalendarEvents(role = state.selectedCalendarRole)
                 val notifications = repository.loadNotifications(unreadOnly = false)
+                val blockedUsers = runCatching { repository.loadBlockedUsers().blockedUserIds }.getOrDefault(emptyList())
+                val moderationReports = runCatching { repository.loadModerationReports(includeResolved = false) }.getOrDefault(emptyList())
+                val communityFunnel = runCatching { repository.loadCommunityFunnel(windowHours = 168) }.getOrNull()
                 val nearbyPetBusinesses = if (useCurrentLocation) {
                     repository.loadNearbyPetBusinesses(
                         latitude = state.currentLatitude ?: 0.0,
@@ -458,8 +710,12 @@ class PetSocialViewModel(
                     providerBookings = providerBookings,
                     calendarEvents = calendarEvents,
                     notifications = notifications,
+                    blockedUserIds = blockedUsers,
+                    moderationReports = moderationReports,
+                    communityFunnelMetrics = communityFunnel,
                 )
             }.onSuccess { payload ->
+                val fetchMs = elapsedMs(fetchStartNs)
                 repository.saveHomeCache(
                     HomeCacheSnapshot(
                         providers = payload.providers,
@@ -473,16 +729,33 @@ class PetSocialViewModel(
                         calendarEvents = payload.calendarEvents,
                     ),
                 )
+                val applyStartNs = System.nanoTime()
                 applyHomePayload(
                     payload = payload,
                     suburb = suburb,
                     errorMessage = null,
                     isOfflineMode = false,
                     hasPendingSync = false,
+                    metrics = HomeLoadMetrics(
+                        source = "network",
+                        fetchMs = fetchMs,
+                        applyMs = 0L,
+                        totalMs = elapsedMs(totalStartNs),
+                    ),
+                )
+                recordHomeLoadMetrics(
+                    HomeLoadMetrics(
+                        source = "network",
+                        fetchMs = fetchMs,
+                        applyMs = elapsedMs(applyStartNs),
+                        totalMs = elapsedMs(totalStartNs),
+                    ),
                 )
             }.onFailure { error ->
                 val cached = repository.loadHomeCache()
                 if (cached != null) {
+                    val fetchMs = elapsedMs(fetchStartNs)
+                    val applyStartNs = System.nanoTime()
                     applyHomePayload(
                         payload = HomePayload(
                             providers = cached.providers,
@@ -495,19 +768,44 @@ class PetSocialViewModel(
                             providerBookings = cached.providerBookings,
                             calendarEvents = cached.calendarEvents,
                             notifications = emptyList(),
+                            blockedUserIds = _uiState.value.blockedUserIds,
+                            moderationReports = _uiState.value.moderationReports,
+                            communityFunnelMetrics = _uiState.value.communityFunnelMetrics,
                         ),
                         suburb = suburb,
                         errorMessage = error.message ?: "Network unavailable",
                         isOfflineMode = true,
                         hasPendingSync = true,
+                        metrics = HomeLoadMetrics(
+                            source = "cache",
+                            fetchMs = fetchMs,
+                            applyMs = 0L,
+                            totalMs = elapsedMs(totalStartNs),
+                        ),
+                    )
+                    recordHomeLoadMetrics(
+                        HomeLoadMetrics(
+                            source = "cache",
+                            fetchMs = fetchMs,
+                            applyMs = elapsedMs(applyStartNs),
+                            totalMs = elapsedMs(totalStartNs),
+                        ),
                     )
                 } else {
+                    val metrics = HomeLoadMetrics(
+                        source = "error",
+                        fetchMs = elapsedMs(fetchStartNs),
+                        applyMs = 0L,
+                        totalMs = elapsedMs(totalStartNs),
+                    )
                     _uiState.value = _uiState.value.copy(
                         loading = false,
                         error = error.message,
                         isOfflineMode = true,
                         hasPendingSync = true,
+                        latestHomeLoadMetrics = metrics,
                     )
+                    recordHomeLoadMetrics(metrics)
                 }
             }
         }
@@ -519,27 +817,32 @@ class PetSocialViewModel(
         errorMessage: String?,
         isOfflineMode: Boolean,
         hasPendingSync: Boolean,
+        metrics: HomeLoadMetrics? = null,
     ) {
+        val current = _uiState.value
         val providers = ensureSeedProviders(
             providers = payload.providers,
             suburb = suburb,
-            category = _uiState.value.selectedCategory,
+            category = current.selectedCategory,
         )
         val groups = ensureSeedDogParkGroup(
             groups = payload.groups,
-            activeUserId = _uiState.value.activeUserId,
+            activeUserId = current.activeUserId,
         )
         val posts = ensureSeedDogParkPosts(payload.posts)
-        val events = payload.events
+        val events = ensureSeedDogParkEvents(
+            events = payload.events,
+            activeUserId = current.activeUserId,
+        )
         val providerById = providers.associateBy { it.id }
-        val existingFavoriteIds = _uiState.value.favoriteProviderIds
+        val existingFavoriteIds = current.favoriteProviderIds
         val syncedFavorites = if (existingFavoriteIds.isEmpty()) {
             providers.take(3).map { it.id }
         } else {
             existingFavoriteIds.filter { id -> providers.any { provider -> provider.id == id } }
         }
         val syncedListings = payload.ownerListingProviders
-            .filter { provider -> provider.ownerUserId == _uiState.value.activeUserId }
+            .filter { provider -> provider.ownerUserId == current.activeUserId }
             .map { provider ->
                 ProviderListing(
                     id = provider.id,
@@ -587,12 +890,31 @@ class PetSocialViewModel(
                 status = booking.status,
             )
         }
-        val existingMessages = _uiState.value.directMessages
+        val existingMessages = current.directMessages
         val seededMessages = if (existingMessages.isEmpty()) {
-            seedDirectMessages(activeUserId = _uiState.value.activeUserId)
+            seedDirectMessages(activeUserId = current.activeUserId)
         } else {
             existingMessages
         }
+        val validReadMessageIds = current.readDirectMessageIds.intersect(seededMessages.map { it.id }.toSet())
+        val localNotifications = buildLocalCommunityNotifications(
+            activeUserId = current.activeUserId,
+            followedGroupIds = current.followedGroupIds,
+            savedPostIds = current.savedCommunityPostIds,
+            groups = groups,
+            events = events,
+            posts = posts,
+            moderationReports = payload.moderationReports,
+            includeFollowedGroupAlerts = current.notifyFollowedGroupAlerts,
+            includeSavedPostUpdates = current.notifySavedPostUpdates,
+            includeSafetyAlerts = current.notifySafetyAlerts,
+        )
+        val validLocalReadIds = current.readLocalNotificationIds.intersect(localNotifications.map { it.id }.toSet())
+        val mergedNotifications = mergeNotifications(
+            remoteNotifications = payload.notifications,
+            localNotifications = localNotifications,
+            localReadIds = validLocalReadIds,
+        )
         val messageThreads = buildMessageThreads(
             activeUserId = _uiState.value.activeUserId,
             providers = providers,
@@ -600,10 +922,16 @@ class PetSocialViewModel(
             ownerBookings = ownerBookings,
             providerBookings = providerBookings,
             directMessages = seededMessages,
+            readMessageIds = validReadMessageIds,
+            mutedThreadIds = current.mutedMessageThreadIds,
+            pinnedThreadIds = current.pinnedMessageThreadIds,
+            blockedParticipantIds = current.blockedUserIds.toSet(),
         )
-        val selectedThreadId = _uiState.value.selectedMessageThreadId
+        val selectedThreadId = current.selectedMessageThreadId
             ?.takeIf { existingId -> messageThreads.any { it.id == existingId } }
             ?: ""
+        val validSavedPostIds = current.savedCommunityPostIds.intersect(posts.map { it.id }.toSet())
+        val validFollowedGroupIds = current.followedGroupIds.intersect(groups.map { it.id }.toSet())
         val groupRosters = buildGroupRosters(
             groups = groups,
             posts = posts,
@@ -628,46 +956,90 @@ class PetSocialViewModel(
             providers = providers,
             today = LocalDate.now(),
         )
-        _uiState.value = _uiState.value.copy(
-            providers = providers,
-            nearbyPetBusinesses = payload.nearbyPetBusinesses,
-            groups = groups,
-            posts = posts,
-            communityEvents = events,
-            ownerBookings = ownerBookings,
-            providerBookings = providerBookings,
-            calendarEvents = payload.calendarEvents,
-            messageThreads = messageThreads,
+        _uiState.value = current.copy(
+            providers = reuseIfEquivalent(current.providers, providers),
+            nearbyPetBusinesses = reuseIfEquivalent(current.nearbyPetBusinesses, payload.nearbyPetBusinesses),
+            groups = reuseIfEquivalent(current.groups, groups),
+            posts = reuseIfEquivalent(current.posts, posts),
+            communityEvents = reuseIfEquivalent(current.communityEvents, events),
+            ownerBookings = reuseIfEquivalent(current.ownerBookings, ownerBookings),
+            providerBookings = reuseIfEquivalent(current.providerBookings, providerBookings),
+            calendarEvents = reuseIfEquivalent(current.calendarEvents, payload.calendarEvents),
+            messageThreads = reuseIfEquivalent(current.messageThreads, messageThreads),
             selectedMessageThreadId = selectedThreadId.ifBlank { null },
-            directMessages = seededMessages,
-            joinedEvents = joinedEvents,
-            favoriteProviderIds = syncedFavorites,
-            providerListings = syncedListings,
+            directMessages = reuseIfEquivalent(current.directMessages, seededMessages),
+            readDirectMessageIds = validReadMessageIds,
+            savedCommunityPostIds = validSavedPostIds,
+            mutedCommunityKeywords = current.mutedCommunityKeywords,
+            followedGroupIds = validFollowedGroupIds,
+            joinedEvents = reuseIfEquivalent(current.joinedEvents, joinedEvents),
+            favoriteProviderIds = reuseIfEquivalent(current.favoriteProviderIds, syncedFavorites),
+            providerListings = reuseIfEquivalent(current.providerListings, syncedListings),
             headerRosterPet = boostedGroupRosters.values
                 .flatten()
                 .dailyShuffle("header", LocalDate.now())
                 .firstOrNull(),
-            groupPetRosters = boostedGroupRosters,
-            groomerPetRosters = groomerRosters,
-            profileInfo = _uiState.value.profileInfo.copy(suburb = suburb),
+            groupPetRosters = reuseIfEquivalent(current.groupPetRosters, boostedGroupRosters),
+            groomerPetRosters = reuseIfEquivalent(current.groomerPetRosters, groomerRosters),
+            profileInfo = current.profileInfo.copy(suburb = suburb),
             loading = false,
             error = errorMessage,
+            latestHomeLoadMetrics = metrics ?: current.latestHomeLoadMetrics,
             isOfflineMode = isOfflineMode,
             hasPendingSync = hasPendingSync,
-            notifications = payload.notifications,
-            selectedCommunityGroupId = _uiState.value.selectedCommunityGroupId
+            notifications = reuseIfEquivalent(current.notifications, mergedNotifications),
+            readLocalNotificationIds = validLocalReadIds,
+            acknowledgedCommunityNotificationIds = current.acknowledgedCommunityNotificationIds
+                .intersect(mergedNotifications.map { notification -> notification.id }.toSet()),
+            acknowledgedMessageNotificationIds = current.acknowledgedMessageNotificationIds
+                .intersect(mergedNotifications.map { notification -> notification.id }.toSet()),
+            blockedUserIds = reuseIfEquivalent(current.blockedUserIds, payload.blockedUserIds),
+            moderationReports = reuseIfEquivalent(current.moderationReports, payload.moderationReports),
+            communityFunnelMetrics = payload.communityFunnelMetrics,
+            isCommunityModerator = current.activeUserId in COMMUNITY_MODERATOR_IDS,
+            selectedCommunityGroupId = current.selectedCommunityGroupId
                 ?.takeIf { selectedId -> groups.any { group -> group.id == selectedId } },
         )
+        maybeRunAutoParkCheckIn(reason = "home_payload_applied")
     }
 
     fun switchTab(tab: AppTab) {
-        _uiState.value = _uiState.value.copy(
+        val current = _uiState.value
+        _uiState.value = current.copy(
             selectedTab = tab,
             selectedCommunityGroupId = if (tab == AppTab.Community) {
-                _uiState.value.selectedCommunityGroupId
+                current.selectedCommunityGroupId
             } else {
                 null
             },
+            profileNotificationFilter = if (tab == AppTab.Profile) current.profileNotificationFilter else "all",
+            acknowledgedCommunityNotificationIds = when (tab) {
+                AppTab.Community -> current.acknowledgedCommunityNotificationIds + current.notifications
+                    .asSequence()
+                    .filter { notification -> isCommunityNotification(notification.category) }
+                    .map { notification -> notification.id }
+                    .toSet()
+                else -> current.acknowledgedCommunityNotificationIds
+            },
+            acknowledgedMessageNotificationIds = when (tab) {
+                AppTab.Messages -> current.acknowledgedMessageNotificationIds + current.notifications
+                    .asSequence()
+                    .filter { notification -> isMessageNotification(notification.category) }
+                    .map { notification -> notification.id }
+                    .toSet()
+                else -> current.acknowledgedMessageNotificationIds
+            },
+        )
+    }
+
+    fun openProfileNotifications(filter: String = "all") {
+        val normalized = when (filter.lowercase()) {
+            "community", "messages", "safety" -> filter.lowercase()
+            else -> "all"
+        }
+        _uiState.value = _uiState.value.copy(
+            selectedTab = AppTab.Profile,
+            profileNotificationFilter = normalized,
         )
     }
 
@@ -838,12 +1210,205 @@ class PetSocialViewModel(
         loadHomeData(_uiState.value.selectedCategory)
     }
 
+    fun updateCommunityFeedFilters(openOnly: Boolean, recentHours: Int?) {
+        _uiState.value = _uiState.value.copy(
+            communityOpenOnly = openOnly,
+            communityRecentHours = recentHours,
+        )
+        loadHomeData(_uiState.value.selectedCategory)
+    }
+
+    fun toggleSaveCommunityPost(postId: String) {
+        if (postId.isBlank()) return
+        val state = _uiState.value
+        val nextSaved = if (postId in state.savedCommunityPostIds) {
+            state.savedCommunityPostIds - postId
+        } else {
+            state.savedCommunityPostIds + postId
+        }
+        _uiState.value = state.copy(
+            savedCommunityPostIds = nextSaved,
+            toastMessage = if (postId in state.savedCommunityPostIds) "Post removed from saved" else "Post saved",
+        )
+    }
+
+    fun setMutedCommunityKeywords(keywords: Set<String>) {
+        val normalized = keywords
+            .map { value -> value.trim().lowercase() }
+            .filter { value -> value.length >= 2 }
+            .toSet()
+        _uiState.value = _uiState.value.copy(
+            mutedCommunityKeywords = normalized,
+            toastMessage = if (normalized.isEmpty()) "Muted keyword list cleared" else "Muted keywords updated",
+        )
+    }
+
+    fun toggleFollowGroup(groupId: String) {
+        if (groupId.isBlank()) return
+        val state = _uiState.value
+        val nextFollowed = if (groupId in state.followedGroupIds) {
+            state.followedGroupIds - groupId
+        } else {
+            state.followedGroupIds + groupId
+        }
+        _uiState.value = state.copy(
+            followedGroupIds = nextFollowed,
+            toastMessage = if (groupId in state.followedGroupIds) "Group alerts off" else "Group alerts on",
+        )
+    }
+
+    fun setNotificationPreferences(
+        followedGroupAlerts: Boolean,
+        savedPostUpdates: Boolean,
+        safetyAlerts: Boolean,
+    ) {
+        _uiState.value = _uiState.value.copy(
+            notifyFollowedGroupAlerts = followedGroupAlerts,
+            notifySavedPostUpdates = savedPostUpdates,
+            notifySafetyAlerts = safetyAlerts,
+            toastMessage = "Notification preferences updated",
+        )
+        loadHomeData(_uiState.value.selectedCategory)
+    }
+
     fun selectMessageThread(threadId: String) {
-        _uiState.value = _uiState.value.copy(selectedMessageThreadId = threadId)
+        val state = _uiState.value
+        val readMessageIds = markThreadMessagesRead(
+            directMessages = state.directMessages,
+            activeUserId = state.activeUserId,
+            threadId = threadId,
+            existingReadIds = state.readDirectMessageIds,
+        )
+        val refreshedThreads = buildMessageThreads(
+            activeUserId = state.activeUserId,
+            providers = state.providers,
+            groups = state.groups,
+            ownerBookings = state.ownerBookings,
+            providerBookings = state.providerBookings,
+            directMessages = state.directMessages,
+            readMessageIds = readMessageIds,
+            mutedThreadIds = state.mutedMessageThreadIds,
+            pinnedThreadIds = state.pinnedMessageThreadIds,
+            blockedParticipantIds = state.blockedUserIds.toSet(),
+        )
+        _uiState.value = state.copy(
+            selectedMessageThreadId = threadId,
+            readDirectMessageIds = readMessageIds,
+            messageThreads = refreshedThreads,
+        )
+    }
+
+    fun markMessageThreadRead(threadId: String) {
+        if (threadId.isBlank()) return
+        val state = _uiState.value
+        val readMessageIds = markThreadMessagesRead(
+            directMessages = state.directMessages,
+            activeUserId = state.activeUserId,
+            threadId = threadId,
+            existingReadIds = state.readDirectMessageIds,
+        )
+        val refreshedThreads = buildMessageThreads(
+            activeUserId = state.activeUserId,
+            providers = state.providers,
+            groups = state.groups,
+            ownerBookings = state.ownerBookings,
+            providerBookings = state.providerBookings,
+            directMessages = state.directMessages,
+            readMessageIds = readMessageIds,
+            mutedThreadIds = state.mutedMessageThreadIds,
+            pinnedThreadIds = state.pinnedMessageThreadIds,
+            blockedParticipantIds = state.blockedUserIds.toSet(),
+        )
+        _uiState.value = state.copy(
+            readDirectMessageIds = readMessageIds,
+            messageThreads = refreshedThreads,
+        )
+    }
+
+    fun toggleMuteMessageThread(threadId: String) {
+        if (threadId.isBlank()) return
+        val state = _uiState.value
+        val nextMutedIds = if (threadId in state.mutedMessageThreadIds) {
+            state.mutedMessageThreadIds - threadId
+        } else {
+            state.mutedMessageThreadIds + threadId
+        }
+        val refreshedThreads = buildMessageThreads(
+            activeUserId = state.activeUserId,
+            providers = state.providers,
+            groups = state.groups,
+            ownerBookings = state.ownerBookings,
+            providerBookings = state.providerBookings,
+            directMessages = state.directMessages,
+            readMessageIds = state.readDirectMessageIds,
+            mutedThreadIds = nextMutedIds,
+            pinnedThreadIds = state.pinnedMessageThreadIds,
+            blockedParticipantIds = state.blockedUserIds.toSet(),
+        )
+        _uiState.value = state.copy(
+            mutedMessageThreadIds = nextMutedIds,
+            messageThreads = refreshedThreads,
+            toastMessage = if (threadId in state.mutedMessageThreadIds) "Thread unmuted" else "Thread muted",
+        )
+    }
+
+    fun togglePinMessageThread(threadId: String) {
+        if (threadId.isBlank()) return
+        val state = _uiState.value
+        val nextPinnedIds = if (threadId in state.pinnedMessageThreadIds) {
+            state.pinnedMessageThreadIds - threadId
+        } else {
+            state.pinnedMessageThreadIds + threadId
+        }
+        val refreshedThreads = buildMessageThreads(
+            activeUserId = state.activeUserId,
+            providers = state.providers,
+            groups = state.groups,
+            ownerBookings = state.ownerBookings,
+            providerBookings = state.providerBookings,
+            directMessages = state.directMessages,
+            readMessageIds = state.readDirectMessageIds,
+            mutedThreadIds = state.mutedMessageThreadIds,
+            pinnedThreadIds = nextPinnedIds,
+            blockedParticipantIds = state.blockedUserIds.toSet(),
+        )
+        _uiState.value = state.copy(
+            pinnedMessageThreadIds = nextPinnedIds,
+            messageThreads = refreshedThreads,
+            toastMessage = if (threadId in state.pinnedMessageThreadIds) "Thread unpinned" else "Thread pinned",
+        )
     }
 
     fun clearMessageThreadSelection() {
-        _uiState.value = _uiState.value.copy(selectedMessageThreadId = null)
+        val state = _uiState.value
+        val selectedThreadId = state.selectedMessageThreadId
+        val readMessageIds = if (selectedThreadId.isNullOrBlank()) {
+            state.readDirectMessageIds
+        } else {
+            markThreadMessagesRead(
+                directMessages = state.directMessages,
+                activeUserId = state.activeUserId,
+                threadId = selectedThreadId,
+                existingReadIds = state.readDirectMessageIds,
+            )
+        }
+        val refreshedThreads = buildMessageThreads(
+            activeUserId = state.activeUserId,
+            providers = state.providers,
+            groups = state.groups,
+            ownerBookings = state.ownerBookings,
+            providerBookings = state.providerBookings,
+            directMessages = state.directMessages,
+            readMessageIds = readMessageIds,
+            mutedThreadIds = state.mutedMessageThreadIds,
+            pinnedThreadIds = state.pinnedMessageThreadIds,
+            blockedParticipantIds = state.blockedUserIds.toSet(),
+        )
+        _uiState.value = state.copy(
+            selectedMessageThreadId = null,
+            readDirectMessageIds = readMessageIds,
+            messageThreads = refreshedThreads,
+        )
     }
 
     fun sendDirectMessage(threadId: String, body: String) {
@@ -883,6 +1448,22 @@ class PetSocialViewModel(
             _uiState.value = _uiState.value.copy(
                 activeUserId = userId,
                 selectedMessageThreadId = null,
+                profileNotificationFilter = "all",
+                readDirectMessageIds = emptySet(),
+                latestHomeLoadMetrics = null,
+                homeLoadHistory = emptyList(),
+                readLocalNotificationIds = emptySet(),
+                acknowledgedCommunityNotificationIds = emptySet(),
+                acknowledgedMessageNotificationIds = emptySet(),
+                notifyFollowedGroupAlerts = true,
+                notifySavedPostUpdates = true,
+                notifySafetyAlerts = true,
+                mutedMessageThreadIds = emptySet(),
+                pinnedMessageThreadIds = emptySet(),
+                savedCommunityPostIds = emptySet(),
+                mutedCommunityKeywords = emptySet(),
+                followedGroupIds = emptySet(),
+                isCommunityModerator = userId in COMMUNITY_MODERATOR_IDS,
                 toastMessage = if (authOk) "Switched to $userId" else "Switched to $userId (guest auth)",
             )
             loadHomeData(_uiState.value.selectedCategory)
@@ -925,6 +1506,7 @@ class PetSocialViewModel(
                 currentLatitude = snapshot.latitude,
                 currentLongitude = snapshot.longitude,
             )
+            maybeRunAutoParkCheckIn(reason = "location_update")
             return
         }
         _uiState.value = _uiState.value.copy(
@@ -940,7 +1522,47 @@ class PetSocialViewModel(
                 _uiState.value.profileInfo.copy(suburb = detectedSuburb)
             },
         )
+        maybeRunAutoParkCheckIn(reason = "location_detected")
         loadHomeData(_uiState.value.selectedCategory)
+    }
+
+    fun refreshCommunityWeather() {
+        refreshMockCommunityWeather()
+    }
+
+    fun setAutoParkCheckInEnabled(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            autoParkCheckInEnabled = enabled,
+            toastMessage = if (enabled) {
+                "Auto check-in enabled. Shares only with your local member group."
+            } else {
+                "Auto check-in disabled"
+            },
+        )
+        if (enabled) {
+            maybeRunAutoParkCheckIn(reason = "enabled")
+        }
+    }
+
+    fun setAutoParkCheckInRequireCrowd(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            autoParkCheckInRequireCrowd = enabled,
+            toastMessage = if (enabled) {
+                "Safety mode on: only share when group activity is present"
+            } else {
+                "Safety mode off: share on park arrival"
+            },
+        )
+    }
+
+    fun simulateParkArrivalCheckIn() {
+        val state = _uiState.value
+        val simulatedSuburb = state.currentLocationSuburb ?: state.selectedSuburb
+        _uiState.value = state.copy(
+            currentLocationSuburb = simulatedSuburb,
+            locationAutoDetected = true,
+        )
+        maybeRunAutoParkCheckIn(reason = "manual_test")
     }
 
     fun setRangeCenterCurrent(enabled: Boolean) {
@@ -1688,24 +2310,131 @@ class PetSocialViewModel(
     }
 
     fun createLostFoundPost(title: String, body: String, suburb: String) {
+        createLostFoundAlert(
+            CommunityPostCreate(
+                type = "lost_found",
+                title = title,
+                body = body,
+                suburb = suburb,
+            ),
+        )
+    }
+
+    fun createLostFoundAlert(payload: CommunityPostCreate) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(loading = true, error = null)
             runCatching {
-                repository.createLostFoundPost(
-                    title = title,
-                    body = body,
-                    suburb = suburb,
-                )
+                repository.createLostFoundPost(payload)
             }.onSuccess {
                 _uiState.value = _uiState.value.copy(
                     loading = false,
                     selectedTab = AppTab.Community,
+                    postsSortBy = "lost_found",
                     toastMessage = "Lost/found post created",
                 )
                 loadHomeData(_uiState.value.selectedCategory)
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(loading = false, error = error.message)
             }
+        }
+    }
+
+    fun resolveLostFoundPost(postId: String, status: String, note: String = "") {
+        if (postId.isBlank()) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            runCatching { repository.resolveLostFoundPost(postId = postId, status = status, note = note) }
+                .onSuccess {
+                    val toast = when (status) {
+                        "reunited" -> "Marked as reunited"
+                        "owner_found" -> "Marked as owner found"
+                        "expired" -> "Marked as no longer active"
+                        else -> "Lost/found alert updated"
+                    }
+                    _uiState.value = _uiState.value.copy(
+                        loading = false,
+                        selectedTab = AppTab.Community,
+                        postsSortBy = "lost_found",
+                        toastMessage = toast,
+                    )
+                    loadHomeData(_uiState.value.selectedCategory)
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+                }
+        }
+    }
+
+    fun reportCommunityPost(postId: String, reason: String, details: String = "") {
+        if (postId.isBlank()) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            runCatching {
+                repository.reportCommunityPost(
+                    postId = postId,
+                    reason = reason.ifBlank { "Other" },
+                    details = details,
+                )
+            }.onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    toastMessage = "Report submitted",
+                )
+                loadHomeData(_uiState.value.selectedCategory)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+            }
+        }
+    }
+
+    fun blockCommunityUser(targetUserId: String) {
+        if (targetUserId.isBlank()) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            runCatching { repository.blockCommunityUser(targetUserId) }
+                .onSuccess { response ->
+                    _uiState.value = _uiState.value.copy(
+                        loading = false,
+                        blockedUserIds = response.blockedUserIds,
+                        toastMessage = "User blocked in community",
+                    )
+                    loadHomeData(_uiState.value.selectedCategory)
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+                }
+        }
+    }
+
+    fun unblockCommunityUser(targetUserId: String) {
+        if (targetUserId.isBlank()) return
+        viewModelScope.launch {
+            runCatching { repository.unblockCommunityUser(targetUserId) }
+                .onSuccess { response ->
+                    _uiState.value = _uiState.value.copy(
+                        blockedUserIds = response.blockedUserIds,
+                        toastMessage = "User unblocked",
+                    )
+                    loadHomeData(_uiState.value.selectedCategory)
+                }
+        }
+    }
+
+    fun resolveModerationReport(reportId: String, action: String, note: String = "") {
+        if (reportId.isBlank()) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            runCatching { repository.resolveModerationReport(reportId, action, note) }
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(
+                        loading = false,
+                        toastMessage = if (action == "action_taken") "Moderation action recorded" else "Report dismissed",
+                    )
+                    loadHomeData(_uiState.value.selectedCategory)
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+                }
         }
     }
 
@@ -1735,7 +2464,165 @@ class PetSocialViewModel(
         _uiState.value = _uiState.value.copy(toastMessage = null)
     }
 
+    private fun startMockWeatherTicker() {
+        weatherTickerJob?.cancel()
+        weatherTickerJob = viewModelScope.launch {
+            while (true) {
+                delay(60_000)
+                refreshMockCommunityWeather()
+            }
+        }
+    }
+
+    private fun refreshMockCommunityWeather() {
+        val state = _uiState.value
+        val suburb = state.currentLocationSuburb ?: state.selectedSuburb
+        val snapshot = buildMockWeatherSnapshot(suburb)
+        _uiState.value = state.copy(communityWeather = snapshot)
+    }
+
+    private fun buildMockWeatherSnapshot(suburb: String): CommunityWeatherSnapshot {
+        val now = Instant.now()
+        val minuteBucket = now.epochSecond / 60L
+        val seed = (suburb.lowercase().hashCode().toLong() xor minuteBucket).toInt()
+        val conditions = listOf("Partly cloudy", "Sunny breaks", "Light drizzle", "Breezy", "Overcast")
+        val condition = conditions[Math.floorMod(seed, conditions.size)]
+        val temperature = 16 + Math.floorMod(seed / 3, 15)
+        val rain = Math.floorMod(seed / 5, 61)
+        val wind = 6 + Math.floorMod(seed / 7, 24)
+        return CommunityWeatherSnapshot(
+            suburb = suburb,
+            temperatureC = temperature,
+            condition = condition,
+            rainChancePercent = rain,
+            windKph = wind,
+            updatedAtLabel = "Updated just now (mock)",
+        )
+    }
+
+    private fun maybeRunAutoParkCheckIn(reason: String) {
+        val state = _uiState.value
+        if (!state.autoParkCheckInEnabled) return
+        val localSuburb = state.currentLocationSuburb?.trim().orEmpty().ifBlank { state.selectedSuburb }
+        if (localSuburb.isBlank()) return
+        val group = findEligibleLocalParkGroup(state, localSuburb) ?: return
+        val now = Instant.now()
+        registerParkPresenceSignal(
+            groupId = group.id,
+            userId = state.activeUserId,
+            now = now,
+        )
+        val quorumCount = currentParkPresenceQuorumCount(
+            groupId = group.id,
+            now = now,
+            windowMinutes = state.autoParkCheckInQuorumWindowMinutes,
+        )
+        _uiState.value = _uiState.value.copy(autoParkCheckInQuorumCount = quorumCount)
+        if (state.autoParkCheckInRequireCrowd && quorumCount < state.autoParkCheckInQuorumThreshold) {
+            if (reason == "manual_test" || reason == "enabled") {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = "Auto check-in waiting for quorum: $quorumCount/${state.autoParkCheckInQuorumThreshold} members present.",
+                )
+            }
+            return
+        }
+        val lastGroupId = state.lastAutoParkCheckInGroupId
+        val lastAt = state.lastAutoParkCheckInAt?.let(::parseIsoInstantForSort) ?: Instant.EPOCH
+        if (lastGroupId == group.id && now.isBefore(lastAt.plusSeconds(6 * 60 * 60L))) {
+            if (reason == "manual_test") {
+                _uiState.value = state.copy(toastMessage = "Auto check-in skipped: already shared recently.")
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            runCatching {
+                repository.participateGroupChallenge(
+                    groupId = group.id,
+                    challengeType = "clean_park_streak",
+                    contributionCount = 1,
+                    note = "Auto check-in (privacy-safe): presence shared to members only.",
+                )
+            }.onSuccess { result ->
+                _uiState.value = _uiState.value.copy(
+                    lastAutoParkCheckInGroupId = group.id,
+                    lastAutoParkCheckInAt = now.toString(),
+                    toastMessage = "Auto check-in shared to ${group.name} only (${state.autoParkCheckInQuorumThreshold}+ member quorum met).",
+                )
+                loadHomeData(_uiState.value.selectedCategory)
+            }.onFailure { error ->
+                if (reason == "manual_test") {
+                    _uiState.value = _uiState.value.copy(error = error.message)
+                }
+            }
+        }
+    }
+
+    private fun findEligibleLocalParkGroup(state: UiState, suburb: String): Group? {
+        return state.groups.firstOrNull { group ->
+            group.membershipStatus == "member" &&
+                group.suburb.equals(suburb, ignoreCase = true) &&
+                (
+                    "park" in group.name.lowercase() ||
+                        "walk" in group.name.lowercase() ||
+                        group.groupBadges.any { badge ->
+                            val lower = badge.lowercase()
+                            "park" in lower || "walk" in lower
+                        }
+                    )
+        }
+    }
+
+    private fun registerParkPresenceSignal(
+        groupId: String,
+        userId: String,
+        now: Instant,
+    ) {
+        val bucket = recentParkPresenceSignals.getOrPut(groupId) { mutableListOf() }
+        val cutoff = now.minusSeconds(20L * 60L)
+        bucket.removeAll { signal -> signal.detectedAt.isBefore(cutoff) }
+        val existing = bucket.indexOfFirst { signal -> signal.userId == userId }
+        if (existing >= 0) {
+            bucket[existing] = ParkPresenceSignal(userId = userId, detectedAt = now)
+        } else {
+            bucket += ParkPresenceSignal(userId = userId, detectedAt = now)
+        }
+    }
+
+    private fun currentParkPresenceQuorumCount(
+        groupId: String,
+        now: Instant,
+        windowMinutes: Int,
+    ): Int {
+        val bucket = recentParkPresenceSignals[groupId] ?: return 0
+        val cutoff = now.minusSeconds(windowMinutes.toLong() * 60L)
+        bucket.removeAll { signal -> signal.detectedAt.isBefore(cutoff) }
+        return bucket.map { signal -> signal.userId }.toSet().size
+    }
+
+    override fun onCleared() {
+        weatherTickerJob?.cancel()
+        super.onCleared()
+    }
+
+    private fun recordHomeLoadMetrics(metrics: HomeLoadMetrics) {
+        val current = _uiState.value
+        _uiState.value = current.copy(
+            latestHomeLoadMetrics = metrics,
+            homeLoadHistory = (current.homeLoadHistory + metrics).takeLast(20),
+        )
+    }
+
     fun markNotificationRead(notificationId: String) {
+        if (notificationId.startsWith("local:")) {
+            _uiState.value = _uiState.value.copy(
+                readLocalNotificationIds = _uiState.value.readLocalNotificationIds + notificationId,
+                notifications = _uiState.value.notifications.map { existing ->
+                    if (existing.id == notificationId) existing.copy(read = true) else existing
+                },
+            )
+            return
+        }
         viewModelScope.launch {
             runCatching { repository.markNotificationRead(notificationId) }
                 .onSuccess { updated ->
@@ -1745,6 +2632,128 @@ class PetSocialViewModel(
                         },
                     )
                 }
+        }
+    }
+
+    fun markNotificationIdsRead(notificationIds: List<String>) {
+        val ids = notificationIds
+            .map { id -> id.trim() }
+            .filter { id -> id.isNotEmpty() }
+            .distinct()
+        if (ids.isEmpty()) return
+
+        val localIds = ids.filter { id -> id.startsWith("local:") }.toSet()
+        if (localIds.isNotEmpty()) {
+            _uiState.value = _uiState.value.copy(
+                readLocalNotificationIds = _uiState.value.readLocalNotificationIds + localIds,
+                notifications = _uiState.value.notifications.map { notification ->
+                    if (notification.id in localIds) notification.copy(read = true) else notification
+                },
+            )
+        }
+
+        val remoteIds = ids.filterNot { id -> id.startsWith("local:") }
+        if (remoteIds.isEmpty()) return
+        viewModelScope.launch {
+            val updates = buildList {
+                remoteIds.forEach { notificationId ->
+                    runCatching { repository.markNotificationRead(notificationId) }
+                        .onSuccess { updated -> add(updated) }
+                }
+            }
+            if (updates.isNotEmpty()) {
+                _uiState.value = _uiState.value.copy(
+                    notifications = _uiState.value.notifications.map { existing ->
+                        updates.firstOrNull { updated -> updated.id == existing.id } ?: existing
+                    },
+                )
+            }
+        }
+    }
+
+    fun markAllNotificationsRead() {
+        val state = _uiState.value
+        val localUnreadIds = state.notifications
+            .asSequence()
+            .filter { notification -> notification.id.startsWith("local:") && !notification.read }
+            .map { notification -> notification.id }
+            .toSet()
+        if (localUnreadIds.isNotEmpty()) {
+            _uiState.value = state.copy(
+                readLocalNotificationIds = state.readLocalNotificationIds + localUnreadIds,
+                notifications = state.notifications.map { notification ->
+                    if (notification.id in localUnreadIds) notification.copy(read = true) else notification
+                },
+                toastMessage = "Local notifications marked read",
+            )
+        }
+    }
+
+    fun clearLocalNotifications() {
+        val state = _uiState.value
+        val remaining = state.notifications.filterNot { notification -> notification.id.startsWith("local:") }
+        _uiState.value = state.copy(
+            notifications = remaining,
+            readLocalNotificationIds = emptySet(),
+            toastMessage = "Local notifications cleared",
+        )
+    }
+
+    fun clearLocalNotificationIds(notificationIds: List<String>) {
+        val localIds = notificationIds
+            .map { id -> id.trim() }
+            .filter { id -> id.startsWith("local:") }
+            .toSet()
+        if (localIds.isEmpty()) return
+        _uiState.value = _uiState.value.copy(
+            notifications = _uiState.value.notifications.filterNot { notification -> notification.id in localIds },
+            readLocalNotificationIds = _uiState.value.readLocalNotificationIds - localIds,
+            acknowledgedCommunityNotificationIds = _uiState.value.acknowledgedCommunityNotificationIds - localIds,
+            acknowledgedMessageNotificationIds = _uiState.value.acknowledgedMessageNotificationIds - localIds,
+            toastMessage = "Local notifications cleared",
+        )
+    }
+
+    fun openNotificationDeepLink(notification: AppNotification) {
+        val deepLink = notification.deepLink?.trim().orEmpty()
+        if (deepLink.isBlank()) return
+        when {
+            deepLink.startsWith("group:") -> {
+                val groupId = deepLink.removePrefix("group:").trim()
+                _uiState.value = _uiState.value.copy(
+                    selectedTab = AppTab.Community,
+                    selectedCommunityGroupId = groupId.ifBlank { null },
+                )
+            }
+            deepLink.startsWith("event:") || deepLink.startsWith("post:") -> {
+                _uiState.value = _uiState.value.copy(
+                    selectedTab = AppTab.Community,
+                    postsSortBy = if (deepLink.startsWith("post:")) "lost_found" else _uiState.value.postsSortBy,
+                )
+                loadHomeData(_uiState.value.selectedCategory)
+            }
+            deepLink.startsWith("provider:") -> {
+                val providerId = deepLink.removePrefix("provider:").trim()
+                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Services)
+                if (providerId.isNotBlank()) {
+                    loadProviderDetails(providerId)
+                }
+            }
+            deepLink.startsWith("booking:") || deepLink.startsWith("quote:") -> {
+                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Services)
+            }
+            deepLink.startsWith("message:") -> {
+                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Messages)
+            }
+            deepLink == "profile" -> {
+                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Profile)
+            }
+            else -> {
+                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Community)
+            }
+        }
+        if (!notification.read) {
+            markNotificationRead(notification.id)
         }
     }
 
@@ -1832,6 +2841,12 @@ private fun upsertBarkThread(threads: List<BarkThread>, updated: BarkThread): Li
         .take(20)
 }
 
+private fun <T> reuseIfEquivalent(current: T, candidate: T): T {
+    return if (current == candidate) current else candidate
+}
+
+private fun elapsedMs(startNs: Long): Long = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(0L)
+
 private fun resolveBarkThreadTitle(existingTitle: String, conversation: List<ChatTurn>): String {
     if (existingTitle != "New thread" && existingTitle != "Thread 1") return existingTitle
     val firstUser = conversation.firstOrNull { it.role == "user" }?.content?.trim().orEmpty()
@@ -1846,6 +2861,10 @@ private fun buildMessageThreads(
     ownerBookings: List<OwnerBooking>,
     providerBookings: List<ProviderBooking>,
     directMessages: List<DirectMessage>,
+    readMessageIds: Set<String> = emptySet(),
+    mutedThreadIds: Set<String> = emptySet(),
+    pinnedThreadIds: Set<String> = emptySet(),
+    blockedParticipantIds: Set<String> = emptySet(),
 ): List<MessageThread> {
     val threadsById = linkedMapOf<String, MessageThread>()
     val unreadById = mutableMapOf<String, Int>()
@@ -1853,6 +2872,7 @@ private fun buildMessageThreads(
 
     fun upsert(participantUserId: String, title: String, fallbackMessage: String) {
         if (participantUserId == activeUserId) return
+        if (participantUserId in blockedParticipantIds) return
         val id = directThreadId(activeUserId, participantUserId)
         val existing = threadsById[id]
         if (existing == null) {
@@ -1915,13 +2935,18 @@ private fun buildMessageThreads(
             else -> null
         } ?: return@forEach
         val threadId = directThreadId(activeUserId, participantUserId)
+        if (participantUserId in blockedParticipantIds) return@forEach
         upsert(
             participantUserId = participantUserId,
             title = threadsById[threadId]?.title ?: accountLabel(participantUserId),
             fallbackMessage = message.body,
         )
         lastMessageById[threadId] = message.body
-        if (message.recipientUserId == activeUserId && message.senderUserId != activeUserId) {
+        if (
+            message.recipientUserId == activeUserId &&
+            message.senderUserId != activeUserId &&
+            message.id !in readMessageIds
+        ) {
             unreadById[threadId] = (unreadById[threadId] ?: 0) + 1
         }
     }
@@ -1931,9 +2956,150 @@ private fun buildMessageThreads(
             thread.copy(
                 lastMessage = lastMessageById[thread.id] ?: thread.lastMessage,
                 unreadCount = unreadById[thread.id] ?: 0,
+                isMuted = thread.id in mutedThreadIds,
+                isPinned = thread.id in pinnedThreadIds,
             )
         }
-        .sortedWith(compareByDescending<MessageThread> { it.unreadCount }.thenBy { it.title })
+        .sortedWith(
+            compareByDescending<MessageThread> { it.isPinned }
+                .thenBy { it.isMuted }
+                .thenByDescending { it.unreadCount }
+                .thenBy { it.title },
+        )
+}
+
+private fun markThreadMessagesRead(
+    directMessages: List<DirectMessage>,
+    activeUserId: String,
+    threadId: String,
+    existingReadIds: Set<String>,
+): Set<String> {
+    if (threadId.isBlank()) return existingReadIds
+    val newlyRead = directMessages
+        .asSequence()
+        .filter { message ->
+            message.threadId == threadId &&
+                message.recipientUserId == activeUserId &&
+                message.senderUserId != activeUserId
+        }
+        .map { it.id }
+        .toSet()
+    return if (newlyRead.isEmpty()) existingReadIds else existingReadIds + newlyRead
+}
+
+private fun buildLocalCommunityNotifications(
+    activeUserId: String,
+    followedGroupIds: Set<String>,
+    savedPostIds: Set<String>,
+    groups: List<Group>,
+    events: List<CommunityEvent>,
+    posts: List<CommunityPost>,
+    moderationReports: List<CommunityReport>,
+    includeFollowedGroupAlerts: Boolean,
+    includeSavedPostUpdates: Boolean,
+    includeSafetyAlerts: Boolean,
+): List<AppNotification> {
+    val groupNameById = groups.associate { group -> group.id to group.name }
+    val followedEventNotifications = if (includeFollowedGroupAlerts) events
+        .asSequence()
+        .filter { event ->
+            event.groupId != null &&
+                event.groupId in followedGroupIds &&
+                event.status == "approved"
+        }
+        .map { event ->
+            val groupId = event.groupId.orEmpty()
+            AppNotification(
+                id = "local:followed_event:${event.id}",
+                userId = activeUserId,
+                title = "Followed group event",
+                body = buildString {
+                    append(event.title)
+                    groupNameById[groupId]?.let { groupName -> append(" • $groupName") }
+                },
+                category = "community_followed_group",
+                read = false,
+                createdAt = event.date,
+                deepLink = "group:$groupId",
+            )
+        }
+        .toList()
+    else emptyList()
+
+    val savedPostUpdateNotifications = if (includeSavedPostUpdates) posts
+        .asSequence()
+        .filter { post ->
+            post.id in savedPostIds &&
+                post.type == "lost_found" &&
+                (post.alertStatus?.lowercase() ?: "open") != "open"
+        }
+        .map { post ->
+            val status = post.alertStatus?.replace("_", " ")?.replaceFirstChar { it.uppercase() } ?: "updated"
+            AppNotification(
+                id = "local:saved_post:${post.id}:${post.alertStatus ?: "updated"}",
+                userId = activeUserId,
+                title = "Saved alert update",
+                body = "${post.title} is now $status",
+                category = "community_saved_post",
+                read = false,
+                createdAt = post.resolvedAt ?: post.createdAt ?: Instant.now().toString(),
+                deepLink = "post:${post.id}",
+            )
+        }
+        .toList()
+    else emptyList()
+
+    val safetyNotifications = if (includeSafetyAlerts) moderationReports
+        .asSequence()
+        .filter { report -> report.status == "pending" }
+        .take(3)
+        .map { report ->
+            AppNotification(
+                id = "local:safety_report:${report.id}",
+                userId = activeUserId,
+                title = "Moderation queue update",
+                body = "Open report: ${report.reason}",
+                category = "community_safety",
+                read = false,
+                createdAt = report.createdAt,
+                deepLink = "profile",
+            )
+        }
+        .toList()
+    else emptyList()
+
+    return (followedEventNotifications + savedPostUpdateNotifications + safetyNotifications)
+}
+
+private fun mergeNotifications(
+    remoteNotifications: List<AppNotification>,
+    localNotifications: List<AppNotification>,
+    localReadIds: Set<String>,
+): List<AppNotification> {
+    val normalizedLocal = localNotifications.map { notification ->
+        if (notification.id in localReadIds) notification.copy(read = true) else notification
+    }
+    val merged = (normalizedLocal + remoteNotifications)
+        .distinctBy { notification -> notification.id }
+    return merged
+        .sortedByDescending { notification -> parseIsoInstantForSort(notification.createdAt) }
+        .take(60)
+}
+
+private fun parseIsoInstantForSort(raw: String?): Instant {
+    if (raw.isNullOrBlank()) return Instant.EPOCH
+    return runCatching { Instant.parse(raw) }
+        .recoverCatching { java.time.OffsetDateTime.parse(raw).toInstant() }
+        .getOrDefault(Instant.EPOCH)
+}
+
+private fun isCommunityNotification(category: String): Boolean {
+    val normalized = category.lowercase()
+    return normalized.startsWith("community") || normalized.contains("group")
+}
+
+private fun isMessageNotification(category: String): Boolean {
+    return category.lowercase().contains("message")
 }
 
 private fun seedDirectMessages(activeUserId: String): List<DirectMessage> {
@@ -1966,6 +3132,11 @@ private fun directThreadId(userA: String, userB: String): String {
     return "dm_${sorted[0]}_${sorted[1]}"
 }
 
+private data class ParkPresenceSignal(
+    val userId: String,
+    val detectedAt: Instant,
+)
+
 class PetSocialViewModelFactory(
     private val repository: PetSocialRepository,
 ) : ViewModelProvider.Factory {
@@ -1989,6 +3160,9 @@ private data class HomePayload(
     val providerBookings: List<BookingResponse>,
     val calendarEvents: List<CalendarEvent>,
     val notifications: List<AppNotification>,
+    val blockedUserIds: List<String>,
+    val moderationReports: List<CommunityReport>,
+    val communityFunnelMetrics: CommunityFunnelMetrics?,
 )
 
 private fun JsonObject?.readString(key: String): String? = this

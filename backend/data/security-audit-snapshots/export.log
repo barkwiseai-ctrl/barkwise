@@ -1,0 +1,15 @@
+[2026-02-22T10:39:20Z] Security metrics maintenance start
+[2026-02-22T10:39:20Z] Skipping export (SKIP_EXPORT=1)
+[2026-02-22T10:39:20Z] Running snapshot cleanup retain_days=14 dry_run=1
+{
+  "deleted": [],
+  "deleted_count": 0,
+  "dry_run": true,
+  "kept_count": 1,
+  "output_dir": "/Users/yingxu/public-repos/pet-social-app/backend/data/security-audit-snapshots",
+  "retain_days": 14,
+  "skipped_count": 0,
+  "status": "ok"
+}
+[2026-02-22T10:39:20Z] Cleanup completed with exit_code=0
+[2026-02-22T10:39:20Z] Security metrics maintenance done export_rc=0 cleanup_rc=0

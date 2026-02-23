@@ -227,13 +227,29 @@ class PetSocialRepository(
 
     suspend fun loadPosts(
         suburb: String?,
+        postType: String? = null,
         query: String? = null,
         sortBy: String? = null,
+        alertType: String? = null,
+        alertStatus: String? = null,
+        openOnly: Boolean? = null,
+        recentHours: Int? = null,
+        centerLat: Double? = null,
+        centerLng: Double? = null,
+        maxDistanceKm: Double? = null,
     ): List<CommunityPost> = api.getPosts(
         suburb = suburb,
+        postType = postType,
         userId = userId,
         query = query,
         sortBy = sortBy,
+        alertType = alertType,
+        alertStatus = alertStatus,
+        openOnly = openOnly,
+        recentHours = recentHours,
+        centerLat = centerLat,
+        centerLng = centerLng,
+        maxDistanceKm = maxDistanceKm,
     )
 
     suspend fun loadEvents(suburb: String?): List<CommunityEvent> = api.getEvents(
@@ -571,7 +587,7 @@ class PetSocialRepository(
     )
 
     suspend fun createLostFoundPost(title: String, body: String, suburb: String): CommunityPost =
-        createCommunityPostWithFallback(
+        createLostFoundPost(
             CommunityPostCreate(
                 type = "lost_found",
                 title = title,
@@ -580,15 +596,138 @@ class PetSocialRepository(
             ),
         )
 
+    suspend fun createLostFoundPost(payload: CommunityPostCreate): CommunityPost =
+        createCommunityPostWithFallback(payload.copy(type = "lost_found", userId = payload.userId ?: userId))
+
     suspend fun createCommunityGroupPost(title: String, body: String, suburb: String): CommunityPost =
         createCommunityPostWithFallback(
             CommunityPostCreate(
                 type = "group_post",
+                userId = userId,
                 title = title,
                 body = body,
                 suburb = suburb,
             ),
         )
+
+    suspend fun resolveLostFoundPost(postId: String, status: String, note: String = ""): CommunityPost =
+        api.resolvePost(
+            postId = postId,
+            payload = CommunityPostResolveRequest(
+                requesterUserId = userId,
+                status = status,
+                note = note,
+            ),
+        )
+
+    suspend fun reportCommunityPost(postId: String, reason: String, details: String = ""): CommunityReport =
+        api.createModerationReport(
+            CommunityReportCreateRequest(
+                reporterUserId = userId,
+                targetType = "post",
+                targetId = postId,
+                reason = reason,
+                details = details,
+            )
+        )
+
+    suspend fun blockCommunityUser(targetUserId: String): CommunityBlockUserResponse =
+        api.blockUser(
+            CommunityBlockUserRequest(
+                requesterUserId = userId,
+                targetUserId = targetUserId,
+            )
+        )
+
+    suspend fun unblockCommunityUser(targetUserId: String): CommunityBlockUserResponse =
+        api.unblockUser(
+            requesterUserId = userId,
+            targetUserId = targetUserId,
+        )
+
+    suspend fun loadBlockedUsers(): CommunityBlockUserResponse = api.getBlockedUsers(requesterUserId = userId)
+
+    suspend fun loadModerationReports(includeResolved: Boolean = false): List<CommunityReport> =
+        api.getModerationReports(
+            requesterUserId = userId,
+            includeResolved = includeResolved,
+        )
+
+    suspend fun resolveModerationReport(reportId: String, action: String, note: String = ""): CommunityReport =
+        api.resolveModerationReport(
+            reportId = reportId,
+            payload = CommunityReportResolveRequest(
+                requesterUserId = userId,
+                action = action,
+                note = note,
+            ),
+        )
+
+    suspend fun uploadLostFoundDemoPhoto(): CommunityPostPhotoUploadResponse = withContext(Dispatchers.IO) {
+        val filename = "lost-found-${System.currentTimeMillis()}.png"
+        val pixelPng = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x02, 0x00, 0x00, 0x00, 0x90.toByte(), 0x77, 0x53, 0xDE.toByte(),
+            0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7.toByte(),
+            0x63, 0xF8.toByte(), 0xCF.toByte(), 0xC0.toByte(), 0x00, 0x00, 0x04, 0xBF.toByte(), 0x01, 0x7F,
+            0xA7.toByte(), 0x89.toByte(), 0x81.toByte(), 0x2E,
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE.toByte(), 0x42, 0x60, 0x82.toByte(),
+        )
+        api.uploadCommunityPostPhoto(
+            CommunityPostPhotoUploadRequest(
+                requesterUserId = userId,
+                filename = filename,
+                contentType = "image/png",
+                dataBase64 = java.util.Base64.getEncoder().encodeToString(pixelPng),
+            )
+        )
+    }
+
+    suspend fun trackCommunityAnalytics(
+        event: String,
+        category: String = "community",
+        metadata: Map<String, String> = emptyMap(),
+        durationMs: Int? = null,
+    ) {
+        runCatching {
+            api.createCommunityAnalyticsEvent(
+                CommunityAnalyticsEventCreateRequest(
+                    userId = userId,
+                    event = event,
+                    category = category,
+                    metadata = metadata,
+                    durationMs = durationMs,
+                )
+            )
+        }
+    }
+
+    suspend fun loadCommunityFunnel(windowHours: Int = 168): CommunityFunnelMetrics =
+        api.getCommunityFunnel(
+            requesterUserId = userId,
+            windowHours = windowHours,
+        )
+
+    suspend fun trackCommunityDiagnostic(
+        kind: String,
+        message: String,
+        context: Map<String, String> = emptyMap(),
+        durationMs: Int? = null,
+    ) {
+        runCatching {
+            api.createCommunityDiagnosticEvent(
+                CommunityDiagnosticEventCreateRequest(
+                    userId = userId,
+                    kind = kind,
+                    message = message,
+                    context = context,
+                    durationMs = durationMs,
+                )
+            )
+        }
+    }
 
     private suspend fun createCommunityPostWithFallback(payload: CommunityPostCreate): CommunityPost {
         return runCatching { api.createPost(payload) }

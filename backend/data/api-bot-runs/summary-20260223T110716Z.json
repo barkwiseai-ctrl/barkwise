@@ -1,0 +1,160 @@
+{
+  "actions": {
+    "auth_login": {
+      "attempts": 6,
+      "avg_latency_ms": 57.69,
+      "errors": 0,
+      "p95_latency_ms": 58.05,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "auth_me": {
+      "attempts": 8,
+      "avg_latency_ms": 3.57,
+      "errors": 0,
+      "p95_latency_ms": 4.7,
+      "status_codes": {
+        "200": 8
+      },
+      "success": 8
+    },
+    "community_browse": {
+      "attempts": 32,
+      "avg_latency_ms": 4.69,
+      "errors": 0,
+      "p95_latency_ms": 6.84,
+      "status_codes": {
+        "200": 32
+      },
+      "success": 32
+    },
+    "community_collenso_add_member": {
+      "attempts": 5,
+      "avg_latency_ms": 2.16,
+      "errors": 0,
+      "p95_latency_ms": 4.15,
+      "status_codes": {
+        "200": 5
+      },
+      "success": 5
+    },
+    "community_collenso_forced_day_report": {
+      "attempts": 6,
+      "avg_latency_ms": 3.45,
+      "errors": 1,
+      "p95_latency_ms": 4.91,
+      "status_codes": {
+        "200": 5,
+        "429": 1
+      },
+      "success": 5
+    },
+    "community_create_annika_forced_post": {
+      "attempts": 2,
+      "avg_latency_ms": 0.93,
+      "errors": 2,
+      "p95_latency_ms": 1.01,
+      "status_codes": {
+        "429": 2
+      },
+      "success": 0
+    },
+    "community_create_collenso_day_report": {
+      "attempts": 5,
+      "avg_latency_ms": 3.37,
+      "errors": 1,
+      "p95_latency_ms": 4.46,
+      "status_codes": {
+        "200": 4,
+        "429": 1
+      },
+      "success": 4
+    },
+    "community_create_collenso_interaction_report": {
+      "attempts": 1,
+      "avg_latency_ms": 3.46,
+      "errors": 0,
+      "p95_latency_ms": 3.46,
+      "status_codes": {
+        "200": 1
+      },
+      "success": 1
+    },
+    "community_lookup_collenso_group": {
+      "attempts": 6,
+      "avg_latency_ms": 5.24,
+      "errors": 0,
+      "p95_latency_ms": 5.71,
+      "status_codes": {
+        "200": 6
+      },
+      "success": 6
+    },
+    "community_send_analytics": {
+      "attempts": 17,
+      "avg_latency_ms": 3.47,
+      "errors": 0,
+      "p95_latency_ms": 4.35,
+      "status_codes": {
+        "200": 17
+      },
+      "success": 17
+    },
+    "events_browse": {
+      "attempts": 22,
+      "avg_latency_ms": 3.55,
+      "errors": 0,
+      "p95_latency_ms": 5.04,
+      "status_codes": {
+        "200": 22
+      },
+      "success": 22
+    },
+    "groups_browse": {
+      "attempts": 24,
+      "avg_latency_ms": 3.57,
+      "errors": 0,
+      "p95_latency_ms": 5.51,
+      "status_codes": {
+        "200": 24
+      },
+      "success": 24
+    },
+    "notifications_check": {
+      "attempts": 25,
+      "avg_latency_ms": 2.5,
+      "errors": 0,
+      "p95_latency_ms": 3.99,
+      "status_codes": {
+        "200": 25
+      },
+      "success": 25
+    },
+    "notifications_register_device": {
+      "attempts": 25,
+      "avg_latency_ms": 3.45,
+      "errors": 1,
+      "p95_latency_ms": 5.6,
+      "status_codes": {
+        "200": 24,
+        "429": 1
+      },
+      "success": 24
+    },
+    "services_browse": {
+      "attempts": 10,
+      "avg_latency_ms": 9.96,
+      "errors": 0,
+      "p95_latency_ms": 15.56,
+      "status_codes": {
+        "200": 10
+      },
+      "success": 10
+    }
+  },
+  "duration_seconds": 30.24,
+  "total_attempts": 194,
+  "total_errors": 5
+}

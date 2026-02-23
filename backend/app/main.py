@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.routers import auth, chat, community, notifications, services
+from app.routers import auth, chat, community, notifications, security, services
 
 app = FastAPI(title="BarkWise API", version="0.1.0")
 
@@ -39,6 +39,7 @@ app.include_router(chat.router)
 app.include_router(community.router)
 app.include_router(auth.router)
 app.include_router(notifications.router)
+app.include_router(security.router)
 
 web_dir = Path(__file__).parent / "web"
 if web_dir.exists():

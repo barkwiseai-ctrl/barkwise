@@ -2,11 +2,13 @@ import importlib
 import os
 import sqlite3
 import sys
+from datetime import datetime, timedelta
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.services.memory_store import MemoryStore
+from app.services.rate_limiting import SlidingWindowHitStore, read_positive_int_env
 
 
 def test_auth_ttl_invalid_env_falls_back(monkeypatch):
@@ -41,3 +43,96 @@ def test_memory_store_handles_invalid_json_state(tmp_path):
     assert state["field_locks"] == {}
     assert state["provider_state"] == {}
     assert state["profile_accepted"] is True
+
+
+def test_auth_login_rate_limit_env_invalid_falls_back(monkeypatch):
+    monkeypatch.setenv("AUTH_LOGIN_FAILURE_LIMIT", "oops")
+    monkeypatch.setenv("AUTH_LOGIN_FAILURE_WINDOW_SECONDS", "0")
+    sys.modules.pop("app.routers.auth", None)
+    auth_router = importlib.import_module("app.routers.auth")
+    assert auth_router.LOGIN_FAILURE_LIMIT == 8
+    assert int(auth_router.LOGIN_FAILURE_WINDOW.total_seconds()) == 600
+
+
+def test_chat_rate_limit_env_invalid_falls_back(monkeypatch):
+    monkeypatch.setenv("CHAT_RATE_LIMIT_WINDOW_SECONDS", "-1")
+    monkeypatch.setenv("CHAT_RATE_LIMIT_MAX_REQUESTS", "bad")
+    monkeypatch.setenv("CHAT_STREAM_RATE_LIMIT_MAX_REQUESTS", "bad")
+    monkeypatch.setenv("CHAT_ACTION_RATE_LIMIT_MAX_REQUESTS", "bad")
+    sys.modules.pop("app.routers.chat", None)
+    chat_router = importlib.import_module("app.routers.chat")
+    assert int(chat_router.CHAT_RATE_LIMIT_WINDOW.total_seconds()) == 60
+    assert chat_router.CHAT_RATE_LIMIT_MAX_REQUESTS == 12
+    assert chat_router.CHAT_STREAM_RATE_LIMIT_MAX_REQUESTS == 6
+    assert chat_router.CHAT_ACTION_RATE_LIMIT_MAX_REQUESTS == 10
+
+
+def test_notifications_rate_limit_env_reads_valid_values(monkeypatch):
+    monkeypatch.setenv("NOTIFICATIONS_DEVICE_REGISTER_RATE_LIMIT_MAX", "9")
+    monkeypatch.setenv("NOTIFICATIONS_DEVICE_REGISTER_RATE_LIMIT_WINDOW_SECONDS", "420")
+    sys.modules.pop("app.routers.notifications", None)
+    notifications_router = importlib.import_module("app.routers.notifications")
+    assert notifications_router.DEVICE_REGISTER_RATE_LIMIT_MAX == 9
+    assert int(notifications_router.DEVICE_REGISTER_RATE_LIMIT_WINDOW.total_seconds()) == 420
+
+
+def test_security_audit_metrics_persist_across_module_reload(monkeypatch, tmp_path):
+    metrics_path = tmp_path / "security-audit.json"
+    monkeypatch.setenv("SECURITY_AUDIT_METRICS_PATH", str(metrics_path))
+    sys.modules.pop("app.services.security_audit", None)
+    audit = importlib.import_module("app.services.security_audit")
+
+    audit.reset_rate_limit_metrics()
+    audit.record_rate_limit_hit(surface="chat_chat", key="user_1", detail="limit_exceeded")
+    snapshot = audit.rate_limit_snapshot()
+    assert snapshot["total_hits"] == 1
+    assert snapshot["by_surface"].get("chat_chat") == 1
+    assert metrics_path.exists()
+
+    sys.modules.pop("app.services.security_audit", None)
+    reloaded = importlib.import_module("app.services.security_audit")
+    restored = reloaded.rate_limit_snapshot()
+    assert restored["total_hits"] == 1
+    assert restored["by_surface"].get("chat_chat") == 1
+    assert len(restored["recent_hits"]) == 1
+
+
+def test_security_audit_metrics_invalid_json_file_is_ignored(monkeypatch, tmp_path):
+    metrics_path = tmp_path / "security-audit-bad.json"
+    metrics_path.write_text("{bad", encoding="utf-8")
+    monkeypatch.setenv("SECURITY_AUDIT_METRICS_PATH", str(metrics_path))
+    sys.modules.pop("app.services.security_audit", None)
+    audit = importlib.import_module("app.services.security_audit")
+    snapshot = audit.rate_limit_snapshot()
+    assert snapshot["total_hits"] == 0
+    assert snapshot["by_surface"] == {}
+    assert snapshot["recent_hits"] == []
+
+
+def test_read_positive_int_env_falls_back_for_invalid_values(monkeypatch):
+    monkeypatch.setenv("RATE_LIMIT_TEST_VALUE", "abc")
+    assert read_positive_int_env("RATE_LIMIT_TEST_VALUE", 7) == 7
+    monkeypatch.setenv("RATE_LIMIT_TEST_VALUE", "0")
+    assert read_positive_int_env("RATE_LIMIT_TEST_VALUE", 7) == 7
+    monkeypatch.setenv("RATE_LIMIT_TEST_VALUE", "-2")
+    assert read_positive_int_env("RATE_LIMIT_TEST_VALUE", 7) == 7
+    monkeypatch.setenv("RATE_LIMIT_TEST_VALUE", "11")
+    assert read_positive_int_env("RATE_LIMIT_TEST_VALUE", 7) == 11
+
+
+def test_sliding_window_hit_store_prunes_and_enforces_limits():
+    store = SlidingWindowHitStore()
+    window = timedelta(seconds=30)
+    t0 = datetime(2026, 2, 22, 10, 0, 0)
+
+    assert store.allow_and_add_hit(key="user_1", window=window, limit=2, now=t0) is True
+    assert store.allow_and_add_hit(key="user_1", window=window, limit=2, now=t0 + timedelta(seconds=10)) is True
+    assert store.allow_and_add_hit(key="user_1", window=window, limit=2, now=t0 + timedelta(seconds=20)) is False
+    assert store.is_limited(key="user_1", window=window, limit=2, now=t0 + timedelta(seconds=20)) is True
+
+    # Old hits should age out after the window.
+    assert store.allow_and_add_hit(key="user_1", window=window, limit=2, now=t0 + timedelta(seconds=45)) is True
+    assert len(store.history["user_1"]) == 1
+
+    store.reset_key("user_1")
+    assert "user_1" not in store.history

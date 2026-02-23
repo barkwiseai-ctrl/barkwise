@@ -2,6 +2,10 @@
 
 This backend is now prepared for internet deployment with production-safe CORS/host config.
 
+Security operations runbook:
+
+- `/Users/yingxu/public-repos/pet-social-app/backend/SECURITY_OPERATIONS.md`
+
 ## Option: Railway (recommended for web beta sharing)
 
 This repo already includes Railway-compatible Nixpacks config at:

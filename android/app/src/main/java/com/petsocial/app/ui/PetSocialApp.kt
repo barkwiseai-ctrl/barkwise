@@ -35,6 +35,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -179,6 +181,19 @@ fun PetSocialApp(initialDeepLink: String? = null) {
         TabItem(AppTab.Messages, "Messages"),
         TabItem(AppTab.Profile, "Profile"),
     )
+    val unreadNotificationCount = state.notifications.count { notification -> !notification.read }
+    val unreadCommunityNotificationCount = state.notifications.count { notification ->
+        !notification.read &&
+            notification.id !in state.acknowledgedCommunityNotificationIds && (
+            notification.category.startsWith("community") ||
+                notification.category.contains("group")
+            )
+    }
+    val unreadMessageNotificationCount = state.notifications.count { notification ->
+        !notification.read &&
+            notification.id !in state.acknowledgedMessageNotificationIds &&
+            notification.category.contains("message")
+    }
     val shouldHandleBack = state.selectedProviderDetails != null ||
         state.selectedMessageThreadId != null ||
         state.selectedTab != AppTab.Services
@@ -222,7 +237,29 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                                     style = MaterialTheme.typography.labelSmall,
                                 )
                             },
-                            icon = { Icon(imageVector = icon, contentDescription = item.label) },
+                            icon = {
+                                val badgeCount = when (item.tab) {
+                                    AppTab.Community -> unreadCommunityNotificationCount
+                                    AppTab.Messages -> unreadMessageNotificationCount
+                                    else -> 0
+                                }
+                                if (badgeCount > 0) {
+                                    BadgedBox(
+                                        badge = {
+                                            Badge {
+                                                Text(
+                                                    if (badgeCount > 9) "9+" else badgeCount.toString(),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                )
+                                            }
+                                        },
+                                    ) {
+                                        Icon(imageVector = icon, contentDescription = item.label)
+                                    }
+                                } else {
+                                    Icon(imageVector = icon, contentDescription = item.label)
+                                }
+                            },
                             colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
                                 indicatorColor = MaterialTheme.colorScheme.primaryContainer,
                                 selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -370,35 +407,69 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         loading = state.loading,
                         suburb = state.selectedSuburb,
                         postsSortBy = state.postsSortBy,
+                        communityOpenOnly = state.communityOpenOnly,
+                        communityRecentHours = state.communityRecentHours,
                         selectedGroupId = state.selectedCommunityGroupId,
                         groups = state.groups,
                         groupPetRosters = state.groupPetRosters,
                         latestGroupInvites = state.latestGroupInvites,
+                        blockedUserIds = state.blockedUserIds,
+                        savedPostIds = state.savedCommunityPostIds,
+                        mutedKeywords = state.mutedCommunityKeywords,
+                        followedGroupIds = state.followedGroupIds,
+                        communityWeather = state.communityWeather,
+                        autoParkCheckInEnabled = state.autoParkCheckInEnabled,
+                        autoParkCheckInRequireCrowd = state.autoParkCheckInRequireCrowd,
+                        autoParkCheckInQuorumCount = state.autoParkCheckInQuorumCount,
+                        autoParkCheckInQuorumThreshold = state.autoParkCheckInQuorumThreshold,
+                        autoParkCheckInQuorumWindowMinutes = state.autoParkCheckInQuorumWindowMinutes,
                         posts = state.posts,
                         events = state.communityEvents,
+                        unreadNotificationCount = unreadNotificationCount,
                         onOpenGroup = vm::openCommunityGroup,
+                        onOpenNotifications = vm::openProfileNotifications,
                         onDismissSelectedGroup = vm::clearSelectedCommunityGroup,
                         onJoinGroup = vm::joinGroup,
                         onCreateGroupInvite = vm::createGroupInvite,
                         onClearGroupInvite = vm::clearGroupInvite,
+                        onCreateGroup = vm::createCommunityGroup,
                         onPostsSortChange = vm::updatePostsSortBy,
+                        onCommunityFilterChange = vm::updateCommunityFeedFilters,
                         onCreateGroupPost = vm::createCommunityGroupPost,
-                        onCreateLostFound = vm::createLostFoundPost,
+                        onCreateLostFound = vm::createLostFoundAlert,
                         onCreateEvent = vm::createCommunityEvent,
                         onRsvpEvent = vm::rsvpEvent,
                         onApproveJoinRequest = vm::approveNextJoinRequest,
                         onRejectJoinRequest = vm::rejectNextJoinRequest,
                         onApproveEvent = vm::approveEvent,
                         onLogCleanupCheckIn = vm::logGroupCleanupCheckIn,
+                        onResolveLostFound = vm::resolveLostFoundPost,
+                        onReportPost = vm::reportCommunityPost,
+                        onBlockUser = vm::blockCommunityUser,
+                        onToggleSavePost = vm::toggleSaveCommunityPost,
+                        onSetMutedKeywords = vm::setMutedCommunityKeywords,
+                        onToggleFollowGroup = vm::toggleFollowGroup,
+                        onRefreshWeather = vm::refreshCommunityWeather,
+                        onSetAutoParkCheckInEnabled = vm::setAutoParkCheckInEnabled,
+                        onSetAutoParkCheckInRequireCrowd = vm::setAutoParkCheckInRequireCrowd,
+                        onSimulateParkArrival = vm::simulateParkArrivalCheckIn,
                     )
 
                     AppTab.Messages -> MessagesScreen(
                         activeUserId = state.activeUserId,
                         threads = state.messageThreads,
+                        mutedThreadIds = state.mutedMessageThreadIds,
+                        pinnedThreadIds = state.pinnedMessageThreadIds,
+                        unreadNotificationCount = unreadNotificationCount,
                         selectedThreadId = state.selectedMessageThreadId,
                         messages = state.directMessages,
+                        onOpenNotifications = vm::openProfileNotifications,
                         onSelectThread = vm::selectMessageThread,
                         onBackToThreads = vm::clearMessageThreadSelection,
+                        onMarkThreadRead = vm::markMessageThreadRead,
+                        onToggleMuteThread = vm::toggleMuteMessageThread,
+                        onTogglePinThread = vm::togglePinMessageThread,
+                        onBlockParticipant = vm::blockCommunityUser,
                         onSend = vm::sendDirectMessage,
                     )
 
@@ -415,6 +486,18 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         calendarEvents = state.calendarEvents,
                         selectedCalendarRole = state.selectedCalendarRole,
                         notifications = state.notifications,
+                        latestHomeLoadMetrics = state.latestHomeLoadMetrics,
+                        homeLoadHistory = state.homeLoadHistory,
+                        acknowledgedCommunityNotificationIds = state.acknowledgedCommunityNotificationIds,
+                        acknowledgedMessageNotificationIds = state.acknowledgedMessageNotificationIds,
+                        selectedNotificationFilter = state.profileNotificationFilter,
+                        notifyFollowedGroupAlerts = state.notifyFollowedGroupAlerts,
+                        notifySavedPostUpdates = state.notifySavedPostUpdates,
+                        notifySafetyAlerts = state.notifySafetyAlerts,
+                        isCommunityModerator = state.isCommunityModerator,
+                        moderationReports = state.moderationReports,
+                        communityFunnelMetrics = state.communityFunnelMetrics,
+                        blockedUserIds = state.blockedUserIds,
                         onOpenCommunityGroup = vm::openCommunityGroup,
                         onSaveProfile = vm::saveProfileInfo,
                         onCreateProviderListing = vm::createProviderListing,
@@ -426,6 +509,14 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         onCancelProviderBooking = vm::cancelProviderBooking,
                         onCalendarRoleChange = vm::setCalendarRole,
                         onMarkNotificationRead = vm::markNotificationRead,
+                        onMarkNotificationIdsRead = vm::markNotificationIdsRead,
+                        onMarkAllNotificationsRead = vm::markAllNotificationsRead,
+                        onClearLocalNotificationIds = vm::clearLocalNotificationIds,
+                        onClearLocalNotifications = vm::clearLocalNotifications,
+                        onOpenNotificationDeepLink = vm::openNotificationDeepLink,
+                        onUpdateNotificationPreferences = vm::setNotificationPreferences,
+                        onResolveModerationReport = vm::resolveModerationReport,
+                        onUnblockCommunityUser = vm::unblockCommunityUser,
                         onSwitchAccount = vm::switchAccount,
                     )
                 }
