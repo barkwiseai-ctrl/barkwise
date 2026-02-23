@@ -3043,6 +3043,65 @@ private fun buildSeedComments(post: CommunityPost): List<String> {
 
     val lowerTitle = post.title.lowercase()
     val lowerBody = post.body.lowercase()
+    val threadText = "$lowerTitle $lowerBody"
+
+    if ("annika" in threadText) {
+        return listOf(
+            "Annika energy is undefeated. Absolute goofball in every frame.",
+            "Love that she stayed friendly with every dog, even during tense moments.",
+            "Please keep posting Annika threads. They are the best read in this group.",
+        )
+    }
+    if ("snowy" in threadText) {
+        return listOf(
+            "Snowy is getting braver every week, great to see the confidence climb.",
+            "Reminder to keep wider chase spacing because he still thinks he is tiny.",
+            "Handled well after that accidental trample moment, nice calm reset.",
+        )
+    }
+    if ("sesame" in threadText && "buddy" in threadText) {
+        return listOf(
+            "Sesame and Buddy need fast toy separation, otherwise it escalates every time.",
+            "Fetch lane looked sharp until that ball dispute kicked off.",
+            "Good intervention timing by handlers before it got worse.",
+        )
+    }
+    if ("sesame" in threadText) {
+        return listOf(
+            "Sesame's chase drive is wild, those ball sprints are elite.",
+            "Please keep clear ball ownership boundaries when she is in peak mode.",
+            "Great focus session with quick decompression breaks.",
+        )
+    }
+    if ("buddy" in threadText) {
+        return listOf(
+            "Buddy looked social and playful outside the toy conflict loop.",
+            "He and Sesame still need stricter separation when toys are involved.",
+            "Strong recovery after the second reset block.",
+        )
+    }
+    if ("pepsi" in threadText) {
+        return listOf(
+            "Pepsi started intense but settled well once introductions slowed down.",
+            "The wary-around-men note is real, thanks for handling it thoughtfully.",
+            "Rough player, but much better regulation in this report.",
+        )
+    }
+    if ("billie" in threadText) {
+        return listOf(
+            "Billie is still pure love. Senior legend behavior.",
+            "She paced herself well and still joined the fun rounds.",
+            "The whole group looked calmer once Billie started social check-ins.",
+        )
+    }
+    if ("spicy" in threadText || "escalated" in threadText || "argument" in threadText) {
+        return listOf(
+            "This one likely needs moderation follow-up before the next session.",
+            "Please keep replies factual so admins can review cleanly.",
+            "Hope everyone resets and returns to safer play standards next meetup.",
+        )
+    }
+
     val contextualThird = when {
         "live" in lowerTitle || "happening now" in lowerBody ->
             "On my way with spare water bowls and treats."
