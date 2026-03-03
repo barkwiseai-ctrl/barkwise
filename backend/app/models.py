@@ -2,6 +2,10 @@ from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+MAX_USER_ID_LENGTH = 64
+MAX_CHAT_MESSAGE_LENGTH = 2000
+MAX_SUBURB_LENGTH = 80
+
 
 class ServiceProvider(BaseModel):
     id: str
@@ -83,7 +87,7 @@ class ServiceProviderRestoreRequest(BaseModel):
 class ServiceQuoteRequestCreate(BaseModel):
     user_id: str
     category: Literal["dog_walking", "grooming"]
-    suburb: str
+    suburb: Optional[str] = None
     preferred_window: str
     pet_details: str
     note: str = ""
@@ -124,6 +128,12 @@ class ServiceQuoteRequest(BaseModel):
 class ServiceQuoteRequestView(BaseModel):
     quote_request: ServiceQuoteRequest
     targets: list[ServiceQuoteTarget]
+
+
+class ServiceRecommendationsResponse(BaseModel):
+    providers: list[ServiceProvider]
+    inferred_suburb: Optional[str] = None
+    suburb_source: Literal["explicit_suburb", "dog_park_membership", "group_membership", "none"] = "none"
 
 
 class VetCoachSessionRequest(BaseModel):
@@ -251,6 +261,18 @@ class BookingStatusUpdateRequest(BaseModel):
         "rescheduled",
     ]
     note: str = ""
+    date: Optional[str] = None
+    time_slot: Optional[str] = None
+
+
+class BookingStatusHistoryEntry(BaseModel):
+    id: str
+    booking_id: str
+    actor_user_id: str
+    from_status: str
+    to_status: str
+    note: str = ""
+    created_at: str
 
 
 class ProviderBlackoutRequest(BaseModel):
@@ -282,14 +304,24 @@ class CalendarEvent(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    user_id: str
-    message: str
-    suburb: Optional[str] = None
+    user_id: str = Field(min_length=1, max_length=MAX_USER_ID_LENGTH)
+    message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_LENGTH)
+    suburb: Optional[str] = Field(default=None, max_length=MAX_SUBURB_LENGTH)
+
+
+class ChatCitation(BaseModel):
+    title: str
+    source: str
+    url: Optional[str] = None
+    snippet: Optional[str] = None
 
 
 class ChatTurn(BaseModel):
     role: Literal["user", "assistant"]
     content: str
+    answer_source: Optional[str] = None
+    answer_badges: list[str] = Field(default_factory=list)
+    citations: list[ChatCitation] = Field(default_factory=list)
 
 
 class PetProfileSuggestion(BaseModel):
@@ -324,14 +356,17 @@ class ChatResponse(BaseModel):
     conversation: list[ChatTurn] = Field(default_factory=list)
     profile_suggestion: Optional[PetProfileSuggestion] = None
     a2ui_messages: list[Dict[str, Any]] = Field(default_factory=list)
+    answer_source: str = "fallback"
+    answer_badges: list[str] = Field(default_factory=list)
+    citations: list[ChatCitation] = Field(default_factory=list)
 
 
 class ProfileAcceptRequest(BaseModel):
-    user_id: str
+    user_id: str = Field(min_length=1, max_length=MAX_USER_ID_LENGTH)
 
 
 class ProviderSubmitRequest(BaseModel):
-    user_id: str
+    user_id: str = Field(min_length=1, max_length=MAX_USER_ID_LENGTH)
 
 
 class CommunityPostCreate(BaseModel):
@@ -408,6 +443,31 @@ class CommunityPostPhotoUploadRequest(BaseModel):
     filename: str
     content_type: str
     data_base64: str
+
+
+class CommunityComment(BaseModel):
+    id: str
+    post_id: str
+    user_id: str
+    body: str
+    parent_comment_id: Optional[str] = None
+    created_at: str
+    status: Literal["active", "removed_by_moderator"] = "active"
+    moderated_at: Optional[str] = None
+    moderated_by: Optional[str] = None
+    moderation_note: Optional[str] = None
+
+
+class CommunityCommentCreateRequest(BaseModel):
+    user_id: str
+    body: str
+    parent_comment_id: Optional[str] = None
+
+
+class CommunityCommentModerationRequest(BaseModel):
+    requester_user_id: str
+    action: Literal["remove", "restore"]
+    note: str = ""
 
 
 class CommunityReportCreateRequest(BaseModel):
@@ -663,6 +723,79 @@ class AuthLoginResponse(BaseModel):
 
 
 class AuthMeResponse(BaseModel):
+    user_id: str
+
+
+class AuthInviteCreateRequest(BaseModel):
+    requester_user_id: str
+    email: str
+    user_id: Optional[str] = None
+    ttl_minutes: int = Field(default=60, ge=5, le=1440)
+
+
+class AuthInviteResponse(BaseModel):
+    invite_id: str
+    user_id: str
+    email: str
+    expires_at: str
+
+
+class AuthOtpRequest(BaseModel):
+    invite_id: str
+    email: str
+
+
+class AuthOtpRequestResponse(BaseModel):
+    status: Literal["otp_sent"] = "otp_sent"
+    expires_at: str
+
+
+class AuthOtpVerifyRequest(BaseModel):
+    invite_id: str
+    email: str
+    otp_code: str = Field(min_length=4, max_length=8)
+
+
+class AuthOtpVerifyResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    user_id: str
+    expires_at: str
+
+
+class AuthLogoutResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+
+
+class AuthDeleteResponse(BaseModel):
+    status: Literal["deleted"] = "deleted"
+    user_id: str
+
+
+class MessageThreadView(BaseModel):
+    id: str
+    participant_user_id: str
+    last_message: str = ""
+    last_message_at: str
+    unread_count: int = 0
+
+
+class MessageRecord(BaseModel):
+    id: str
+    thread_id: str
+    sender_user_id: str
+    recipient_user_id: str
+    body: str
+    created_at: str
+
+
+class MessageSendRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=MAX_USER_ID_LENGTH)
+    recipient_user_id: str = Field(min_length=1, max_length=MAX_USER_ID_LENGTH)
+    body: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_LENGTH)
+
+
+class MessageMarkReadRequest(BaseModel):
     user_id: str
 
 

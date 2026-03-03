@@ -2,6 +2,8 @@ import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta
+from typing import Optional
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -10,12 +12,48 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app.auth as auth_module
 import app.routers.auth as auth_router
 import app.routers.chat as chat_router
+import app.routers.community as community_router
 import app.routers.notifications as notifications_router
 import app.services.security_audit as security_audit_service
 from app.main import app
 from app.services.service_store import service_store
 
 client = TestClient(app)
+
+
+def _find_provider_with_available_slots(
+    *,
+    category: str,
+    min_available_slots: int,
+    day_offset_start: int = 180,
+    day_offset_end: int = 260,
+    exclude_owner_user_id: Optional[str] = None,
+):
+    providers_resp = client.get("/services/providers", params={"category": category})
+    assert providers_resp.status_code == 200
+    providers_payload = providers_resp.json()
+    assert providers_payload
+
+    for provider in providers_payload[:25]:
+        owner_user_id = provider.get("owner_user_id")
+        if exclude_owner_user_id and owner_user_id == exclude_owner_user_id:
+            continue
+        provider_id = provider["id"]
+        for day_offset in range(day_offset_start, day_offset_end):
+            booking_date = (datetime.utcnow().date() + timedelta(days=day_offset)).isoformat()
+            availability_resp = client.get(
+                f"/services/providers/{provider_id}/availability",
+                params={"date": booking_date},
+            )
+            assert availability_resp.status_code == 200
+            available_slots = [slot for slot in availability_resp.json() if slot.get("available")]
+            if len(available_slots) >= min_available_slots:
+                return provider, available_slots
+
+    raise AssertionError(
+        f"Could not find provider with >= {min_available_slots} available slots "
+        f"for category={category} in day range [{day_offset_start}, {day_offset_end})."
+    )
 
 
 def test_health_ok():
@@ -32,6 +70,338 @@ def test_auth_login_and_me():
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
     assert me.json()["user_id"] == "user_2"
+
+
+def test_auth_login_disabled_when_demo_login_flag_off(monkeypatch):
+    monkeypatch.setattr(auth_router, "is_demo_login_allowed", lambda: False)
+    login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert login.status_code == 403
+    assert "disabled" in login.json()["detail"].lower()
+
+
+def test_auth_invite_otp_verify_logout_flow(monkeypatch):
+    sent: dict[str, str] = {}
+
+    def _capture_otp(*, email: str, otp_code: str) -> bool:
+        sent["email"] = email
+        sent["otp_code"] = otp_code
+        return True
+
+    monkeypatch.setattr(auth_router, "send_otp_via_resend", _capture_otp)
+
+    suffix = uuid4().hex[:8]
+    email = f"beta-{suffix}@example.com"
+    user_id = f"beta_{suffix}"
+
+    invite_response = client.post(
+        "/auth/invite",
+        json={
+            "requester_user_id": "user_1",
+            "email": email,
+            "user_id": user_id,
+            "ttl_minutes": 30,
+        },
+    )
+    assert invite_response.status_code == 200
+    invite_payload = invite_response.json()
+    invite_id = invite_payload["invite_id"]
+    assert invite_payload["user_id"] == user_id
+
+    request_otp_response = client.post(
+        "/auth/otp/request",
+        json={"invite_id": invite_id, "email": email},
+    )
+    assert request_otp_response.status_code == 200
+    assert request_otp_response.json()["status"] == "otp_sent"
+    assert sent.get("email") == email
+    otp_code = sent.get("otp_code", "")
+    assert len(otp_code) == 6
+
+    verify_response = client.post(
+        "/auth/otp/verify",
+        json={"invite_id": invite_id, "email": email, "otp_code": otp_code},
+    )
+    assert verify_response.status_code == 200
+    verify_payload = verify_response.json()
+    assert verify_payload["user_id"] == user_id
+    token = verify_payload["access_token"]
+
+    me_response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_response.status_code == 200
+    assert me_response.json()["user_id"] == user_id
+
+    logout_response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+    assert logout_response.status_code == 200
+    assert logout_response.json()["status"] == "ok"
+
+    revoked_me_response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert revoked_me_response.status_code == 401
+
+
+def test_auth_otp_request_fails_when_delivery_unavailable_and_auth_required(monkeypatch):
+    monkeypatch.setattr(auth_router, "AUTH_REQUIRED", True)
+    monkeypatch.setattr(auth_router, "send_otp_via_resend", lambda **_: False)
+
+    suffix = uuid4().hex[:8]
+    email = f"otp-fail-{suffix}@example.com"
+    invite_response = client.post(
+        "/auth/invite",
+        json={
+            "requester_user_id": "user_1",
+            "email": email,
+            "user_id": f"beta_otp_fail_{suffix}",
+            "ttl_minutes": 30,
+        },
+    )
+    assert invite_response.status_code == 200
+    invite_id = invite_response.json()["invite_id"]
+
+    request_otp_response = client.post(
+        "/auth/otp/request",
+        json={"invite_id": invite_id, "email": email},
+    )
+    assert request_otp_response.status_code == 503
+    assert "unable to deliver otp" in request_otp_response.json()["detail"].lower()
+
+
+def test_auth_otp_verify_rejects_expired_code(monkeypatch):
+    sent: dict[str, str] = {}
+
+    def _capture_otp(*, email: str, otp_code: str) -> bool:
+        sent["email"] = email
+        sent["otp_code"] = otp_code
+        return True
+
+    monkeypatch.setattr(auth_router, "send_otp_via_resend", _capture_otp)
+
+    suffix = uuid4().hex[:8]
+    email = f"otp-expired-{suffix}@example.com"
+    invite_response = client.post(
+        "/auth/invite",
+        json={
+            "requester_user_id": "user_1",
+            "email": email,
+            "user_id": f"beta_otp_expired_{suffix}",
+            "ttl_minutes": 30,
+        },
+    )
+    assert invite_response.status_code == 200
+    invite_id = invite_response.json()["invite_id"]
+
+    request_otp_response = client.post(
+        "/auth/otp/request",
+        json={"invite_id": invite_id, "email": email},
+    )
+    assert request_otp_response.status_code == 200
+    otp_code = sent.get("otp_code", "")
+    assert len(otp_code) == 6
+
+    with sqlite3.connect(auth_router.auth_otp_store.db_path) as conn:
+        conn.execute(
+            "UPDATE auth_otp_codes SET expires_at = ? WHERE invite_id = ? AND email = ? AND verified_at IS NULL",
+            ("2000-01-01T00:00:00+00:00", invite_id, email),
+        )
+        conn.commit()
+
+    verify_response = client.post(
+        "/auth/otp/verify",
+        json={"invite_id": invite_id, "email": email, "otp_code": otp_code},
+    )
+    assert verify_response.status_code == 401
+    assert "invalid or expired otp" in verify_response.json()["detail"].lower()
+
+
+def test_auth_otp_verify_rejects_after_max_attempts(monkeypatch):
+    sent: dict[str, str] = {}
+
+    def _capture_otp(*, email: str, otp_code: str) -> bool:
+        sent["email"] = email
+        sent["otp_code"] = otp_code
+        return True
+
+    monkeypatch.setattr(auth_router, "send_otp_via_resend", _capture_otp)
+
+    suffix = uuid4().hex[:8]
+    email = f"otp-attempts-{suffix}@example.com"
+    invite_response = client.post(
+        "/auth/invite",
+        json={
+            "requester_user_id": "user_1",
+            "email": email,
+            "user_id": f"beta_otp_attempts_{suffix}",
+            "ttl_minutes": 30,
+        },
+    )
+    assert invite_response.status_code == 200
+    invite_id = invite_response.json()["invite_id"]
+
+    request_otp_response = client.post(
+        "/auth/otp/request",
+        json={"invite_id": invite_id, "email": email},
+    )
+    assert request_otp_response.status_code == 200
+    correct_code = sent.get("otp_code", "")
+    assert len(correct_code) == 6
+
+    for _ in range(5):
+        bad_verify = client.post(
+            "/auth/otp/verify",
+            json={"invite_id": invite_id, "email": email, "otp_code": "000000"},
+        )
+        assert bad_verify.status_code == 401
+
+    verify_after_lockout = client.post(
+        "/auth/otp/verify",
+        json={"invite_id": invite_id, "email": email, "otp_code": correct_code},
+    )
+    assert verify_after_lockout.status_code == 401
+    assert "invalid or expired otp" in verify_after_lockout.json()["detail"].lower()
+
+
+def test_auth_invite_requires_admin_requester():
+    response = client.post(
+        "/auth/invite",
+        json={
+            "requester_user_id": "user_2",
+            "email": f"non-admin-{uuid4().hex[:6]}@example.com",
+            "user_id": f"beta_non_admin_{uuid4().hex[:6]}",
+            "ttl_minutes": 30,
+        },
+    )
+    assert response.status_code == 403
+    assert "admins" in response.json()["detail"].lower()
+
+
+def test_messages_threads_send_read_flow():
+    suffix = uuid4().hex[:8]
+    sender_user = f"msg_sender_{suffix}"
+    recipient_user = f"msg_recipient_{suffix}"
+
+    sender_login = client.post("/auth/login", json={"user_id": sender_user, "password": "petsocial-demo"})
+    recipient_login = client.post("/auth/login", json={"user_id": recipient_user, "password": "petsocial-demo"})
+    assert sender_login.status_code == 200
+    assert recipient_login.status_code == 200
+
+    sender_headers = {"Authorization": f"Bearer {sender_login.json()['access_token']}"}
+    recipient_headers = {"Authorization": f"Bearer {recipient_login.json()['access_token']}"}
+    thread_id = f"dm_{min(sender_user, recipient_user)}_{max(sender_user, recipient_user)}"
+
+    send_response = client.post(
+        f"/messages/threads/{thread_id}/messages",
+        json={
+            "user_id": sender_user,
+            "recipient_user_id": recipient_user,
+            "body": "Hello from integration test",
+        },
+        headers=sender_headers,
+    )
+    assert send_response.status_code == 200
+    sent_payload = send_response.json()
+    assert sent_payload["thread_id"] == thread_id
+    assert sent_payload["sender_user_id"] == sender_user
+    assert sent_payload["recipient_user_id"] == recipient_user
+
+    recipient_threads_before = client.get(
+        "/messages/threads",
+        params={"user_id": recipient_user},
+        headers=recipient_headers,
+    )
+    assert recipient_threads_before.status_code == 200
+    thread_before = next((item for item in recipient_threads_before.json() if item["id"] == thread_id), None)
+    assert thread_before is not None
+    assert thread_before["unread_count"] >= 1
+
+    list_messages = client.get(
+        f"/messages/threads/{thread_id}",
+        params={"user_id": recipient_user},
+        headers=recipient_headers,
+    )
+    assert list_messages.status_code == 200
+    assert any(message["id"] == sent_payload["id"] for message in list_messages.json())
+
+    mark_read_response = client.post(
+        f"/messages/threads/{thread_id}/read",
+        json={"user_id": recipient_user},
+        headers=recipient_headers,
+    )
+    assert mark_read_response.status_code == 200
+    assert mark_read_response.json()["status"] == "ok"
+    assert mark_read_response.json()["read_seq"] >= 1
+
+    recipient_threads_after = client.get(
+        "/messages/threads",
+        params={"user_id": recipient_user},
+        headers=recipient_headers,
+    )
+    assert recipient_threads_after.status_code == 200
+    thread_after = next((item for item in recipient_threads_after.json() if item["id"] == thread_id), None)
+    assert thread_after is not None
+    assert thread_after["unread_count"] == 0
+
+
+def test_messages_rejects_thread_id_participant_mismatch():
+    sender = f"msg_sender_{uuid4().hex[:6]}"
+    recipient = f"msg_recipient_{uuid4().hex[:6]}"
+    login = client.post("/auth/login", json={"user_id": sender, "password": "petsocial-demo"})
+    assert login.status_code == 200
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    response = client.post(
+        "/messages/threads/dm_wrong/messages",
+        json={
+            "user_id": sender,
+            "recipient_user_id": recipient,
+            "body": "Bad thread id should fail",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "does not match participants" in response.json()["detail"]
+
+
+def test_auth_delete_me_revokes_token_and_removes_message_threads():
+    suffix = uuid4().hex[:8]
+    deleted_user = f"delete_target_{suffix}"
+    peer_user = f"delete_peer_{suffix}"
+    thread_id = f"dm_{min(deleted_user, peer_user)}_{max(deleted_user, peer_user)}"
+
+    deleted_login = client.post("/auth/login", json={"user_id": deleted_user, "password": "petsocial-demo"})
+    peer_login = client.post("/auth/login", json={"user_id": peer_user, "password": "petsocial-demo"})
+    assert deleted_login.status_code == 200
+    assert peer_login.status_code == 200
+    deleted_headers = {"Authorization": f"Bearer {deleted_login.json()['access_token']}"}
+    peer_headers = {"Authorization": f"Bearer {peer_login.json()['access_token']}"}
+
+    seed_message = client.post(
+        f"/messages/threads/{thread_id}/messages",
+        json={
+            "user_id": peer_user,
+            "recipient_user_id": deleted_user,
+            "body": "Thread to validate delete cleanup",
+        },
+        headers=peer_headers,
+    )
+    assert seed_message.status_code == 200
+
+    delete_response = client.delete(
+        "/auth/me",
+        params={"user_id": deleted_user},
+        headers=deleted_headers,
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json()["status"] == "deleted"
+    assert delete_response.json()["user_id"] == deleted_user
+
+    me_after_delete = client.get("/auth/me", headers=deleted_headers)
+    assert me_after_delete.status_code == 401
+
+    peer_threads = client.get(
+        "/messages/threads",
+        params={"user_id": peer_user},
+        headers=peer_headers,
+    )
+    assert peer_threads.status_code == 200
+    assert all(thread["id"] != thread_id for thread in peer_threads.json())
 
 
 def test_auth_login_failed_attempts_rate_limited(monkeypatch):
@@ -78,6 +448,33 @@ def test_chat_message_rate_limited(monkeypatch):
     assert "Too many chat requests" in third.json()["detail"]
 
 
+def test_chat_requires_auth_when_auth_required(monkeypatch):
+    monkeypatch.setattr(auth_module, "AUTH_REQUIRED", True)
+    chat_router.CHAT_RATE_LIMIT_HISTORY.clear()
+    response = client.post(
+        "/chat",
+        json={"user_id": "chat_auth_required_user", "message": "hello", "suburb": "Surry Hills"},
+    )
+    assert response.status_code == 401
+
+    token, _ = auth_module.create_access_token("chat_auth_required_user")
+    authed = client.post(
+        "/chat",
+        json={"user_id": "chat_auth_required_user", "message": "hello", "suburb": "Surry Hills"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert authed.status_code == 200
+
+
+def test_chat_message_too_long_returns_422():
+    too_long_message = "x" * 2001
+    response = client.post(
+        "/chat",
+        json={"user_id": "chat_long_message_user", "message": too_long_message, "suburb": "Surry Hills"},
+    )
+    assert response.status_code == 422
+
+
 def test_chat_stream_rate_limited(monkeypatch):
     monkeypatch.setattr(chat_router, "CHAT_STREAM_RATE_LIMIT_MAX_REQUESTS", 1)
     monkeypatch.setattr(chat_router, "CHAT_RATE_LIMIT_WINDOW", timedelta(minutes=10))
@@ -95,6 +492,68 @@ def test_chat_stream_rate_limited(monkeypatch):
     )
     assert blocked.status_code == 429
     assert "Too many chat requests" in blocked.json()["detail"]
+
+
+def test_chat_faq_route_includes_badges_and_citations():
+    response = client.post(
+        "/chat",
+        json={
+            "user_id": "chat_faq_user",
+            "message": "How often should my dog get vaccines and boosters?",
+            "suburb": "Surry Hills",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer_source"] == "faq"
+    assert "FAQ QA" in payload["answer_badges"]
+    assert payload["citations"], "FAQ route should provide citations"
+    citation = payload["citations"][0]
+    assert citation["title"]
+    assert citation["source"]
+    assert citation.get("url")
+
+    conversation = payload.get("conversation", [])
+    assert conversation
+    assistant_turn = next((turn for turn in reversed(conversation) if turn.get("role") == "assistant"), None)
+    assert assistant_turn is not None
+    assert assistant_turn.get("answer_source") == "faq"
+    assert assistant_turn.get("citations")
+
+
+def test_chat_rag_route_includes_grounded_citations():
+    response = client.post(
+        "/chat",
+        json={
+            "user_id": "chat_rag_user",
+            "message": "My dog may have parvo symptoms. What should I do now?",
+            "suburb": "Surry Hills",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer_source"] in {"rag", "faq"}
+    assert "High Risk Safe Mode" in payload["answer_badges"]
+    if payload["answer_source"] == "rag":
+        assert "RAG Grounded" in payload["answer_badges"]
+    else:
+        assert "FAQ QA" in payload["answer_badges"]
+    assert payload["citations"], "RAG route should provide citations"
+
+
+def test_chat_general_route_includes_fallback_badge():
+    response = client.post(
+        "/chat",
+        json={
+            "user_id": "chat_general_user",
+            "message": "My dog is energetic. Give me a simple daily routine.",
+            "suburb": "Surry Hills",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer_source"] in {"gpt_fallback", "fallback"}
+    assert payload["answer_badges"], "General route should include answer badges"
 
 
 def test_security_rate_limit_metrics_snapshot_tracks_429_surfaces(monkeypatch):
@@ -344,7 +803,11 @@ def test_update_cancel_restore_service_provider():
 
     mine_including_inactive = client.get(
         "/services/providers",
-        params={"user_id": "user_2", "include_inactive": "true"},
+        params={
+            "user_id": "user_2",
+            "include_inactive": "true",
+            "q": "Snowy Updated Listing",
+        },
     )
     assert mine_including_inactive.status_code == 200
     cancelled_item = next(item for item in mine_including_inactive.json() if item["id"] == provider_id)
@@ -414,6 +877,321 @@ def test_services_bookings_invalid_role_returns_400():
     response = client.get("/services/bookings", params={"user_id": "user_1", "role": "admin"})
     assert response.status_code == 400
     assert "Invalid role value" in response.json()["detail"]
+
+
+def test_services_booking_conflict_includes_alternative_slots_hint():
+    login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert login.status_code == 200
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    provider, available_slots = _find_provider_with_available_slots(
+        category="grooming",
+        min_available_slots=1,
+        day_offset_start=180,
+        day_offset_end=260,
+    )
+    provider_id = provider["id"]
+    candidate = available_slots[0]
+
+    create_first = client.post(
+        "/services/bookings",
+        json={
+            "user_id": "user_2",
+            "provider_id": provider_id,
+            "pet_name": "Milo",
+            "date": candidate["date"],
+            "time_slot": candidate["time_slot"],
+            "note": "Conflict guardrail setup booking",
+        },
+        headers=headers,
+    )
+    assert create_first.status_code == 200
+
+    create_conflict = client.post(
+        "/services/bookings",
+        json={
+            "user_id": "user_2",
+            "provider_id": provider_id,
+            "pet_name": "Milo",
+            "date": candidate["date"],
+            "time_slot": candidate["time_slot"],
+            "note": "Conflict guardrail retry booking",
+        },
+        headers=headers,
+    )
+    assert create_conflict.status_code == 409
+    detail = create_conflict.json()["detail"]
+    assert "Time slot unavailable" in detail
+    assert "Next available:" in detail
+
+
+def test_services_booking_history_endpoint_tracks_exact_transitions_and_permissions():
+    owner_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_headers = {"Authorization": f"Bearer {owner_login.json()['access_token']}"}
+
+    provider, available_slots = _find_provider_with_available_slots(
+        category="grooming",
+        min_available_slots=1,
+        day_offset_start=210,
+        day_offset_end=290,
+        exclude_owner_user_id="user_2",
+    )
+    provider_id = provider["id"]
+    provider_owner_user_id = provider.get("owner_user_id")
+    assert provider_owner_user_id
+
+    available_slot = available_slots[0]
+
+    create_booking = client.post(
+        "/services/bookings",
+        json={
+            "user_id": "user_2",
+            "provider_id": provider_id,
+            "pet_name": "Milo",
+            "date": available_slot["date"],
+            "time_slot": available_slot["time_slot"],
+            "note": "Timeline API test booking",
+        },
+        headers=owner_headers,
+    )
+    assert create_booking.status_code == 200
+    booking_id = create_booking.json()["id"]
+
+    provider_login = client.post("/auth/login", json={"user_id": provider_owner_user_id, "password": "petsocial-demo"})
+    assert provider_login.status_code == 200
+    provider_headers = {"Authorization": f"Bearer {provider_login.json()['access_token']}"}
+    provider_confirm = client.post(
+        f"/services/bookings/{booking_id}/status",
+        json={
+            "actor_user_id": provider_owner_user_id,
+            "status": "provider_confirmed",
+            "note": "Confirmed for timeline API test",
+        },
+        headers=provider_headers,
+    )
+    assert provider_confirm.status_code == 200
+
+    history_owner = client.get(
+        f"/services/bookings/{booking_id}/history",
+        params={"requester_user_id": "user_2"},
+        headers=owner_headers,
+    )
+    assert history_owner.status_code == 200
+    history_payload = history_owner.json()
+    assert len(history_payload) >= 2
+    assert history_payload[0]["from_status"] == "none"
+    assert history_payload[0]["to_status"] == "requested"
+    assert history_payload[-1]["to_status"] == "provider_confirmed"
+    assert history_payload[-1]["actor_user_id"] == provider_owner_user_id
+
+    stranger_user_id = next(
+        user_id for user_id in ["user_1", "user_3", "user_4"] if user_id not in {"user_2", provider_owner_user_id}
+    )
+    stranger_login = client.post("/auth/login", json={"user_id": stranger_user_id, "password": "petsocial-demo"})
+    assert stranger_login.status_code == 200
+    stranger_headers = {"Authorization": f"Bearer {stranger_login.json()['access_token']}"}
+    forbidden = client.get(
+        f"/services/bookings/{booking_id}/history",
+        params={"requester_user_id": stranger_user_id},
+        headers=stranger_headers,
+    )
+    assert forbidden.status_code == 403
+    assert "Only booking owner or provider can view booking history" in forbidden.json()["detail"]
+
+
+def test_services_provider_reschedule_updates_slot_and_keeps_transition_history():
+    owner_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_headers = {"Authorization": f"Bearer {owner_login.json()['access_token']}"}
+
+    provider, available_slots = _find_provider_with_available_slots(
+        category="grooming",
+        min_available_slots=2,
+        day_offset_start=230,
+        day_offset_end=320,
+        exclude_owner_user_id="user_2",
+    )
+    provider_id = provider["id"]
+    provider_owner_user_id = provider.get("owner_user_id")
+    assert provider_owner_user_id
+
+    original_slot = available_slots[0]
+    target_slot = available_slots[1]
+
+    create_booking = client.post(
+        "/services/bookings",
+        json={
+            "user_id": "user_2",
+            "provider_id": provider_id,
+            "pet_name": "Milo",
+            "date": original_slot["date"],
+            "time_slot": original_slot["time_slot"],
+            "note": "Reschedule target flow test",
+        },
+        headers=owner_headers,
+    )
+    assert create_booking.status_code == 200
+    booking_id = create_booking.json()["id"]
+
+    provider_login = client.post("/auth/login", json={"user_id": provider_owner_user_id, "password": "petsocial-demo"})
+    assert provider_login.status_code == 200
+    provider_headers = {"Authorization": f"Bearer {provider_login.json()['access_token']}"}
+
+    provider_confirm = client.post(
+        f"/services/bookings/{booking_id}/status",
+        json={
+            "actor_user_id": provider_owner_user_id,
+            "status": "provider_confirmed",
+            "note": "Confirmed before reschedule",
+        },
+        headers=provider_headers,
+    )
+    assert provider_confirm.status_code == 200
+
+    owner_request_reschedule = client.post(
+        f"/services/bookings/{booking_id}/status",
+        json={
+            "actor_user_id": "user_2",
+            "status": "reschedule_requested",
+            "note": "Need a later slot",
+        },
+        headers=owner_headers,
+    )
+    assert owner_request_reschedule.status_code == 200
+    assert owner_request_reschedule.json()["status"] == "reschedule_requested"
+
+    provider_reschedule = client.post(
+        f"/services/bookings/{booking_id}/status",
+        json={
+            "actor_user_id": provider_owner_user_id,
+            "status": "rescheduled",
+            "date": target_slot["date"],
+            "time_slot": target_slot["time_slot"],
+            "note": "Moved to a later slot",
+        },
+        headers=provider_headers,
+    )
+    assert provider_reschedule.status_code == 200
+    rescheduled_payload = provider_reschedule.json()
+    assert rescheduled_payload["status"] == "rescheduled"
+    assert rescheduled_payload["date"] == target_slot["date"]
+    assert rescheduled_payload["time_slot"] == target_slot["time_slot"]
+
+    provider_reconfirm = client.post(
+        f"/services/bookings/{booking_id}/status",
+        json={
+            "actor_user_id": provider_owner_user_id,
+            "status": "provider_confirmed",
+            "note": "Reconfirmed after reschedule",
+        },
+        headers=provider_headers,
+    )
+    assert provider_reconfirm.status_code == 200
+    provider_reconfirm_payload = provider_reconfirm.json()
+    assert provider_reconfirm_payload["status"] == "provider_confirmed"
+    assert provider_reconfirm_payload["date"] == target_slot["date"]
+    assert provider_reconfirm_payload["time_slot"] == target_slot["time_slot"]
+
+    refreshed_availability = client.get(
+        f"/services/providers/{provider_id}/availability",
+        params={"date": target_slot["date"]},
+    )
+    assert refreshed_availability.status_code == 200
+    moved_slot = next(
+        (slot for slot in refreshed_availability.json() if slot["time_slot"] == target_slot["time_slot"]),
+        None,
+    )
+    assert moved_slot is not None
+    assert moved_slot["available"] is False
+
+    history = client.get(
+        f"/services/bookings/{booking_id}/history",
+        params={"requester_user_id": "user_2"},
+        headers=owner_headers,
+    )
+    assert history.status_code == 200
+    history_payload = history.json()
+    to_statuses = [row["to_status"] for row in history_payload]
+    assert to_statuses[:5] == [
+        "requested",
+        "provider_confirmed",
+        "reschedule_requested",
+        "rescheduled",
+        "provider_confirmed",
+    ]
+
+
+def test_services_provider_reschedule_requires_target_date_and_time_slot():
+    owner_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_headers = {"Authorization": f"Bearer {owner_login.json()['access_token']}"}
+
+    provider, available_slots = _find_provider_with_available_slots(
+        category="grooming",
+        min_available_slots=1,
+        day_offset_start=240,
+        day_offset_end=320,
+        exclude_owner_user_id="user_2",
+    )
+    provider_id = provider["id"]
+    provider_owner_user_id = provider.get("owner_user_id")
+    assert provider_owner_user_id
+
+    available_slot = available_slots[0]
+
+    create_booking = client.post(
+        "/services/bookings",
+        json={
+            "user_id": "user_2",
+            "provider_id": provider_id,
+            "pet_name": "Milo",
+            "date": available_slot["date"],
+            "time_slot": available_slot["time_slot"],
+            "note": "Missing reschedule payload test",
+        },
+        headers=owner_headers,
+    )
+    assert create_booking.status_code == 200
+    booking_id = create_booking.json()["id"]
+
+    provider_login = client.post("/auth/login", json={"user_id": provider_owner_user_id, "password": "petsocial-demo"})
+    assert provider_login.status_code == 200
+    provider_headers = {"Authorization": f"Bearer {provider_login.json()['access_token']}"}
+
+    provider_confirm = client.post(
+        f"/services/bookings/{booking_id}/status",
+        json={
+            "actor_user_id": provider_owner_user_id,
+            "status": "provider_confirmed",
+            "note": "Confirmed before reschedule request",
+        },
+        headers=provider_headers,
+    )
+    assert provider_confirm.status_code == 200
+
+    owner_request_reschedule = client.post(
+        f"/services/bookings/{booking_id}/status",
+        json={
+            "actor_user_id": "user_2",
+            "status": "reschedule_requested",
+            "note": "Need another time",
+        },
+        headers=owner_headers,
+    )
+    assert owner_request_reschedule.status_code == 200
+
+    missing_slot_payload = client.post(
+        f"/services/bookings/{booking_id}/status",
+        json={
+            "actor_user_id": provider_owner_user_id,
+            "status": "rescheduled",
+            "note": "No slot supplied",
+        },
+        headers=provider_headers,
+    )
+    assert missing_slot_payload.status_code == 400
+    assert "Rescheduled status requires date and time_slot" in missing_slot_payload.json()["detail"]
 
 
 def test_services_calendar_invalid_date_range_returns_400():
@@ -684,35 +1462,39 @@ def test_mvp_day2_contract_freeze_parks_and_grooming():
     assert_exact_keys(providers_payload[0], provider_keys, "services/providers[0]")
     provider_id = providers_payload[0]["id"]
 
-    availability_resp = client.get(
-        f"/services/providers/{provider_id}/availability",
-        params={"date": "2026-03-01"},
-    )
-    assert availability_resp.status_code == 200
-    availability_payload = availability_resp.json()
-    assert isinstance(availability_payload, list)
-    selected_booking_date = "2026-03-01"
-    selected_booking_slot = "09:00"
-    if availability_payload:
-        assert_exact_keys(availability_payload[0], availability_slot_keys, "services/providers/{id}/availability[0]")
-        available_slot = next((slot for slot in availability_payload if slot.get("available")), None)
-        if available_slot:
-            selected_booking_date = available_slot["date"]
-            selected_booking_slot = available_slot["time_slot"]
-
-    booking_resp = client.post(
-        "/services/bookings",
-        json={
-            "user_id": "user_2",
-            "provider_id": provider_id,
-            "pet_name": "Milo",
-            "date": selected_booking_date,
-            "time_slot": selected_booking_slot,
-            "note": "Contract freeze booking",
-        },
-        headers=headers,
-    )
-    assert booking_resp.status_code == 200
+    booking_resp = None
+    for day_offset in range(1, 15):
+        booking_date = (datetime.utcnow().date() + timedelta(days=day_offset)).isoformat()
+        availability_resp = client.get(
+            f"/services/providers/{provider_id}/availability",
+            params={"date": booking_date},
+        )
+        assert availability_resp.status_code == 200
+        availability_payload = availability_resp.json()
+        assert isinstance(availability_payload, list)
+        if availability_payload:
+            assert_exact_keys(availability_payload[0], availability_slot_keys, "services/providers/{id}/availability[0]")
+        candidate_slots = [slot for slot in availability_payload if slot.get("available")]
+        if not candidate_slots:
+            continue
+        for slot in candidate_slots:
+            booking_resp = client.post(
+                "/services/bookings",
+                json={
+                    "user_id": "user_2",
+                    "provider_id": provider_id,
+                    "pet_name": "Milo",
+                    "date": slot["date"],
+                    "time_slot": slot["time_slot"],
+                    "note": "Contract freeze booking",
+                },
+                headers=headers,
+            )
+            if booking_resp.status_code == 200:
+                break
+        if booking_resp is not None and booking_resp.status_code == 200:
+            break
+    assert booking_resp is not None and booking_resp.status_code == 200
     assert_exact_keys(booking_resp.json(), booking_keys, "services/bookings:create")
 
     register_resp = client.post(
@@ -1117,6 +1899,195 @@ def test_group_challenge_participation_and_growth_rewards():
     assert updated_group["cooperative_score"] >= 1
 
 
+def test_group_onboarding_uses_authenticated_user_and_is_idempotent():
+    inviter_login = client.post("/auth/login", json={"user_id": "user_1", "password": "petsocial-demo"})
+    assert inviter_login.status_code == 200
+    inviter_headers = {"Authorization": f"Bearer {inviter_login.json()['access_token']}"}
+
+    groups_before = client.get("/community/groups", params={"user_id": "user_1"})
+    assert groups_before.status_code == 200
+    inviter_group = next((group for group in groups_before.json() if group["membership_status"] == "member"), None)
+    assert inviter_group is not None
+    group_id = inviter_group["id"]
+    member_count_before = inviter_group["member_count"]
+
+    invite = client.post(
+        "/community/invites",
+        json={"group_id": group_id, "inviter_user_id": "user_1"},
+        headers=inviter_headers,
+    )
+    assert invite.status_code == 200
+    invite_token = invite.json()["token"]
+
+    joining_user = f"user_invited_{uuid4().hex[:8]}"
+    joining_login = client.post("/auth/login", json={"user_id": joining_user, "password": "petsocial-demo"})
+    assert joining_login.status_code == 200
+    joining_headers = {"Authorization": f"Bearer {joining_login.json()['access_token']}"}
+
+    first = client.post(
+        "/community/onboarding/complete",
+        json={
+            "invite_token": invite_token,
+            "owner_name": "Jordan",
+            "dog_name": "Poppy",
+            "suburb": inviter_group["suburb"],
+            "share_photo_to_group": False,
+        },
+        headers=joining_headers,
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["user_id"] == joining_user
+    assert first_payload["group_id"] == group_id
+    assert first_payload["membership_status"] == "member"
+
+    groups_after_first = client.get("/community/groups", params={"user_id": "user_1"})
+    assert groups_after_first.status_code == 200
+    inviter_group_after_first = next((group for group in groups_after_first.json() if group["id"] == group_id), None)
+    assert inviter_group_after_first is not None
+    assert inviter_group_after_first["member_count"] >= member_count_before + 1
+    member_count_after_first = inviter_group_after_first["member_count"]
+
+    second = client.post(
+        "/community/onboarding/complete",
+        json={
+            "invite_token": invite_token,
+            "owner_name": "Jordan",
+            "dog_name": "Poppy",
+            "suburb": inviter_group["suburb"],
+            "share_photo_to_group": False,
+        },
+        headers=joining_headers,
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["user_id"] == joining_user
+    assert second_payload["group_id"] == group_id
+    assert second_payload["membership_status"] == "member"
+
+    groups_after_second = client.get("/community/groups", params={"user_id": "user_1"})
+    assert groups_after_second.status_code == 200
+    inviter_group_after_second = next((group for group in groups_after_second.json() if group["id"] == group_id), None)
+    assert inviter_group_after_second is not None
+    assert inviter_group_after_second["member_count"] == member_count_after_first
+
+    joiner_groups = client.get("/community/groups", params={"user_id": joining_user})
+    assert joiner_groups.status_code == 200
+    joiner_group_view = next((group for group in joiner_groups.json() if group["id"] == group_id), None)
+    assert joiner_group_view is not None
+    assert joiner_group_view["membership_status"] == "member"
+
+
+def test_group_onboarding_requires_auth_when_auth_required(monkeypatch):
+    monkeypatch.setattr(auth_module, "AUTH_REQUIRED", True)
+
+    inviter_login = client.post("/auth/login", json={"user_id": "user_1", "password": "petsocial-demo"})
+    assert inviter_login.status_code == 200
+    inviter_headers = {"Authorization": f"Bearer {inviter_login.json()['access_token']}"}
+
+    groups_response = client.get("/community/groups", params={"user_id": "user_1"})
+    assert groups_response.status_code == 200
+    inviter_group = next((group for group in groups_response.json() if group["membership_status"] == "member"), None)
+    assert inviter_group is not None
+
+    invite = client.post(
+        "/community/invites",
+        json={"group_id": inviter_group["id"], "inviter_user_id": "user_1"},
+        headers=inviter_headers,
+    )
+    assert invite.status_code == 200
+
+    onboarding_without_auth = client.post(
+        "/community/onboarding/complete",
+        json={
+            "invite_token": invite.json()["token"],
+            "owner_name": "NoAuth User",
+            "dog_name": "NoAuth Dog",
+            "suburb": inviter_group["suburb"],
+            "share_photo_to_group": False,
+        },
+    )
+    assert onboarding_without_auth.status_code == 401
+
+
+def test_group_invite_create_rate_limited(monkeypatch):
+    monkeypatch.setattr(community_router, "INVITE_CREATE_RATE_LIMIT_MAX", 1)
+    monkeypatch.setattr(community_router, "INVITE_CREATE_RATE_LIMIT_WINDOW", timedelta(minutes=10))
+    community_router.COMMUNITY_ACTION_RATE_LIMIT_HISTORY.clear()
+
+    inviter_login = client.post("/auth/login", json={"user_id": "user_1", "password": "petsocial-demo"})
+    assert inviter_login.status_code == 200
+    inviter_headers = {"Authorization": f"Bearer {inviter_login.json()['access_token']}"}
+
+    groups_response = client.get("/community/groups", params={"user_id": "user_1"})
+    assert groups_response.status_code == 200
+    inviter_group = next((group for group in groups_response.json() if group["membership_status"] == "member"), None)
+    assert inviter_group is not None
+
+    first = client.post(
+        "/community/invites",
+        json={"group_id": inviter_group["id"], "inviter_user_id": "user_1"},
+        headers=inviter_headers,
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/community/invites",
+        json={"group_id": inviter_group["id"], "inviter_user_id": "user_1"},
+        headers=inviter_headers,
+    )
+    assert second.status_code == 429
+    assert "invite_create" in second.json()["detail"]
+
+
+def test_group_onboarding_complete_rate_limited(monkeypatch):
+    monkeypatch.setattr(community_router, "ONBOARDING_COMPLETE_RATE_LIMIT_MAX", 1)
+    monkeypatch.setattr(community_router, "ONBOARDING_COMPLETE_RATE_LIMIT_WINDOW", timedelta(minutes=10))
+    community_router.COMMUNITY_ACTION_RATE_LIMIT_HISTORY.clear()
+
+    inviter_login = client.post("/auth/login", json={"user_id": "user_1", "password": "petsocial-demo"})
+    assert inviter_login.status_code == 200
+    inviter_headers = {"Authorization": f"Bearer {inviter_login.json()['access_token']}"}
+
+    groups_response = client.get("/community/groups", params={"user_id": "user_1"})
+    assert groups_response.status_code == 200
+    inviter_group = next((group for group in groups_response.json() if group["membership_status"] == "member"), None)
+    assert inviter_group is not None
+
+    invite = client.post(
+        "/community/invites",
+        json={"group_id": inviter_group["id"], "inviter_user_id": "user_1"},
+        headers=inviter_headers,
+    )
+    assert invite.status_code == 200
+    invite_token = invite.json()["token"]
+
+    first = client.post(
+        "/community/onboarding/complete",
+        json={
+            "invite_token": invite_token,
+            "owner_name": "Rate Limited User",
+            "dog_name": "Rate Limited Dog",
+            "suburb": inviter_group["suburb"],
+            "share_photo_to_group": False,
+        },
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/community/onboarding/complete",
+        json={
+            "invite_token": invite_token,
+            "owner_name": "Rate Limited User",
+            "dog_name": "Rate Limited Dog",
+            "suburb": inviter_group["suburb"],
+            "share_photo_to_group": False,
+        },
+    )
+    assert second.status_code == 429
+    assert "onboarding_complete" in second.json()["detail"]
+
+
 def test_lost_found_post_creation_sets_created_at():
     created = client.post(
         "/community/posts",
@@ -1440,3 +2411,232 @@ def test_lost_found_distance_filter_and_coordinates():
     )
     assert far.status_code == 200
     assert all(item["id"] != post_id for item in far.json())
+
+
+def test_services_recommendations_infer_suburb_from_dog_park_membership():
+    response = client.get(
+        "/services/recommendations",
+        params={"user_id": "user_2", "category": "grooming"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["inferred_suburb"] == "Surry Hills"
+    assert payload["suburb_source"] == "dog_park_membership"
+    assert isinstance(payload["providers"], list)
+    if payload["providers"]:
+        assert all(provider["category"] == "grooming" for provider in payload["providers"])
+
+
+def test_services_recommendations_without_category_allow_mixed_results():
+    response = client.get(
+        "/services/recommendations",
+        params={"user_id": "user_2"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    categories = {provider["category"] for provider in payload["providers"]}
+    assert categories.issubset({"dog_walking", "grooming"})
+    assert payload["suburb_source"] in {"dog_park_membership", "group_membership", "none", "explicit_suburb"}
+
+
+def test_quote_request_without_suburb_uses_membership_focus():
+    requester_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert requester_login.status_code == 200
+    requester_token = requester_login.json()["access_token"]
+
+    create = client.post(
+        "/services/quotes/request",
+        json={
+            "user_id": "user_2",
+            "category": "grooming",
+            "preferred_window": "Saturday morning",
+            "pet_details": "Toy poodle, anxious around loud dryers",
+            "note": "Looking for a calm groomer",
+        },
+        headers={"Authorization": f"Bearer {requester_token}"},
+    )
+    assert create.status_code == 200
+    payload = create.json()
+    assert payload["quote_request"]["suburb"] == "Surry Hills"
+    assert payload["quote_request"]["status"] == "pending"
+    assert payload["targets"]
+
+
+def test_community_post_comments_and_replies():
+    community_router.POST_RATE_LIMIT_HISTORY.clear()
+    owner_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_headers = {"Authorization": f"Bearer {owner_login.json()['access_token']}"}
+
+    peer_login = client.post("/auth/login", json={"user_id": "user_3", "password": "petsocial-demo"})
+    assert peer_login.status_code == 200
+    peer_headers = {"Authorization": f"Bearer {peer_login.json()['access_token']}"}
+
+    created = client.post(
+        "/community/posts",
+        json={
+            "type": "group_post",
+            "user_id": "user_2",
+            "title": "Sunday groom prep tips",
+            "body": "Sharing products before our next meet-up.",
+            "suburb": "Surry Hills",
+        },
+        headers=owner_headers,
+    )
+    assert created.status_code == 200
+    post_id = created.json()["id"]
+
+    first_comment = client.post(
+        f"/community/posts/{post_id}/comments",
+        json={"user_id": "user_3", "body": "Can you share your brush brand?"},
+        headers=peer_headers,
+    )
+    assert first_comment.status_code == 200
+    first_payload = first_comment.json()
+    assert first_payload["parent_comment_id"] is None
+
+    reply = client.post(
+        f"/community/posts/{post_id}/comments",
+        json={
+            "user_id": "user_2",
+            "body": "Yes, I use a slicker brush and detangler spray.",
+            "parent_comment_id": first_payload["id"],
+        },
+        headers=owner_headers,
+    )
+    assert reply.status_code == 200
+    reply_payload = reply.json()
+    assert reply_payload["parent_comment_id"] == first_payload["id"]
+
+    listed = client.get(f"/community/posts/{post_id}/comments")
+    assert listed.status_code == 200
+    comments = listed.json()
+    assert any(comment["id"] == first_payload["id"] for comment in comments)
+    assert any(comment["id"] == reply_payload["id"] for comment in comments)
+
+
+def test_community_comment_rejects_missing_parent():
+    community_router.POST_RATE_LIMIT_HISTORY.clear()
+    owner_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_headers = {"Authorization": f"Bearer {owner_login.json()['access_token']}"}
+
+    peer_login = client.post("/auth/login", json={"user_id": "user_3", "password": "petsocial-demo"})
+    assert peer_login.status_code == 200
+    peer_headers = {"Authorization": f"Bearer {peer_login.json()['access_token']}"}
+
+    created = client.post(
+        "/community/posts",
+        json={
+            "type": "group_post",
+            "user_id": "user_2",
+            "title": "Weeknight walk planning",
+            "body": "Posting a quick route for tomorrow.",
+            "suburb": "Surry Hills",
+        },
+        headers=owner_headers,
+    )
+    assert created.status_code == 200
+    post_id = created.json()["id"]
+
+    bad_reply = client.post(
+        f"/community/posts/{post_id}/comments",
+        json={
+            "user_id": "user_3",
+            "body": "Replying to a missing parent",
+            "parent_comment_id": "cmt_missing_parent",
+        },
+        headers=peer_headers,
+    )
+    assert bad_reply.status_code == 400
+    assert bad_reply.json()["detail"] == "Parent comment not found"
+
+
+def test_community_comments_pagination_and_moderation_controls():
+    community_router.POST_RATE_LIMIT_HISTORY.clear()
+    owner_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_headers = {"Authorization": f"Bearer {owner_login.json()['access_token']}"}
+
+    peer_login = client.post("/auth/login", json={"user_id": "user_3", "password": "petsocial-demo"})
+    assert peer_login.status_code == 200
+    peer_headers = {"Authorization": f"Bearer {peer_login.json()['access_token']}"}
+
+    admin_login = client.post("/auth/login", json={"user_id": "user_1", "password": "petsocial-demo"})
+    assert admin_login.status_code == 200
+    admin_headers = {"Authorization": f"Bearer {admin_login.json()['access_token']}"}
+
+    created = client.post(
+        "/community/posts",
+        json={
+            "type": "group_post",
+            "user_id": "user_2",
+            "title": "Comment moderation flow",
+            "body": "Testing comment pagination and moderator controls.",
+            "suburb": "Surry Hills",
+        },
+        headers=owner_headers,
+    )
+    assert created.status_code == 200
+    post_id = created.json()["id"]
+
+    first = client.post(
+        f"/community/posts/{post_id}/comments",
+        json={"user_id": "user_3", "body": "First comment"},
+        headers=peer_headers,
+    )
+    second = client.post(
+        f"/community/posts/{post_id}/comments",
+        json={"user_id": "user_3", "body": "Second comment"},
+        headers=peer_headers,
+    )
+    third = client.post(
+        f"/community/posts/{post_id}/comments",
+        json={"user_id": "user_3", "body": "Third comment"},
+        headers=peer_headers,
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 200
+    second_id = second.json()["id"]
+
+    removed = client.post(
+        f"/community/comments/{second_id}/moderate",
+        json={"requester_user_id": "user_1", "action": "remove", "note": "Spam"},
+        headers=admin_headers,
+    )
+    assert removed.status_code == 200
+    assert removed.json()["status"] == "removed_by_moderator"
+
+    regular_view = client.get(
+        f"/community/posts/{post_id}/comments",
+        params={"user_id": "user_2"},
+        headers=owner_headers,
+    )
+    assert regular_view.status_code == 200
+    assert all(comment["status"] == "active" for comment in regular_view.json())
+    assert all(comment["id"] != second_id for comment in regular_view.json())
+
+    paged = client.get(
+        f"/community/posts/{post_id}/comments",
+        params={"user_id": "user_2", "limit": 1, "offset": 1},
+        headers=owner_headers,
+    )
+    assert paged.status_code == 200
+    assert len(paged.json()) <= 1
+
+    include_removed_admin = client.get(
+        f"/community/posts/{post_id}/comments",
+        params={"user_id": "user_1", "include_removed": "true"},
+        headers=admin_headers,
+    )
+    assert include_removed_admin.status_code == 200
+    assert any(comment["id"] == second_id and comment["status"] == "removed_by_moderator" for comment in include_removed_admin.json())
+
+    restored = client.post(
+        f"/community/comments/{second_id}/moderate",
+        json={"requester_user_id": "user_1", "action": "restore", "note": "False positive"},
+        headers=admin_headers,
+    )
+    assert restored.status_code == 200
+    assert restored.json()["status"] == "active"
