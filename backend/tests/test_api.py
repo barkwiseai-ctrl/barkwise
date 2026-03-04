@@ -229,11 +229,35 @@ def test_auth_profile_upsert_and_fetch_round_trip():
             "display_name": "Chris Xu",
             "email": f"{suffix}@example.com",
             "phone": "+61 400 123 456",
+            "human_pronouns": "he/him",
+            "human_role_label": "Member",
             "dog_name": "Milo",
+            "dog_age_months": 36,
+            "dog_breed_mix": "Cavoodle",
+            "dog_sex_neuter": "Male, desexed",
+            "dog_weight_class": "Small (0-10kg)",
             "dog_photo_urls": ["https://example.com/milo.jpg", "content://photos/2"],
+            "secondary_dog_name": "Nori",
+            "secondary_dog_age_months": 12,
             "bio": "Dog parent in Melbourne.",
             "suburb": "Richmond",
             "favorite_suburbs": ["Richmond", "Collingwood"],
+            "play_energy_level": "Medium",
+            "play_style": "Chase",
+            "social_confidence": "Friendly",
+            "trigger_notes": "Slow intro with bigger dogs.",
+            "ideal_match": "Playful small dogs",
+            "walk_preferences": "Morning walk",
+            "training_style": "Positive reinforcement",
+            "feeding_rules": "No chicken",
+            "consent_boundaries": "Ask before treats",
+            "vaccination_status": "Up to date",
+            "microchipped": True,
+            "recall_trained": False,
+            "leash_reliability": "Good",
+            "emergency_contact_name": "Taylor",
+            "emergency_contact_phone": "+61 400 999 999",
+            "field_visibility": {"phone": "friends", "email": "private"},
         },
     )
     assert upsert.status_code == 200
@@ -241,6 +265,8 @@ def test_auth_profile_upsert_and_fetch_round_trip():
     assert upsert_payload["display_name"] == "Chris Xu"
     assert upsert_payload["dog_photo_urls"][0] == "https://example.com/milo.jpg"
     assert upsert_payload["suburb"] == "Richmond"
+    assert upsert_payload["dog_age_months"] == 36
+    assert upsert_payload["field_visibility"]["phone"] == "friends"
 
     fetched = client.get(
         "/auth/profile",
@@ -251,6 +277,8 @@ def test_auth_profile_upsert_and_fetch_round_trip():
     assert fetched_payload["display_name"] == "Chris Xu"
     assert fetched_payload["dog_name"] == "Milo"
     assert fetched_payload["favorite_suburbs"] == ["Richmond", "Collingwood"]
+    assert fetched_payload["secondary_dog_name"] == "Nori"
+    assert fetched_payload["human_pronouns"] == "he/him"
 
 
 def test_auth_profile_rejects_invalid_email():

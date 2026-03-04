@@ -777,11 +777,36 @@ class UserProfile(BaseModel):
     display_name: str = ""
     email: str = ""
     phone: str = ""
+    human_pronouns: str = ""
+    human_role_label: str = ""
     dog_name: str = ""
+    dog_age_months: int = 0
+    dog_breed_mix: str = ""
+    dog_sex_neuter: str = ""
+    dog_weight_class: str = ""
     dog_photo_urls: list[str] = Field(default_factory=list)
+    secondary_dog_name: str = ""
+    secondary_dog_age_months: int = 0
+    secondary_dog_photo_url: str = ""
     bio: str = ""
     suburb: str = ""
     favorite_suburbs: list[str] = Field(default_factory=list)
+    play_energy_level: str = ""
+    play_style: str = ""
+    social_confidence: str = ""
+    trigger_notes: str = ""
+    ideal_match: str = ""
+    walk_preferences: str = ""
+    training_style: str = ""
+    feeding_rules: str = ""
+    consent_boundaries: str = ""
+    vaccination_status: str = ""
+    microchipped: bool = False
+    recall_trained: bool = False
+    leash_reliability: str = ""
+    emergency_contact_name: str = ""
+    emergency_contact_phone: str = ""
+    field_visibility: dict[str, str] = Field(default_factory=dict)
     updated_at: str
 
 
@@ -790,11 +815,36 @@ class UserProfileUpsertRequest(BaseModel):
     display_name: str = ""
     email: str = ""
     phone: str = ""
+    human_pronouns: str = ""
+    human_role_label: str = ""
     dog_name: str = ""
+    dog_age_months: int = 0
+    dog_breed_mix: str = ""
+    dog_sex_neuter: str = ""
+    dog_weight_class: str = ""
     dog_photo_urls: list[str] = Field(default_factory=list)
+    secondary_dog_name: str = ""
+    secondary_dog_age_months: int = 0
+    secondary_dog_photo_url: str = ""
     bio: str = ""
     suburb: str = ""
     favorite_suburbs: list[str] = Field(default_factory=list)
+    play_energy_level: str = ""
+    play_style: str = ""
+    social_confidence: str = ""
+    trigger_notes: str = ""
+    ideal_match: str = ""
+    walk_preferences: str = ""
+    training_style: str = ""
+    feeding_rules: str = ""
+    consent_boundaries: str = ""
+    vaccination_status: str = ""
+    microchipped: bool = False
+    recall_trained: bool = False
+    leash_reliability: str = ""
+    emergency_contact_name: str = ""
+    emergency_contact_phone: str = ""
+    field_visibility: dict[str, str] = Field(default_factory=dict)
 
 
 class MessageThreadView(BaseModel):

@@ -2,6 +2,7 @@ package com.petsocial.app.data
 
 import android.content.Context
 import com.google.firebase.messaging.FirebaseMessaging
+import com.petsocial.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -32,17 +33,56 @@ class PetSocialRepository(
     private val mapsApiKey: String,
     context: Context,
 ) {
-    private var userId = "user_2"
+    private val cachePrefs = context.applicationContext.getSharedPreferences(CACHE_PREFS_NAME, Context.MODE_PRIVATE)
+    private var userId: String = cachePrefs.getString(ACTIVE_USER_ID_KEY, "user_2").orEmpty().ifBlank { "user_2" }
     private val json = Json { ignoreUnknownKeys = true }
     private val httpClient = OkHttpClient.Builder().build()
-    private val cachePrefs = context.applicationContext.getSharedPreferences(CACHE_PREFS_NAME, Context.MODE_PRIVATE)
     @Volatile private var authToken: String = cachePrefs.getString(AUTH_TOKEN_KEY, "").orEmpty()
 
     fun setActiveUser(userId: String) {
-        this.userId = userId
+        val normalized = userId.trim().ifBlank { "user_2" }
+        this.userId = normalized
+        cachePrefs.edit().putString(ACTIVE_USER_ID_KEY, normalized).apply()
     }
 
     fun activeUserId(): String = userId
+
+    fun testProfileMode(): String {
+        val defaultMode = if (BuildConfig.ONBOARD_SCRIPT_ENABLED) {
+            TEST_PROFILE_MODE_ONBOARDING
+        } else {
+            TEST_PROFILE_MODE_READY
+        }
+        val raw = cachePrefs.getString(TEST_PROFILE_MODE_KEY, defaultMode)
+            .orEmpty()
+            .trim()
+            .lowercase()
+        return when (raw) {
+            TEST_PROFILE_MODE_ONBOARDING -> TEST_PROFILE_MODE_ONBOARDING
+            else -> TEST_PROFILE_MODE_READY
+        }
+    }
+
+    fun setTestProfileMode(mode: String) {
+        val normalized = when (mode.trim().lowercase()) {
+            TEST_PROFILE_MODE_ONBOARDING -> TEST_PROFILE_MODE_ONBOARDING
+            else -> TEST_PROFILE_MODE_READY
+        }
+        cachePrefs.edit().putString(TEST_PROFILE_MODE_KEY, normalized).apply()
+    }
+
+    fun isTestProfileHeaderVisible(): Boolean {
+        val raw = cachePrefs.getString(TEST_PROFILE_HEADER_MODE_KEY, TEST_PROFILE_HEADER_MODE_HIDDEN)
+            .orEmpty()
+            .trim()
+            .lowercase()
+        return raw == TEST_PROFILE_HEADER_MODE_VISIBLE
+    }
+
+    fun setTestProfileHeaderVisible(visible: Boolean) {
+        val mode = if (visible) TEST_PROFILE_HEADER_MODE_VISIBLE else TEST_PROFILE_HEADER_MODE_HIDDEN
+        cachePrefs.edit().putString(TEST_PROFILE_HEADER_MODE_KEY, mode).apply()
+    }
 
     suspend fun loadProviders(
         category: String? = null,
@@ -66,6 +106,23 @@ class PetSocialRepository(
         userLng = userLng,
         query = query,
         sortBy = sortBy,
+    )
+
+    suspend fun loadRecommendedProviders(
+        category: String? = null,
+        suburb: String? = null,
+        minRating: Double? = null,
+        maxDistanceKm: Double? = null,
+        userLat: Double? = null,
+        userLng: Double? = null,
+    ): ServiceRecommendationsResponse = api.getRecommendations(
+        userId = userId,
+        category = category,
+        suburb = suburb,
+        minRating = minRating,
+        maxDistanceKm = maxDistanceKm,
+        userLat = userLat,
+        userLng = userLng,
     )
 
     suspend fun loadProviderDetails(providerId: String): ServiceProviderDetailsResponse = api.getProviderDetails(providerId)
@@ -462,7 +519,7 @@ class PetSocialRepository(
 
     suspend fun requestServiceQuote(
         category: String,
-        suburb: String,
+        suburb: String? = null,
         preferredWindow: String,
         petDetails: String,
         note: String,
@@ -473,6 +530,45 @@ class PetSocialRepository(
             suburb = suburb,
             preferredWindow = preferredWindow,
             petDetails = petDetails,
+            note = note,
+        ),
+    )
+
+    suspend fun loadPostComments(
+        postId: String,
+        limit: Int = 50,
+        offset: Int = 0,
+        includeRemoved: Boolean = false,
+    ): List<CommunityComment> = api.getPostComments(
+        postId = postId,
+        userId = userId,
+        limit = limit,
+        offset = offset,
+        includeRemoved = includeRemoved,
+    )
+
+    suspend fun createPostComment(
+        postId: String,
+        body: String,
+        parentCommentId: String? = null,
+    ): CommunityComment = api.createPostComment(
+        postId = postId,
+        payload = CommunityCommentCreateRequest(
+            userId = userId,
+            body = body,
+            parentCommentId = parentCommentId,
+        ),
+    )
+
+    suspend fun moderatePostComment(
+        commentId: String,
+        action: String,
+        note: String = "",
+    ): CommunityComment = api.moderatePostComment(
+        commentId = commentId,
+        payload = CommunityCommentModerationRequest(
+            requesterUserId = userId,
+            action = action,
             note = note,
         ),
     )
@@ -548,12 +644,30 @@ class PetSocialRepository(
 
     suspend fun loadProviderBookings(): List<BookingResponse> = api.getBookings(userId = userId, role = "provider")
 
+    suspend fun loadBookingStatusHistory(bookingId: String): List<BookingStatusHistoryEntry> =
+        api.getBookingStatusHistory(
+            bookingId = bookingId,
+            requesterUserId = userId,
+        )
+
     suspend fun cancelOwnerBooking(bookingId: String): BookingResponse = api.updateBookingStatus(
         bookingId = bookingId,
         payload = BookingStatusUpdateRequest(
             actorUserId = userId,
             status = "cancelled_by_owner",
             note = "Cancelled by owner",
+        ),
+    )
+
+    suspend fun requestOwnerBookingReschedule(
+        bookingId: String,
+        note: String = "",
+    ): BookingResponse = api.updateBookingStatus(
+        bookingId = bookingId,
+        payload = BookingStatusUpdateRequest(
+            actorUserId = userId,
+            status = "reschedule_requested",
+            note = note.ifBlank { "Owner requested a different time slot" },
         ),
     )
 
@@ -575,6 +689,22 @@ class PetSocialRepository(
         ),
     )
 
+    suspend fun rescheduleProviderBooking(
+        bookingId: String,
+        date: String,
+        timeSlot: String,
+        note: String = "",
+    ): BookingResponse = api.updateBookingStatus(
+        bookingId = bookingId,
+        payload = BookingStatusUpdateRequest(
+            actorUserId = userId,
+            status = "rescheduled",
+            note = note.ifBlank { "Rescheduled to $date $timeSlot" },
+            date = date,
+            timeSlot = timeSlot,
+        ),
+    )
+
     suspend fun loadCalendarEvents(
         dateFrom: String = LocalDate.now().minusDays(3).toString(),
         dateTo: String = LocalDate.now().plusDays(30).toString(),
@@ -584,6 +714,24 @@ class PetSocialRepository(
         dateFrom = dateFrom,
         dateTo = dateTo,
         role = role,
+    )
+
+    suspend fun loadProviderBlackouts(providerId: String): List<ProviderBlackout> =
+        api.getProviderBlackouts(providerId = providerId)
+
+    suspend fun createProviderBlackout(
+        providerId: String,
+        date: String,
+        timeSlot: String,
+        reason: String = "",
+    ): ProviderBlackout = api.createProviderBlackout(
+        providerId = providerId,
+        payload = ProviderBlackoutRequest(
+            actorUserId = userId,
+            date = date,
+            timeSlot = timeSlot,
+            reason = reason,
+        ),
     )
 
     suspend fun createLostFoundPost(title: String, body: String, suburb: String): CommunityPost =
@@ -620,15 +768,36 @@ class PetSocialRepository(
             ),
         )
 
-    suspend fun reportCommunityPost(postId: String, reason: String, details: String = ""): CommunityReport =
+    suspend fun reportCommunityTarget(
+        targetType: String,
+        targetId: String,
+        reason: String,
+        details: String = "",
+    ): CommunityReport =
         api.createModerationReport(
             CommunityReportCreateRequest(
                 reporterUserId = userId,
-                targetType = "post",
-                targetId = postId,
+                targetType = targetType,
+                targetId = targetId,
                 reason = reason,
                 details = details,
             )
+        )
+
+    suspend fun reportCommunityPost(postId: String, reason: String, details: String = ""): CommunityReport =
+        reportCommunityTarget(
+            targetType = "post",
+            targetId = postId,
+            reason = reason,
+            details = details,
+        )
+
+    suspend fun reportCommunityEvent(eventId: String, reason: String, details: String = ""): CommunityReport =
+        reportCommunityTarget(
+            targetType = "event",
+            targetId = eventId,
+            reason = reason,
+            details = details,
         )
 
     suspend fun blockCommunityUser(targetUserId: String): CommunityBlockUserResponse =
@@ -916,6 +1085,166 @@ class PetSocialRepository(
         val response = api.login(AuthLoginRequest(userId = userId, password = password))
         authToken = response.accessToken
         cachePrefs.edit().putString(AUTH_TOKEN_KEY, authToken).apply()
+        setActiveUser(response.userId)
+        true
+    }.getOrElse { false }
+
+    suspend fun createAuthInvite(
+        email: String,
+        targetUserId: String? = null,
+        ttlMinutes: Int = 60,
+    ): AuthInviteResponse = api.createAuthInvite(
+        AuthInviteCreateRequest(
+            requesterUserId = userId,
+            email = email,
+            userId = targetUserId,
+            ttlMinutes = ttlMinutes,
+        ),
+    )
+
+    suspend fun requestOtp(inviteId: String, email: String): AuthOtpRequestResponse = api.requestOtp(
+        AuthOtpRequest(
+            inviteId = inviteId,
+            email = email,
+        ),
+    )
+
+    suspend fun verifyOtp(inviteId: String, email: String, otpCode: String): AuthOtpVerifyResponse {
+        val response = api.verifyOtp(
+            AuthOtpVerifyRequest(
+                inviteId = inviteId,
+                email = email,
+                otpCode = otpCode,
+            ),
+        )
+        authToken = response.accessToken
+        cachePrefs.edit().putString(AUTH_TOKEN_KEY, authToken).apply()
+        setActiveUser(response.userId)
+        return response
+    }
+
+    suspend fun logout(): Boolean = runCatching {
+        api.logout()
+        authToken = ""
+        cachePrefs.edit().putString(AUTH_TOKEN_KEY, "").apply()
+        true
+    }.getOrElse { false }
+
+    suspend fun deleteAccount(targetUserId: String = userId): AuthDeleteResponse {
+        val response = api.deleteAccount(userId = targetUserId)
+        if (targetUserId == userId) {
+            authToken = ""
+            cachePrefs.edit().putString(AUTH_TOKEN_KEY, "").apply()
+        }
+        return response
+    }
+
+    suspend fun loadUserProfile(): UserProfileResponse = api.getUserProfile(userId = userId)
+
+    suspend fun saveUserProfile(
+        displayName: String,
+        email: String,
+        phone: String,
+        humanPronouns: String,
+        humanRoleLabel: String,
+        dogName: String,
+        dogAgeMonths: Int,
+        dogBreedMix: String,
+        dogSexNeuter: String,
+        dogWeightClass: String,
+        dogPhotoUrls: List<String>,
+        secondaryDogName: String,
+        secondaryDogAgeMonths: Int,
+        secondaryDogPhotoUrl: String,
+        bio: String,
+        suburb: String,
+        favoriteSuburbs: List<String>,
+        playEnergyLevel: String,
+        playStyle: String,
+        socialConfidence: String,
+        triggerNotes: String,
+        idealMatch: String,
+        walkPreferences: String,
+        trainingStyle: String,
+        feedingRules: String,
+        consentBoundaries: String,
+        vaccinationStatus: String,
+        microchipped: Boolean,
+        recallTrained: Boolean,
+        leashReliability: String,
+        emergencyContactName: String,
+        emergencyContactPhone: String,
+        fieldVisibility: Map<String, String>,
+    ): UserProfileResponse = api.upsertUserProfile(
+        UserProfileUpsertRequest(
+            requesterUserId = userId,
+            displayName = displayName,
+            email = email,
+            phone = phone,
+            humanPronouns = humanPronouns,
+            humanRoleLabel = humanRoleLabel,
+            dogName = dogName,
+            dogAgeMonths = dogAgeMonths,
+            dogBreedMix = dogBreedMix,
+            dogSexNeuter = dogSexNeuter,
+            dogWeightClass = dogWeightClass,
+            dogPhotoUrls = dogPhotoUrls,
+            secondaryDogName = secondaryDogName,
+            secondaryDogAgeMonths = secondaryDogAgeMonths,
+            secondaryDogPhotoUrl = secondaryDogPhotoUrl,
+            bio = bio,
+            suburb = suburb,
+            favoriteSuburbs = favoriteSuburbs,
+            playEnergyLevel = playEnergyLevel,
+            playStyle = playStyle,
+            socialConfidence = socialConfidence,
+            triggerNotes = triggerNotes,
+            idealMatch = idealMatch,
+            walkPreferences = walkPreferences,
+            trainingStyle = trainingStyle,
+            feedingRules = feedingRules,
+            consentBoundaries = consentBoundaries,
+            vaccinationStatus = vaccinationStatus,
+            microchipped = microchipped,
+            recallTrained = recallTrained,
+            leashReliability = leashReliability,
+            emergencyContactName = emergencyContactName,
+            emergencyContactPhone = emergencyContactPhone,
+            fieldVisibility = fieldVisibility,
+        ),
+    )
+
+    suspend fun loadMessageThreads(limit: Int = 50): List<ApiMessageThread> =
+        api.getMessageThreads(
+            userId = userId,
+            limit = limit,
+        )
+
+    suspend fun loadThreadMessages(threadId: String, limit: Int = 100): List<ApiDirectMessage> =
+        api.getThreadMessages(
+            threadId = threadId,
+            userId = userId,
+            limit = limit,
+        )
+
+    suspend fun sendThreadMessage(
+        threadId: String,
+        recipientUserId: String,
+        body: String,
+    ): ApiDirectMessage = api.sendThreadMessage(
+        threadId = threadId,
+        payload = MessageSendRequest(
+            userId = userId,
+            recipientUserId = recipientUserId,
+            body = body,
+        ),
+    )
+
+    suspend fun markThreadRead(threadId: String): Boolean = runCatching {
+        api.markThreadRead(
+            threadId = threadId,
+            payload = MessageMarkReadRequest(userId = userId),
+        )
         true
     }.getOrElse { false }
 
@@ -1027,7 +1356,14 @@ class PetSocialRepository(
     private companion object {
         const val CACHE_PREFS_NAME = "petsocial_cache"
         const val AUTH_TOKEN_KEY = "auth_token"
-        const val DEFAULT_API_BASE_URL = "https://api.barkwise.app/"
+        const val ACTIVE_USER_ID_KEY = "active_user_id"
+        const val TEST_PROFILE_MODE_KEY = "test_profile_mode"
+        const val TEST_PROFILE_HEADER_MODE_KEY = "test_profile_header_mode"
+        const val TEST_PROFILE_MODE_READY = "ready"
+        const val TEST_PROFILE_MODE_ONBOARDING = "onboarding"
+        const val TEST_PROFILE_HEADER_MODE_VISIBLE = "visible"
+        const val TEST_PROFILE_HEADER_MODE_HIDDEN = "hidden"
+        const val DEFAULT_API_BASE_URL = "https://api.barkwiseai.com/"
     }
 
     fun currentAuthToken(): String = authToken

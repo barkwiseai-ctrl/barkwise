@@ -111,11 +111,36 @@ class AuthOtpStore:
                         display_name TEXT NOT NULL,
                         email TEXT NOT NULL,
                         phone TEXT NOT NULL,
+                        human_pronouns TEXT NOT NULL,
+                        human_role_label TEXT NOT NULL,
                         dog_name TEXT NOT NULL,
+                        dog_age_months INTEGER NOT NULL DEFAULT 0,
+                        dog_breed_mix TEXT NOT NULL,
+                        dog_sex_neuter TEXT NOT NULL,
+                        dog_weight_class TEXT NOT NULL,
                         dog_photo_urls TEXT NOT NULL,
+                        secondary_dog_name TEXT NOT NULL,
+                        secondary_dog_age_months INTEGER NOT NULL DEFAULT 0,
+                        secondary_dog_photo_url TEXT NOT NULL,
                         bio TEXT NOT NULL,
                         suburb TEXT NOT NULL,
                         favorite_suburbs TEXT NOT NULL,
+                        play_energy_level TEXT NOT NULL,
+                        play_style TEXT NOT NULL,
+                        social_confidence TEXT NOT NULL,
+                        trigger_notes TEXT NOT NULL,
+                        ideal_match TEXT NOT NULL,
+                        walk_preferences TEXT NOT NULL,
+                        training_style TEXT NOT NULL,
+                        feeding_rules TEXT NOT NULL,
+                        consent_boundaries TEXT NOT NULL,
+                        vaccination_status TEXT NOT NULL,
+                        microchipped INTEGER NOT NULL DEFAULT 0,
+                        recall_trained INTEGER NOT NULL DEFAULT 0,
+                        leash_reliability TEXT NOT NULL,
+                        emergency_contact_name TEXT NOT NULL,
+                        emergency_contact_phone TEXT NOT NULL,
+                        field_visibility TEXT NOT NULL DEFAULT '{}',
                         updated_at TEXT NOT NULL
                     )
                     """
@@ -131,11 +156,36 @@ class AuthOtpStore:
             "display_name": "TEXT NOT NULL DEFAULT ''",
             "email": "TEXT NOT NULL DEFAULT ''",
             "phone": "TEXT NOT NULL DEFAULT ''",
+            "human_pronouns": "TEXT NOT NULL DEFAULT ''",
+            "human_role_label": "TEXT NOT NULL DEFAULT ''",
             "dog_name": "TEXT NOT NULL DEFAULT ''",
+            "dog_age_months": "INTEGER NOT NULL DEFAULT 0",
+            "dog_breed_mix": "TEXT NOT NULL DEFAULT ''",
+            "dog_sex_neuter": "TEXT NOT NULL DEFAULT ''",
+            "dog_weight_class": "TEXT NOT NULL DEFAULT ''",
             "dog_photo_urls": "TEXT NOT NULL DEFAULT '[]'",
+            "secondary_dog_name": "TEXT NOT NULL DEFAULT ''",
+            "secondary_dog_age_months": "INTEGER NOT NULL DEFAULT 0",
+            "secondary_dog_photo_url": "TEXT NOT NULL DEFAULT ''",
             "bio": "TEXT NOT NULL DEFAULT ''",
             "suburb": "TEXT NOT NULL DEFAULT ''",
             "favorite_suburbs": "TEXT NOT NULL DEFAULT '[]'",
+            "play_energy_level": "TEXT NOT NULL DEFAULT ''",
+            "play_style": "TEXT NOT NULL DEFAULT ''",
+            "social_confidence": "TEXT NOT NULL DEFAULT ''",
+            "trigger_notes": "TEXT NOT NULL DEFAULT ''",
+            "ideal_match": "TEXT NOT NULL DEFAULT ''",
+            "walk_preferences": "TEXT NOT NULL DEFAULT ''",
+            "training_style": "TEXT NOT NULL DEFAULT ''",
+            "feeding_rules": "TEXT NOT NULL DEFAULT ''",
+            "consent_boundaries": "TEXT NOT NULL DEFAULT ''",
+            "vaccination_status": "TEXT NOT NULL DEFAULT ''",
+            "microchipped": "INTEGER NOT NULL DEFAULT 0",
+            "recall_trained": "INTEGER NOT NULL DEFAULT 0",
+            "leash_reliability": "TEXT NOT NULL DEFAULT ''",
+            "emergency_contact_name": "TEXT NOT NULL DEFAULT ''",
+            "emergency_contact_phone": "TEXT NOT NULL DEFAULT ''",
+            "field_visibility": "TEXT NOT NULL DEFAULT '{}'",
             "updated_at": "TEXT NOT NULL DEFAULT ''",
         }
         existing_columns = {
@@ -212,17 +262,43 @@ class AuthOtpStore:
             display_name=display_name,
             email=email.strip().lower(),
             phone="",
+            human_pronouns="",
+            human_role_label="Member",
             dog_name="",
+            dog_age_months=0,
+            dog_breed_mix="",
+            dog_sex_neuter="",
+            dog_weight_class="",
             dog_photo_urls=[],
+            secondary_dog_name="",
+            secondary_dog_age_months=0,
+            secondary_dog_photo_url="",
             bio="",
             suburb="",
             favorite_suburbs=[],
+            play_energy_level="",
+            play_style="",
+            social_confidence="",
+            trigger_notes="",
+            ideal_match="",
+            walk_preferences="",
+            training_style="",
+            feeding_rules="",
+            consent_boundaries="",
+            vaccination_status="",
+            microchipped=False,
+            recall_trained=False,
+            leash_reliability="",
+            emergency_contact_name="",
+            emergency_contact_phone="",
+            field_visibility={},
             updated_at=updated_at,
         )
 
     def _row_to_profile(self, row: sqlite3.Row) -> UserProfile:
         dog_photo_urls: list[str]
         favorite_suburbs: list[str]
+        field_visibility: dict[str, str]
         try:
             parsed_photos = json.loads(str(row["dog_photo_urls"]))
             dog_photo_urls = [str(value).strip() for value in parsed_photos if str(value).strip()]
@@ -233,18 +309,74 @@ class AuthOtpStore:
             favorite_suburbs = [str(value).strip() for value in parsed_favorites if str(value).strip()]
         except Exception:
             favorite_suburbs = []
+        try:
+            parsed_visibility = json.loads(str(row["field_visibility"]))
+            if isinstance(parsed_visibility, dict):
+                field_visibility = {
+                    str(key).strip(): str(value).strip()
+                    for key, value in parsed_visibility.items()
+                    if str(key).strip() and str(value).strip()
+                }
+            else:
+                field_visibility = {}
+        except Exception:
+            field_visibility = {}
+
+        def _to_int(value: object, default: int = 0) -> int:
+            try:
+                parsed = int(value)
+            except Exception:
+                return default
+            return max(0, parsed)
+
         return UserProfile(
             user_id=str(row["user_id"]),
             display_name=str(row["display_name"]),
             email=str(row["email"]),
             phone=str(row["phone"]),
+            human_pronouns=str(row["human_pronouns"]),
+            human_role_label=str(row["human_role_label"]),
             dog_name=str(row["dog_name"]),
+            dog_age_months=_to_int(row["dog_age_months"]),
+            dog_breed_mix=str(row["dog_breed_mix"]),
+            dog_sex_neuter=str(row["dog_sex_neuter"]),
+            dog_weight_class=str(row["dog_weight_class"]),
             dog_photo_urls=dog_photo_urls,
+            secondary_dog_name=str(row["secondary_dog_name"]),
+            secondary_dog_age_months=_to_int(row["secondary_dog_age_months"]),
+            secondary_dog_photo_url=str(row["secondary_dog_photo_url"]),
             bio=str(row["bio"]),
             suburb=str(row["suburb"]),
             favorite_suburbs=favorite_suburbs,
+            play_energy_level=str(row["play_energy_level"]),
+            play_style=str(row["play_style"]),
+            social_confidence=str(row["social_confidence"]),
+            trigger_notes=str(row["trigger_notes"]),
+            ideal_match=str(row["ideal_match"]),
+            walk_preferences=str(row["walk_preferences"]),
+            training_style=str(row["training_style"]),
+            feeding_rules=str(row["feeding_rules"]),
+            consent_boundaries=str(row["consent_boundaries"]),
+            vaccination_status=str(row["vaccination_status"]),
+            microchipped=bool(int(row["microchipped"])),
+            recall_trained=bool(int(row["recall_trained"])),
+            leash_reliability=str(row["leash_reliability"]),
+            emergency_contact_name=str(row["emergency_contact_name"]),
+            emergency_contact_phone=str(row["emergency_contact_phone"]),
+            field_visibility=field_visibility,
             updated_at=str(row["updated_at"]),
         )
+
+    def _normalize_field_visibility(self, raw: dict[str, str]) -> dict[str, str]:
+        allowed = {"public", "group", "friends", "private"}
+        normalized: dict[str, str] = {}
+        for key, value in raw.items():
+            normalized_key = str(key).strip().lower()
+            normalized_value = str(value).strip().lower()
+            if not normalized_key or normalized_value not in allowed:
+                continue
+            normalized[normalized_key] = normalized_value
+        return normalized
 
     def get_or_create_user_profile(self, *, user_id: str) -> UserProfile:
         normalized_user_id = user_id.strip()
@@ -254,7 +386,15 @@ class AuthOtpStore:
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT user_id, display_name, email, phone, dog_name, dog_photo_urls, bio, suburb, favorite_suburbs, updated_at
+                    SELECT
+                        user_id, display_name, email, phone, human_pronouns, human_role_label,
+                        dog_name, dog_age_months, dog_breed_mix, dog_sex_neuter, dog_weight_class, dog_photo_urls,
+                        secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url,
+                        bio, suburb, favorite_suburbs,
+                        play_energy_level, play_style, social_confidence, trigger_notes, ideal_match,
+                        walk_preferences, training_style, feeding_rules, consent_boundaries,
+                        vaccination_status, microchipped, recall_trained, leash_reliability,
+                        emergency_contact_name, emergency_contact_phone, field_visibility, updated_at
                     FROM user_profiles
                     WHERE user_id = ?
                     """,
@@ -273,21 +413,52 @@ class AuthOtpStore:
                 conn.execute(
                     """
                     INSERT INTO user_profiles (
-                        user_id, display_name, email, phone, dog_name,
-                        dog_photo_urls, bio, suburb, favorite_suburbs, updated_at
+                        user_id, display_name, email, phone, human_pronouns, human_role_label,
+                        dog_name, dog_age_months, dog_breed_mix, dog_sex_neuter, dog_weight_class, dog_photo_urls,
+                        secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url,
+                        bio, suburb, favorite_suburbs,
+                        play_energy_level, play_style, social_confidence, trigger_notes, ideal_match,
+                        walk_preferences, training_style, feeding_rules, consent_boundaries,
+                        vaccination_status, microchipped, recall_trained, leash_reliability,
+                        emergency_contact_name, emergency_contact_phone, field_visibility, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         profile.user_id,
                         profile.display_name,
                         profile.email,
                         profile.phone,
+                        profile.human_pronouns,
+                        profile.human_role_label,
                         profile.dog_name,
+                        profile.dog_age_months,
+                        profile.dog_breed_mix,
+                        profile.dog_sex_neuter,
+                        profile.dog_weight_class,
                         json.dumps(profile.dog_photo_urls),
+                        profile.secondary_dog_name,
+                        profile.secondary_dog_age_months,
+                        profile.secondary_dog_photo_url,
                         profile.bio,
                         profile.suburb,
                         json.dumps(profile.favorite_suburbs),
+                        profile.play_energy_level,
+                        profile.play_style,
+                        profile.social_confidence,
+                        profile.trigger_notes,
+                        profile.ideal_match,
+                        profile.walk_preferences,
+                        profile.training_style,
+                        profile.feeding_rules,
+                        profile.consent_boundaries,
+                        profile.vaccination_status,
+                        1 if profile.microchipped else 0,
+                        1 if profile.recall_trained else 0,
+                        profile.leash_reliability,
+                        profile.emergency_contact_name,
+                        profile.emergency_contact_phone,
+                        json.dumps(profile.field_visibility),
                         profile.updated_at,
                     ),
                 )
@@ -310,11 +481,36 @@ class AuthOtpStore:
         display_name: str,
         email: str,
         phone: str,
+        human_pronouns: str,
+        human_role_label: str,
         dog_name: str,
+        dog_age_months: int,
+        dog_breed_mix: str,
+        dog_sex_neuter: str,
+        dog_weight_class: str,
         dog_photo_urls: list[str],
+        secondary_dog_name: str,
+        secondary_dog_age_months: int,
+        secondary_dog_photo_url: str,
         bio: str,
         suburb: str,
         favorite_suburbs: list[str],
+        play_energy_level: str,
+        play_style: str,
+        social_confidence: str,
+        trigger_notes: str,
+        ideal_match: str,
+        walk_preferences: str,
+        training_style: str,
+        feeding_rules: str,
+        consent_boundaries: str,
+        vaccination_status: str,
+        microchipped: bool,
+        recall_trained: bool,
+        leash_reliability: str,
+        emergency_contact_name: str,
+        emergency_contact_phone: str,
+        field_visibility: dict[str, str],
     ) -> UserProfile:
         normalized_user_id = user_id.strip()
         if not normalized_user_id:
@@ -326,11 +522,36 @@ class AuthOtpStore:
             display_name=display_name.strip(),
             email=normalized_email,
             phone=phone.strip(),
+            human_pronouns=human_pronouns.strip(),
+            human_role_label=human_role_label.strip(),
             dog_name=dog_name.strip(),
+            dog_age_months=max(0, int(dog_age_months)),
+            dog_breed_mix=dog_breed_mix.strip(),
+            dog_sex_neuter=dog_sex_neuter.strip(),
+            dog_weight_class=dog_weight_class.strip(),
             dog_photo_urls=[value.strip() for value in dog_photo_urls if value.strip()][:8],
+            secondary_dog_name=secondary_dog_name.strip(),
+            secondary_dog_age_months=max(0, int(secondary_dog_age_months)),
+            secondary_dog_photo_url=secondary_dog_photo_url.strip(),
             bio=bio.strip(),
             suburb=suburb.strip(),
             favorite_suburbs=[value.strip() for value in favorite_suburbs if value.strip()][:8],
+            play_energy_level=play_energy_level.strip(),
+            play_style=play_style.strip(),
+            social_confidence=social_confidence.strip(),
+            trigger_notes=trigger_notes.strip(),
+            ideal_match=ideal_match.strip(),
+            walk_preferences=walk_preferences.strip(),
+            training_style=training_style.strip(),
+            feeding_rules=feeding_rules.strip(),
+            consent_boundaries=consent_boundaries.strip(),
+            vaccination_status=vaccination_status.strip(),
+            microchipped=bool(microchipped),
+            recall_trained=bool(recall_trained),
+            leash_reliability=leash_reliability.strip(),
+            emergency_contact_name=emergency_contact_name.strip(),
+            emergency_contact_phone=emergency_contact_phone.strip(),
+            field_visibility=self._normalize_field_visibility(field_visibility),
             updated_at=now,
         )
         with self._lock:
@@ -338,19 +559,50 @@ class AuthOtpStore:
                 conn.execute(
                     """
                     INSERT INTO user_profiles (
-                        user_id, display_name, email, phone, dog_name,
-                        dog_photo_urls, bio, suburb, favorite_suburbs, updated_at
+                        user_id, display_name, email, phone, human_pronouns, human_role_label,
+                        dog_name, dog_age_months, dog_breed_mix, dog_sex_neuter, dog_weight_class, dog_photo_urls,
+                        secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url,
+                        bio, suburb, favorite_suburbs,
+                        play_energy_level, play_style, social_confidence, trigger_notes, ideal_match,
+                        walk_preferences, training_style, feeding_rules, consent_boundaries,
+                        vaccination_status, microchipped, recall_trained, leash_reliability,
+                        emergency_contact_name, emergency_contact_phone, field_visibility, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET
                         display_name = excluded.display_name,
                         email = excluded.email,
                         phone = excluded.phone,
+                        human_pronouns = excluded.human_pronouns,
+                        human_role_label = excluded.human_role_label,
                         dog_name = excluded.dog_name,
+                        dog_age_months = excluded.dog_age_months,
+                        dog_breed_mix = excluded.dog_breed_mix,
+                        dog_sex_neuter = excluded.dog_sex_neuter,
+                        dog_weight_class = excluded.dog_weight_class,
                         dog_photo_urls = excluded.dog_photo_urls,
+                        secondary_dog_name = excluded.secondary_dog_name,
+                        secondary_dog_age_months = excluded.secondary_dog_age_months,
+                        secondary_dog_photo_url = excluded.secondary_dog_photo_url,
                         bio = excluded.bio,
                         suburb = excluded.suburb,
                         favorite_suburbs = excluded.favorite_suburbs,
+                        play_energy_level = excluded.play_energy_level,
+                        play_style = excluded.play_style,
+                        social_confidence = excluded.social_confidence,
+                        trigger_notes = excluded.trigger_notes,
+                        ideal_match = excluded.ideal_match,
+                        walk_preferences = excluded.walk_preferences,
+                        training_style = excluded.training_style,
+                        feeding_rules = excluded.feeding_rules,
+                        consent_boundaries = excluded.consent_boundaries,
+                        vaccination_status = excluded.vaccination_status,
+                        microchipped = excluded.microchipped,
+                        recall_trained = excluded.recall_trained,
+                        leash_reliability = excluded.leash_reliability,
+                        emergency_contact_name = excluded.emergency_contact_name,
+                        emergency_contact_phone = excluded.emergency_contact_phone,
+                        field_visibility = excluded.field_visibility,
                         updated_at = excluded.updated_at
                     """,
                     (
@@ -358,11 +610,36 @@ class AuthOtpStore:
                         normalized_profile.display_name,
                         normalized_profile.email,
                         normalized_profile.phone,
+                        normalized_profile.human_pronouns,
+                        normalized_profile.human_role_label,
                         normalized_profile.dog_name,
+                        normalized_profile.dog_age_months,
+                        normalized_profile.dog_breed_mix,
+                        normalized_profile.dog_sex_neuter,
+                        normalized_profile.dog_weight_class,
                         json.dumps(normalized_profile.dog_photo_urls),
+                        normalized_profile.secondary_dog_name,
+                        normalized_profile.secondary_dog_age_months,
+                        normalized_profile.secondary_dog_photo_url,
                         normalized_profile.bio,
                         normalized_profile.suburb,
                         json.dumps(normalized_profile.favorite_suburbs),
+                        normalized_profile.play_energy_level,
+                        normalized_profile.play_style,
+                        normalized_profile.social_confidence,
+                        normalized_profile.trigger_notes,
+                        normalized_profile.ideal_match,
+                        normalized_profile.walk_preferences,
+                        normalized_profile.training_style,
+                        normalized_profile.feeding_rules,
+                        normalized_profile.consent_boundaries,
+                        normalized_profile.vaccination_status,
+                        1 if normalized_profile.microchipped else 0,
+                        1 if normalized_profile.recall_trained else 0,
+                        normalized_profile.leash_reliability,
+                        normalized_profile.emergency_contact_name,
+                        normalized_profile.emergency_contact_phone,
+                        json.dumps(normalized_profile.field_visibility),
                         normalized_profile.updated_at,
                     ),
                 )

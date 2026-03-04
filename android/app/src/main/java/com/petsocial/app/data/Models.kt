@@ -92,7 +92,7 @@ data class RestoreServiceProviderRequest(
 data class ServiceQuoteRequestCreate(
     @SerialName("user_id") val userId: String,
     val category: String,
-    val suburb: String,
+    val suburb: String? = null,
     @SerialName("preferred_window") val preferredWindow: String,
     @SerialName("pet_details") val petDetails: String,
     val note: String = "",
@@ -137,6 +137,13 @@ data class ServiceQuoteRequest(
 data class ServiceQuoteRequestView(
     @SerialName("quote_request") val quoteRequest: ServiceQuoteRequest,
     val targets: List<ServiceQuoteTarget>,
+)
+
+@Serializable
+data class ServiceRecommendationsResponse(
+    val providers: List<ServiceProvider>,
+    @SerialName("inferred_suburb") val inferredSuburb: String? = null,
+    @SerialName("suburb_source") val suburbSource: String = "none",
 )
 
 @Serializable
@@ -251,6 +258,19 @@ data class BookingStatusUpdateRequest(
     @SerialName("actor_user_id") val actorUserId: String,
     val status: String,
     val note: String = "",
+    val date: String? = null,
+    @SerialName("time_slot") val timeSlot: String? = null,
+)
+
+@Serializable
+data class BookingStatusHistoryEntry(
+    val id: String,
+    @SerialName("booking_id") val bookingId: String,
+    @SerialName("actor_user_id") val actorUserId: String,
+    @SerialName("from_status") val fromStatus: String,
+    @SerialName("to_status") val toStatus: String,
+    val note: String = "",
+    @SerialName("created_at") val createdAt: String,
 )
 
 @Serializable
@@ -310,6 +330,17 @@ data class ChatCta(
 data class ChatTurn(
     val role: String,
     val content: String,
+    @SerialName("answer_source") val answerSource: String? = null,
+    @SerialName("answer_badges") val answerBadges: List<String> = emptyList(),
+    val citations: List<ChatCitation> = emptyList(),
+)
+
+@Serializable
+data class ChatCitation(
+    val title: String,
+    val source: String,
+    val url: String? = null,
+    val snippet: String? = null,
 )
 
 @Serializable
@@ -331,6 +362,9 @@ data class ChatResponse(
     val conversation: List<ChatTurn> = emptyList(),
     @SerialName("profile_suggestion") val profileSuggestion: PetProfileSuggestion? = null,
     @SerialName("a2ui_messages") val a2uiMessages: List<JsonObject> = emptyList(),
+    @SerialName("answer_source") val answerSource: String = "fallback",
+    @SerialName("answer_badges") val answerBadges: List<String> = emptyList(),
+    val citations: List<ChatCitation> = emptyList(),
 )
 
 @Serializable
@@ -418,6 +452,34 @@ data class CommunityPostPhotoUploadRequest(
     val filename: String,
     @SerialName("content_type") val contentType: String,
     @SerialName("data_base64") val dataBase64: String,
+)
+
+@Serializable
+data class CommunityComment(
+    val id: String,
+    @SerialName("post_id") val postId: String,
+    @SerialName("user_id") val userId: String,
+    val body: String,
+    @SerialName("parent_comment_id") val parentCommentId: String? = null,
+    @SerialName("created_at") val createdAt: String,
+    val status: String = "active",
+    @SerialName("moderated_at") val moderatedAt: String? = null,
+    @SerialName("moderated_by") val moderatedBy: String? = null,
+    @SerialName("moderation_note") val moderationNote: String? = null,
+)
+
+@Serializable
+data class CommunityCommentCreateRequest(
+    @SerialName("user_id") val userId: String,
+    val body: String,
+    @SerialName("parent_comment_id") val parentCommentId: String? = null,
+)
+
+@Serializable
+data class CommunityCommentModerationRequest(
+    @SerialName("requester_user_id") val requesterUserId: String,
+    val action: String,
+    val note: String = "",
 )
 
 @Serializable
@@ -680,6 +742,168 @@ data class AuthLoginResponse(
     @SerialName("token_type") val tokenType: String,
     @SerialName("user_id") val userId: String,
     @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class AuthInviteCreateRequest(
+    @SerialName("requester_user_id") val requesterUserId: String,
+    val email: String,
+    @SerialName("user_id") val userId: String? = null,
+    @SerialName("ttl_minutes") val ttlMinutes: Int = 60,
+)
+
+@Serializable
+data class AuthInviteResponse(
+    @SerialName("invite_id") val inviteId: String,
+    @SerialName("user_id") val userId: String,
+    val email: String,
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class AuthOtpRequest(
+    @SerialName("invite_id") val inviteId: String,
+    val email: String,
+)
+
+@Serializable
+data class AuthOtpRequestResponse(
+    val status: String = "otp_sent",
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class AuthOtpVerifyRequest(
+    @SerialName("invite_id") val inviteId: String,
+    val email: String,
+    @SerialName("otp_code") val otpCode: String,
+)
+
+@Serializable
+data class AuthOtpVerifyResponse(
+    @SerialName("access_token") val accessToken: String,
+    @SerialName("token_type") val tokenType: String,
+    @SerialName("user_id") val userId: String,
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class AuthLogoutResponse(
+    val status: String = "ok",
+)
+
+@Serializable
+data class AuthDeleteResponse(
+    val status: String = "deleted",
+    @SerialName("user_id") val userId: String,
+)
+
+@Serializable
+data class UserProfileResponse(
+    @SerialName("user_id") val userId: String,
+    @SerialName("display_name") val displayName: String = "",
+    val email: String = "",
+    val phone: String = "",
+    @SerialName("human_pronouns") val humanPronouns: String = "",
+    @SerialName("human_role_label") val humanRoleLabel: String = "",
+    @SerialName("dog_name") val dogName: String = "",
+    @SerialName("dog_age_months") val dogAgeMonths: Int = 0,
+    @SerialName("dog_breed_mix") val dogBreedMix: String = "",
+    @SerialName("dog_sex_neuter") val dogSexNeuter: String = "",
+    @SerialName("dog_weight_class") val dogWeightClass: String = "",
+    @SerialName("dog_photo_urls") val dogPhotoUrls: List<String> = emptyList(),
+    @SerialName("secondary_dog_name") val secondaryDogName: String = "",
+    @SerialName("secondary_dog_age_months") val secondaryDogAgeMonths: Int = 0,
+    @SerialName("secondary_dog_photo_url") val secondaryDogPhotoUrl: String = "",
+    val bio: String = "",
+    val suburb: String = "",
+    @SerialName("favorite_suburbs") val favoriteSuburbs: List<String> = emptyList(),
+    @SerialName("play_energy_level") val playEnergyLevel: String = "",
+    @SerialName("play_style") val playStyle: String = "",
+    @SerialName("social_confidence") val socialConfidence: String = "",
+    @SerialName("trigger_notes") val triggerNotes: String = "",
+    @SerialName("ideal_match") val idealMatch: String = "",
+    @SerialName("walk_preferences") val walkPreferences: String = "",
+    @SerialName("training_style") val trainingStyle: String = "",
+    @SerialName("feeding_rules") val feedingRules: String = "",
+    @SerialName("consent_boundaries") val consentBoundaries: String = "",
+    @SerialName("vaccination_status") val vaccinationStatus: String = "",
+    @SerialName("microchipped") val microchipped: Boolean = false,
+    @SerialName("recall_trained") val recallTrained: Boolean = false,
+    @SerialName("leash_reliability") val leashReliability: String = "",
+    @SerialName("emergency_contact_name") val emergencyContactName: String = "",
+    @SerialName("emergency_contact_phone") val emergencyContactPhone: String = "",
+    @SerialName("field_visibility") val fieldVisibility: Map<String, String> = emptyMap(),
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class UserProfileUpsertRequest(
+    @SerialName("requester_user_id") val requesterUserId: String,
+    @SerialName("display_name") val displayName: String = "",
+    val email: String = "",
+    val phone: String = "",
+    @SerialName("human_pronouns") val humanPronouns: String = "",
+    @SerialName("human_role_label") val humanRoleLabel: String = "",
+    @SerialName("dog_name") val dogName: String = "",
+    @SerialName("dog_age_months") val dogAgeMonths: Int = 0,
+    @SerialName("dog_breed_mix") val dogBreedMix: String = "",
+    @SerialName("dog_sex_neuter") val dogSexNeuter: String = "",
+    @SerialName("dog_weight_class") val dogWeightClass: String = "",
+    @SerialName("dog_photo_urls") val dogPhotoUrls: List<String> = emptyList(),
+    @SerialName("secondary_dog_name") val secondaryDogName: String = "",
+    @SerialName("secondary_dog_age_months") val secondaryDogAgeMonths: Int = 0,
+    @SerialName("secondary_dog_photo_url") val secondaryDogPhotoUrl: String = "",
+    val bio: String = "",
+    val suburb: String = "",
+    @SerialName("favorite_suburbs") val favoriteSuburbs: List<String> = emptyList(),
+    @SerialName("play_energy_level") val playEnergyLevel: String = "",
+    @SerialName("play_style") val playStyle: String = "",
+    @SerialName("social_confidence") val socialConfidence: String = "",
+    @SerialName("trigger_notes") val triggerNotes: String = "",
+    @SerialName("ideal_match") val idealMatch: String = "",
+    @SerialName("walk_preferences") val walkPreferences: String = "",
+    @SerialName("training_style") val trainingStyle: String = "",
+    @SerialName("feeding_rules") val feedingRules: String = "",
+    @SerialName("consent_boundaries") val consentBoundaries: String = "",
+    @SerialName("vaccination_status") val vaccinationStatus: String = "",
+    @SerialName("microchipped") val microchipped: Boolean = false,
+    @SerialName("recall_trained") val recallTrained: Boolean = false,
+    @SerialName("leash_reliability") val leashReliability: String = "",
+    @SerialName("emergency_contact_name") val emergencyContactName: String = "",
+    @SerialName("emergency_contact_phone") val emergencyContactPhone: String = "",
+    @SerialName("field_visibility") val fieldVisibility: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class ApiMessageThread(
+    val id: String,
+    @SerialName("participant_user_id") val participantUserId: String,
+    @SerialName("last_message") val lastMessage: String = "",
+    @SerialName("last_message_at") val lastMessageAt: String,
+    @SerialName("unread_count") val unreadCount: Int = 0,
+)
+
+@Serializable
+data class ApiDirectMessage(
+    val id: String,
+    @SerialName("thread_id") val threadId: String,
+    @SerialName("sender_user_id") val senderUserId: String,
+    @SerialName("recipient_user_id") val recipientUserId: String,
+    val body: String,
+    @SerialName("created_at") val createdAt: String,
+)
+
+@Serializable
+data class MessageSendRequest(
+    @SerialName("user_id") val userId: String,
+    @SerialName("recipient_user_id") val recipientUserId: String,
+    val body: String,
+)
+
+@Serializable
+data class MessageMarkReadRequest(
+    @SerialName("user_id") val userId: String,
 )
 
 @Serializable

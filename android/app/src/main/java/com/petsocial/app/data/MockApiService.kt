@@ -2,6 +2,7 @@ package com.petsocial.app.data
 
 import java.time.Instant
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.time.temporal.ChronoUnit
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -639,6 +640,45 @@ class MockApiService private constructor() : ApiService {
             createdAt = now.minus(6, ChronoUnit.DAYS).toString(),
         ),
     )
+    private val commentsByPost = mutableMapOf(
+        "post_1" to mutableListOf(
+            CommunityComment(
+                id = "comment_1",
+                postId = "post_1",
+                userId = "user_2",
+                body = "I can confirm it's still near the west gate.",
+                createdAt = now.minus(110, ChronoUnit.MINUTES).toString(),
+            ),
+            CommunityComment(
+                id = "comment_2",
+                postId = "post_1",
+                userId = "user_1",
+                body = "Thanks, I can grab it this afternoon.",
+                parentCommentId = "comment_1",
+                createdAt = now.minus(96, ChronoUnit.MINUTES).toString(),
+            ),
+        ),
+        "post_2" to mutableListOf(
+            CommunityComment(
+                id = "comment_3",
+                postId = "post_2",
+                userId = "user_3",
+                body = "Luna looked so happy today.",
+                createdAt = now.minus(4, ChronoUnit.HOURS).toString(),
+            ),
+            CommunityComment(
+                id = "comment_4",
+                postId = "post_2",
+                userId = "user_4",
+                body = "Removed by moderator for mock policy test.",
+                createdAt = now.minus(3, ChronoUnit.HOURS).toString(),
+                status = "removed_by_moderator",
+                moderatedAt = now.minus(2, ChronoUnit.HOURS).toString(),
+                moderatedBy = "user_1",
+                moderationNote = "Mock moderation sample",
+            ),
+        ),
+    )
     private val events = mutableListOf(
         CommunityEvent(
             id = "event_1",
@@ -755,6 +795,117 @@ class MockApiService private constructor() : ApiService {
             status = "in_progress",
         ),
     )
+    private val bookingStatusHistoryByBookingId = mutableMapOf<String, MutableList<BookingStatusHistoryEntry>>(
+        "booking_1" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_1",
+                bookingId = "booking_1",
+                actorUserId = "user_2",
+                fromStatus = "none",
+                toStatus = "requested",
+                note = "booking requested",
+                createdAt = now.minus(2, ChronoUnit.HOURS).toString(),
+            ),
+        ),
+        "booking_2" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_2",
+                bookingId = "booking_2",
+                actorUserId = "user_1",
+                fromStatus = "none",
+                toStatus = "requested",
+                note = "booking requested",
+                createdAt = now.minus(27, ChronoUnit.HOURS).toString(),
+            ),
+            BookingStatusHistoryEntry(
+                id = "bsh_3",
+                bookingId = "booking_2",
+                actorUserId = "user_4",
+                fromStatus = "requested",
+                toStatus = "provider_confirmed",
+                note = "confirmed by provider",
+                createdAt = now.minus(24, ChronoUnit.HOURS).toString(),
+            ),
+        ),
+        "booking_3" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_4",
+                bookingId = "booking_3",
+                actorUserId = "user_4",
+                fromStatus = "none",
+                toStatus = "requested",
+                note = "booking requested",
+                createdAt = now.minus(3, ChronoUnit.DAYS).toString(),
+            ),
+            BookingStatusHistoryEntry(
+                id = "bsh_5",
+                bookingId = "booking_3",
+                actorUserId = "user_2",
+                fromStatus = "requested",
+                toStatus = "provider_confirmed",
+                note = "confirmed by provider",
+                createdAt = now.minus(2, ChronoUnit.DAYS).toString(),
+            ),
+            BookingStatusHistoryEntry(
+                id = "bsh_6",
+                bookingId = "booking_3",
+                actorUserId = "user_2",
+                fromStatus = "provider_confirmed",
+                toStatus = "completed",
+                note = "service completed",
+                createdAt = now.minus(1, ChronoUnit.DAYS).toString(),
+            ),
+        ),
+        "booking_4" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_7",
+                bookingId = "booking_4",
+                actorUserId = "user_3",
+                fromStatus = "none",
+                toStatus = "requested",
+                note = "booking requested",
+                createdAt = now.minus(8, ChronoUnit.HOURS).toString(),
+            ),
+            BookingStatusHistoryEntry(
+                id = "bsh_8",
+                bookingId = "booking_4",
+                actorUserId = "user_3",
+                fromStatus = "requested",
+                toStatus = "reschedule_requested",
+                note = "needs reschedule",
+                createdAt = now.minus(5, ChronoUnit.HOURS).toString(),
+            ),
+        ),
+        "booking_5" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_9",
+                bookingId = "booking_5",
+                actorUserId = "user_2",
+                fromStatus = "none",
+                toStatus = "requested",
+                note = "booking requested",
+                createdAt = now.minus(9, ChronoUnit.HOURS).toString(),
+            ),
+            BookingStatusHistoryEntry(
+                id = "bsh_10",
+                bookingId = "booking_5",
+                actorUserId = "user_3",
+                fromStatus = "requested",
+                toStatus = "provider_confirmed",
+                note = "confirmed by provider",
+                createdAt = now.minus(7, ChronoUnit.HOURS).toString(),
+            ),
+            BookingStatusHistoryEntry(
+                id = "bsh_11",
+                bookingId = "booking_5",
+                actorUserId = "user_3",
+                fromStatus = "provider_confirmed",
+                toStatus = "in_progress",
+                note = "service in progress",
+                createdAt = now.minus(35, ChronoUnit.MINUTES).toString(),
+            ),
+        ),
+    )
     private val providerBlackouts = mutableMapOf(
         "provider_1" to mutableListOf(
             ProviderBlackout(
@@ -858,19 +1009,169 @@ class MockApiService private constructor() : ApiService {
             deepLink = "quote:quote_3",
         ),
     )
+    private val authInvitesById = mutableMapOf<String, AuthInviteResponse>()
+    private val otpCodeByInviteEmail = mutableMapOf<String, String>()
+    private val otpExpiresByInviteEmail = mutableMapOf<String, Instant>()
+    private val userProfilesByUserId = mutableMapOf(
+        "user_1" to UserProfileResponse(
+            userId = "user_1",
+            displayName = "Sesame",
+            email = "user_1@barkwise.test",
+            phone = "+61 400 001 001",
+            humanPronouns = "they/them",
+            humanRoleLabel = "Provider + Pet parent",
+            dogName = "Luna",
+            dogAgeMonths = 42,
+            dogBreedMix = "Labradoodle",
+            dogSexNeuter = "Female, desexed",
+            dogWeightClass = "Medium (10-25kg)",
+            dogPhotoUrls = listOf("https://loremflickr.com/640/640/dog,portrait?lock=6001"),
+            secondaryDogName = "Poppy",
+            secondaryDogAgeMonths = 18,
+            bio = "Groomer and dog parent.",
+            suburb = "Surry Hills",
+            favoriteSuburbs = listOf("Surry Hills", "Newtown"),
+            playEnergyLevel = "High",
+            playStyle = "Chase and fetch",
+            socialConfidence = "Confident with new dogs",
+            triggerNotes = "Prefers slow intro with larger intact males.",
+            idealMatch = "Playful medium-energy dogs",
+            walkPreferences = "Off-peak parks, 30-45 mins",
+            trainingStyle = "Positive reinforcement, marker word",
+            feedingRules = "No chicken treats",
+            consentBoundaries = "Ask before giving treats or off-lead time.",
+            vaccinationStatus = "Up to date",
+            microchipped = true,
+            recallTrained = true,
+            leashReliability = "Reliable on leash",
+            emergencyContactName = "Jordan",
+            emergencyContactPhone = "+61 400 555 001",
+            fieldVisibility = mapOf("phone" to "friends", "email" to "private", "suburb" to "group"),
+            updatedAt = now.minus(2, ChronoUnit.DAYS).toString(),
+        ),
+        "user_2" to UserProfileResponse(
+            userId = "user_2",
+            displayName = "Alex Wong",
+            email = "user_2@barkwise.test",
+            phone = "+61 412 345 678",
+            humanPronouns = "she/her",
+            humanRoleLabel = "Member",
+            dogName = "Milo",
+            dogAgeMonths = 30,
+            dogBreedMix = "Cavoodle",
+            dogSexNeuter = "Male, desexed",
+            dogWeightClass = "Small (0-10kg)",
+            dogPhotoUrls = listOf("https://loremflickr.com/640/640/black,white,dog?lock=202"),
+            bio = "Pet parent of Milo. Loves social dog walks and local events.",
+            suburb = "Surry Hills",
+            favoriteSuburbs = listOf("Newtown", "Redfern"),
+            playEnergyLevel = "Medium",
+            playStyle = "Sniff and mingle",
+            socialConfidence = "Friendly but cautious in crowds",
+            idealMatch = "Calm to medium-energy dogs",
+            walkPreferences = "Morning and sunset",
+            trainingStyle = "Reward-based",
+            vaccinationStatus = "Up to date",
+            microchipped = true,
+            recallTrained = false,
+            leashReliability = "Good on leash",
+            emergencyContactName = "Chris",
+            emergencyContactPhone = "+61 400 555 002",
+            fieldVisibility = mapOf("phone" to "private", "email" to "private", "suburb" to "group"),
+            updatedAt = now.minus(1, ChronoUnit.DAYS).toString(),
+        ),
+    )
+    private val threadParticipants = mutableMapOf(
+        canonicalThreadId("user_1", "user_2") to ("user_1" to "user_2"),
+        canonicalThreadId("user_2", "user_3") to ("user_2" to "user_3"),
+        canonicalThreadId("user_2", "user_4") to ("user_2" to "user_4"),
+    )
+    private val messagesByThread = mutableMapOf(
+        canonicalThreadId("user_1", "user_2") to mutableListOf(
+            ApiDirectMessage(
+                id = "msg_1",
+                threadId = canonicalThreadId("user_1", "user_2"),
+                senderUserId = "user_1",
+                recipientUserId = "user_2",
+                body = "Hey, I can take the 09:00 slot tomorrow.",
+                createdAt = now.minus(4, ChronoUnit.HOURS).toString(),
+            ),
+            ApiDirectMessage(
+                id = "msg_2",
+                threadId = canonicalThreadId("user_1", "user_2"),
+                senderUserId = "user_2",
+                recipientUserId = "user_1",
+                body = "Perfect, locked in. Thanks!",
+                createdAt = now.minus(3, ChronoUnit.HOURS).toString(),
+            ),
+        ),
+        canonicalThreadId("user_2", "user_3") to mutableListOf(
+            ApiDirectMessage(
+                id = "msg_3",
+                threadId = canonicalThreadId("user_2", "user_3"),
+                senderUserId = "user_3",
+                recipientUserId = "user_2",
+                body = "Can you approve the next join request?",
+                createdAt = now.minus(95, ChronoUnit.MINUTES).toString(),
+            ),
+            ApiDirectMessage(
+                id = "msg_4",
+                threadId = canonicalThreadId("user_2", "user_3"),
+                senderUserId = "user_2",
+                recipientUserId = "user_3",
+                body = "Yes, I’ll handle it tonight.",
+                createdAt = now.minus(80, ChronoUnit.MINUTES).toString(),
+            ),
+        ),
+        canonicalThreadId("user_2", "user_4") to mutableListOf(
+            ApiDirectMessage(
+                id = "msg_5",
+                threadId = canonicalThreadId("user_2", "user_4"),
+                senderUserId = "user_4",
+                recipientUserId = "user_2",
+                body = "I can cover the weekend walk if needed.",
+                createdAt = now.minus(45, ChronoUnit.MINUTES).toString(),
+            ),
+            ApiDirectMessage(
+                id = "msg_6",
+                threadId = canonicalThreadId("user_2", "user_4"),
+                senderUserId = "user_4",
+                recipientUserId = "user_2",
+                body = "Let me know by 8pm so I can confirm routes.",
+                createdAt = now.minus(30, ChronoUnit.MINUTES).toString(),
+            ),
+            ApiDirectMessage(
+                id = "msg_7",
+                threadId = canonicalThreadId("user_2", "user_4"),
+                senderUserId = "user_2",
+                recipientUserId = "user_4",
+                body = "That works, please lock it in.",
+                createdAt = now.minus(20, ChronoUnit.MINUTES).toString(),
+            ),
+        ),
+    )
+    private val threadReadMarkers = mutableMapOf(
+        readMarkerKey("user_2", canonicalThreadId("user_1", "user_2")) to now.minus(2, ChronoUnit.HOURS),
+        readMarkerKey("user_2", canonicalThreadId("user_2", "user_3")) to now.minus(70, ChronoUnit.MINUTES),
+    )
     private var bookingCounter = 6
+    private var bookingStatusHistoryCounter = 12
     private var holdCounter = 1
     private var postCounter = 10
     private var eventCounter = 6
     private var groupCounter = 6
     private var blackoutCounter = 3
     private var quoteCounter = 4
+    private var commentCounter = 5
     private var vetCoachSessionCounter = 3
     private var vetVerificationCounter = 3
     private var moderationReportCounter = 1
+    private var authInviteCounter = 1
+    private var directMessageCounter = 8
     private val blockedUsersByUser = mutableMapOf<String, MutableSet<String>>()
     private val moderationReports = mutableListOf<CommunityReport>()
     private val analyticsEvents = mutableListOf<Pair<Instant, CommunityAnalyticsEventCreateRequest>>()
+    private val communityAdminUsers = setOf("admin", "user_1", "user_3")
 
     private fun derivePostOwner(post: CommunityPost): String {
         val explicit = post.createdBy?.trim().orEmpty()
@@ -886,6 +1187,66 @@ class MockApiService private constructor() : ApiService {
         else -> null
     }
 
+    private fun inferUserFocusSuburb(userId: String?): Pair<String?, String> {
+        val normalizedUserId = userId?.trim().orEmpty()
+        if (normalizedUserId.isBlank()) {
+            return null to "none"
+        }
+        val scoredGroups = groups
+            .filter { group -> normalizedUserId in groupMembers[group.id].orEmpty() }
+            .mapNotNull { group ->
+                val suburb = group.suburb.trim()
+                if (suburb.isBlank()) {
+                    null
+                } else {
+                    val groupName = group.name.lowercase()
+                    val isDogPark = "dog park" in groupName || "dogpark" in groupName
+                    val score = (if (isDogPark) 2000 else 0) + (if (group.official) 200 else 0) + group.memberCount
+                    val source = if (isDogPark) "dog_park_membership" else "group_membership"
+                    Triple(score, suburb, source)
+                }
+            }
+        val best = scoredGroups.maxWithOrNull(compareBy<Triple<Int, String, String>> { it.first }.thenBy { it.second })
+            ?: return null to "none"
+        return best.second to best.third
+    }
+
+    private fun defaultUserProfile(userId: String): UserProfileResponse {
+        val normalized = userId.trim().ifBlank { "user_2" }
+        val suburb = inferUserFocusSuburb(normalized).first ?: "Surry Hills"
+        val displayName = normalized
+            .replace("_", " ")
+            .trim()
+            .split(" ")
+            .filter { token -> token.isNotBlank() }
+            .joinToString(" ") { token -> token.replaceFirstChar { it.uppercase() } }
+            .ifBlank { normalized }
+        return UserProfileResponse(
+            userId = normalized,
+            displayName = displayName,
+            email = "$normalized@barkwise.test",
+            phone = "",
+            humanRoleLabel = "Member",
+            dogName = "",
+            dogPhotoUrls = emptyList(),
+            bio = "",
+            suburb = suburb,
+            favoriteSuburbs = listOf(suburb),
+            fieldVisibility = mapOf("phone" to "private", "email" to "private", "suburb" to "group"),
+            updatedAt = Instant.now().toString(),
+        )
+    }
+
+    private fun findCommentById(commentId: String): Triple<String, Int, CommunityComment>? {
+        commentsByPost.entries.forEach { (postId, comments) ->
+            val index = comments.indexOfFirst { comment -> comment.id == commentId }
+            if (index >= 0) {
+                return Triple(postId, index, comments[index])
+            }
+        }
+        return null
+    }
+
     private fun withDerivedPostFields(post: CommunityPost): CommunityPost {
         val owner = derivePostOwner(post)
         if (post.latitude != null && post.longitude != null && post.createdBy != null) {
@@ -898,6 +1259,59 @@ class MockApiService private constructor() : ApiService {
             createdBy = owner,
             latitude = lat,
             longitude = lng,
+        )
+    }
+
+    override suspend fun getRecommendations(
+        userId: String?,
+        category: String?,
+        suburb: String?,
+        minRating: Double?,
+        maxDistanceKm: Double?,
+        userLat: Double?,
+        userLng: Double?,
+    ): ServiceRecommendationsResponse {
+        val explicitSuburb = suburb?.trim()?.ifBlank { null }
+        val (inferredSuburb, inferredSource) = if (explicitSuburb == null) {
+            inferUserFocusSuburb(userId)
+        } else {
+            null to "explicit_suburb"
+        }
+        val effectiveSuburb = explicitSuburb ?: inferredSuburb
+        val suburbSource = if (explicitSuburb != null) "explicit_suburb" else inferredSource
+        val recommended = getProviders(
+            category = category,
+            suburb = effectiveSuburb,
+            userId = userId,
+            includeInactive = false,
+            minRating = minRating,
+            maxDistanceKm = maxDistanceKm,
+            userLat = userLat,
+            userLng = userLng,
+            query = null,
+            sortBy = "relevance",
+        ).let { localMatches ->
+            if (effectiveSuburb != null && localMatches.isEmpty()) {
+                getProviders(
+                    category = category,
+                    suburb = null,
+                    userId = userId,
+                    includeInactive = false,
+                    minRating = minRating,
+                    maxDistanceKm = maxDistanceKm,
+                    userLat = userLat,
+                    userLng = userLng,
+                    query = null,
+                    sortBy = "relevance",
+                )
+            } else {
+                localMatches
+            }
+        }.take(6)
+        return ServiceRecommendationsResponse(
+            providers = recommended,
+            inferredSuburb = effectiveSuburb,
+            suburbSource = suburbSource,
         )
     }
 
@@ -1041,12 +1455,22 @@ class MockApiService private constructor() : ApiService {
     }
 
     override suspend fun requestQuote(payload: ServiceQuoteRequestCreate): ServiceQuoteRequestView {
+        val requestedSuburb = payload.suburb?.trim()?.ifBlank { null }
+            ?: inferUserFocusSuburb(payload.userId).first
+            ?: providers
+                .asSequence()
+                .filter { it.status == "active" }
+                .filter { it.category == payload.category }
+                .filter { it.ownerUserId != payload.userId }
+                .firstOrNull()
+                ?.suburb
+            ?: "Surry Hills"
         val preferredSuburbMatches = providers
             .asSequence()
             .filter { it.status == "active" }
             .filter { it.category == payload.category }
             .filter { it.ownerUserId != payload.userId }
-            .filter { it.suburb.equals(payload.suburb, ignoreCase = true) }
+            .filter { it.suburb.equals(requestedSuburb, ignoreCase = true) }
             .toList()
         val fallbackMatches = providers
             .asSequence()
@@ -1077,7 +1501,7 @@ class MockApiService private constructor() : ApiService {
                 id = quoteId,
                 userId = payload.userId,
                 category = payload.category,
-                suburb = payload.suburb,
+                suburb = requestedSuburb,
                 preferredWindow = payload.preferredWindow,
                 petDetails = payload.petDetails,
                 note = payload.note,
@@ -1095,7 +1519,7 @@ class MockApiService private constructor() : ApiService {
                     id = "notif_quote_${Instant.now().toEpochMilli()}_${target.providerId}",
                     userId = target.ownerUserId,
                     title = "New quote request",
-                    body = "${payload.category.replace("_", " ")} in ${payload.suburb} (${payload.preferredWindow})",
+                    body = "${payload.category.replace("_", " ")} in $requestedSuburb (${payload.preferredWindow})",
                     category = "booking",
                     read = false,
                     createdAt = Instant.now().toString(),
@@ -1356,6 +1780,19 @@ class MockApiService private constructor() : ApiService {
             status = "pending_provider_confirmation",
         )
         bookings += booking
+        bookingStatusHistoryByBookingId
+            .getOrPut(booking.id) { mutableListOf() }
+            .add(
+                BookingStatusHistoryEntry(
+                    id = "bsh_${bookingStatusHistoryCounter++}",
+                    bookingId = booking.id,
+                    actorUserId = payload.userId,
+                    fromStatus = "none",
+                    toStatus = booking.status,
+                    note = "booking requested",
+                    createdAt = Instant.now().toString(),
+                )
+            )
         return booking
     }
 
@@ -1376,11 +1813,36 @@ class MockApiService private constructor() : ApiService {
     ): BookingResponse {
         val index = bookings.indexOfFirst { it.id == bookingId }
         if (index < 0) error("Booking not found: $bookingId")
+        if (
+            payload.status != "rescheduled" &&
+            (!payload.date.isNullOrBlank() || !payload.timeSlot.isNullOrBlank())
+        ) {
+            error("date/time_slot can only be provided when status is rescheduled")
+        }
+        if (payload.status == "rescheduled" && (payload.date.isNullOrBlank() || payload.timeSlot.isNullOrBlank())) {
+            error("Rescheduled status requires date and time_slot")
+        }
+        val previousStatus = bookings[index].status
         val updated = bookings[index].copy(
+            date = payload.date?.trim()?.ifBlank { bookings[index].date } ?: bookings[index].date,
+            timeSlot = payload.timeSlot?.trim()?.ifBlank { bookings[index].timeSlot } ?: bookings[index].timeSlot,
             status = payload.status,
             note = payload.note,
         )
         bookings[index] = updated
+        bookingStatusHistoryByBookingId
+            .getOrPut(bookingId) { mutableListOf() }
+            .add(
+                BookingStatusHistoryEntry(
+                    id = "bsh_${bookingStatusHistoryCounter++}",
+                    bookingId = bookingId,
+                    actorUserId = payload.actorUserId,
+                    fromStatus = previousStatus,
+                    toStatus = payload.status,
+                    note = payload.note,
+                    createdAt = Instant.now().toString(),
+                )
+            )
         return updated
     }
 
@@ -1395,6 +1857,20 @@ class MockApiService private constructor() : ApiService {
                 }
             }
         }
+    }
+
+    override suspend fun getBookingStatusHistory(
+        bookingId: String,
+        requesterUserId: String,
+    ): List<BookingStatusHistoryEntry> {
+        val booking = bookings.firstOrNull { row -> row.id == bookingId } ?: error("Booking not found: $bookingId")
+        val providerOwnerUserId = providers.firstOrNull { provider -> provider.id == booking.providerId }?.ownerUserId.orEmpty()
+        if (requesterUserId != booking.ownerUserId && requesterUserId != providerOwnerUserId) {
+            error("Only booking owner or provider can view booking history")
+        }
+        return bookingStatusHistoryByBookingId[bookingId]
+            .orEmpty()
+            .sortedBy { row -> row.createdAt }
     }
 
     override suspend fun getCalendarEvents(
@@ -1455,12 +1931,65 @@ class MockApiService private constructor() : ApiService {
     override suspend fun chat(payload: ChatRequest): ChatResponse {
         val conversation = conversationByUser.getOrPut(payload.userId) { mutableListOf() }
         conversation += ChatTurn(role = "user", content = payload.message)
-        val suburbHint = payload.suburb?.let { " (suburb: $it)" }.orEmpty()
-        val answer = "Mock mode only. This build does not use the real LLM.$suburbHint"
-        conversation += ChatTurn(role = "assistant", content = answer)
+        val text = payload.message.lowercase()
+        val suburbHint = payload.suburb?.let { " in $it" }.orEmpty()
+        val isFaq = listOf("vaccine", "vaccination", "booster", "groom", "how often").any { token ->
+            text.contains(token)
+        }
+        val isRag = listOf("poison", "xylitol", "grape", "parvo", "vomit", "diarrhea", "diarrhoea").any { token ->
+            text.contains(token)
+        }
+        val answer = when {
+            isFaq -> {
+                "Mock FAQ answer$suburbHint: for common dog care questions, keep routines consistent and confirm timing with your vet."
+            }
+            isRag -> {
+                "Mock RAG answer$suburbHint: I pulled grounded safety context. If toxin exposure is possible, contact a vet immediately."
+            }
+            else -> {
+                "Mock GPT fallback$suburbHint: I can help with practical next steps for your dog, services, or community questions."
+            }
+        }
+        val answerSource = when {
+            isFaq -> "faq"
+            isRag -> "rag"
+            else -> "gpt_fallback"
+        }
+        val answerBadges = when {
+            isFaq -> listOf("FAQ QA", "Barkwise QA")
+            isRag -> listOf("RAG Grounded", "Barkwise AI")
+            else -> listOf("GPT Fallback", "Mock")
+        }
+        val citations = when {
+            isFaq -> listOf(
+                ChatCitation(
+                    title = "Canine Vaccination Guidelines",
+                    source = "AAHA",
+                    url = "https://www.aaha.org/resources/2022-aaha-canine-vaccination-guidelines/",
+                ),
+            )
+            isRag -> listOf(
+                ChatCitation(
+                    title = "Animal Poison Control Guidance",
+                    source = "ASPCA Animal Poison Control",
+                    url = "https://www.aspca.org/pet-care/animal-poison-control",
+                ),
+            )
+            else -> emptyList()
+        }
+        conversation += ChatTurn(
+            role = "assistant",
+            content = answer,
+            answerSource = answerSource,
+            answerBadges = answerBadges,
+            citations = citations,
+        )
         return ChatResponse(
             answer = answer,
             conversation = conversation.toList(),
+            answerSource = answerSource,
+            answerBadges = answerBadges,
+            citations = citations,
         )
     }
 
@@ -1781,6 +2310,132 @@ class MockApiService private constructor() : ApiService {
         return enriched
     }
 
+    override suspend fun getPostComments(
+        postId: String,
+        userId: String?,
+        limit: Int,
+        offset: Int,
+        includeRemoved: Boolean,
+    ): List<CommunityComment> {
+        if (posts.none { post -> post.id == postId }) error("Post not found: $postId")
+        val blocked = userId?.let { blockedUsersByUser[it].orEmpty() }.orEmpty()
+        val isAdmin = !userId.isNullOrBlank() && userId in communityAdminUsers
+        val comments = commentsByPost[postId]
+            .orEmpty()
+            .sortedBy { comment -> comment.createdAt }
+            .filter { comment ->
+                if (comment.userId in blocked) return@filter false
+                val isAuthor = !userId.isNullOrBlank() && comment.userId == userId
+                if (comment.status != "active") {
+                    if (!includeRemoved && !isAuthor && !isAdmin) return@filter false
+                    if (includeRemoved && !isAuthor && !isAdmin) return@filter false
+                }
+                true
+            }
+        val safeOffset = offset.coerceAtLeast(0)
+        val safeLimit = limit.coerceIn(1, 100)
+        return comments.drop(safeOffset).take(safeLimit)
+    }
+
+    override suspend fun createPostComment(
+        postId: String,
+        payload: CommunityCommentCreateRequest,
+    ): CommunityComment {
+        val post = posts.firstOrNull { row -> row.id == postId }?.let { withDerivedPostFields(it) }
+            ?: error("Post not found: $postId")
+        val body = payload.body.trim()
+        if (body.isBlank()) error("Comment body is required")
+        if (body.length > 500) error("Comment body exceeds 500 characters")
+
+        val comments = commentsByPost.getOrPut(postId) { mutableListOf() }
+        val parentCommentId = payload.parentCommentId?.trim()?.ifBlank { null }
+        val parentComment = if (parentCommentId != null) {
+            comments.firstOrNull { comment -> comment.id == parentCommentId } ?: error("Parent comment not found")
+        } else {
+            null
+        }
+        if (parentComment != null && parentComment.status != "active") {
+            error("Cannot reply to removed comment")
+        }
+
+        val created = CommunityComment(
+            id = "comment_${commentCounter++}",
+            postId = postId,
+            userId = payload.userId,
+            body = body,
+            parentCommentId = parentCommentId,
+            createdAt = Instant.now().toString(),
+        )
+        comments += created
+
+        val postOwnerId = post.createdBy?.trim().orEmpty()
+        if (postOwnerId.isNotBlank() && postOwnerId != payload.userId) {
+            notifications.add(
+                0,
+                AppNotification(
+                    id = "notif_comment_${Instant.now().toEpochMilli()}_${created.id}",
+                    userId = postOwnerId,
+                    title = "New comment on your post",
+                    body = "${payload.userId} commented on \"${post.title}\"",
+                    category = "community",
+                    read = false,
+                    createdAt = Instant.now().toString(),
+                    deepLink = "post:$postId",
+                ),
+            )
+        }
+        if (parentComment != null && parentComment.userId != payload.userId && parentComment.userId != postOwnerId) {
+            notifications.add(
+                0,
+                AppNotification(
+                    id = "notif_comment_reply_${Instant.now().toEpochMilli()}_${created.id}",
+                    userId = parentComment.userId,
+                    title = "New reply to your comment",
+                    body = "${payload.userId} replied in ${post.suburb}",
+                    category = "community",
+                    read = false,
+                    createdAt = Instant.now().toString(),
+                    deepLink = "post:$postId",
+                ),
+            )
+        }
+        return created
+    }
+
+    override suspend fun moderatePostComment(
+        commentId: String,
+        payload: CommunityCommentModerationRequest,
+    ): CommunityComment {
+        if (payload.requesterUserId !in communityAdminUsers) error("Only moderators can moderate comments")
+        val normalizedAction = payload.action.trim().lowercase()
+        if (normalizedAction !in setOf("remove", "restore")) error("Invalid moderation action")
+        val (postId, commentIndex, comment) = findCommentById(commentId) ?: error("Comment not found: $commentId")
+        val updated = comment.copy(
+            status = if (normalizedAction == "remove") "removed_by_moderator" else "active",
+            moderatedAt = Instant.now().toString(),
+            moderatedBy = payload.requesterUserId,
+            moderationNote = payload.note.trim().ifBlank { null },
+        )
+        commentsByPost[postId]?.set(commentIndex, updated)
+
+        if (updated.userId != payload.requesterUserId) {
+            notifications.add(
+                0,
+                AppNotification(
+                    id = "notif_comment_mod_${Instant.now().toEpochMilli()}_${updated.id}",
+                    userId = updated.userId,
+                    title = "Comment moderation update",
+                    body = "Your comment is now ${updated.status.replace("_", " ")}.",
+                    category = "community",
+                    read = false,
+                    createdAt = Instant.now().toString(),
+                    deepLink = "comment:${updated.id}",
+                ),
+            )
+        }
+        return updated
+    }
+
     override suspend fun resolvePost(postId: String, payload: CommunityPostResolveRequest): CommunityPost {
         val postIndex = posts.indexOfFirst { post -> post.id == postId }
         if (postIndex < 0) error("Post not found: $postId")
@@ -1829,6 +2484,7 @@ class MockApiService private constructor() : ApiService {
         val current = withDerivedPostFields(posts[index])
         if (derivePostOwner(current) != requesterUserId) error("Only post owner can delete this post")
         posts.removeAt(index)
+        commentsByPost.remove(postId)
         return mapOf("status" to "deleted", "post_id" to postId)
     }
 
@@ -1857,8 +2513,7 @@ class MockApiService private constructor() : ApiService {
     }
 
     override suspend fun getModerationReports(requesterUserId: String, includeResolved: Boolean): List<CommunityReport> {
-        val adminUsers = setOf("admin", "user_1", "user_3")
-        if (requesterUserId !in adminUsers) error("Only moderators can view report queue")
+        if (requesterUserId !in communityAdminUsers) error("Only moderators can view report queue")
         return if (includeResolved) moderationReports.toList() else moderationReports.filter { it.status == "pending" }
     }
 
@@ -1994,6 +2649,254 @@ class MockApiService private constructor() : ApiService {
             tokenType = "bearer",
             userId = payload.userId,
             expiresAt = Instant.now().plus(7, ChronoUnit.DAYS).toString(),
+        )
+    }
+
+    override suspend fun createAuthInvite(payload: AuthInviteCreateRequest): AuthInviteResponse {
+        val email = payload.email.trim().lowercase()
+        if (email.isBlank() || "@" !in email) error("Valid email is required")
+        val inviteId = "ainv_${authInviteCounter++}"
+        val fallbackUserId = email
+            .substringBefore("@")
+            .replace(Regex("[^a-z0-9]+"), "_")
+            .trim('_')
+            .ifBlank { "beta_user_${authInviteCounter}" }
+        val targetUserId = payload.userId
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: "beta_$fallbackUserId"
+        val expiresAt = Instant.now()
+            .plus(payload.ttlMinutes.coerceIn(5, 24 * 60).toLong(), ChronoUnit.MINUTES)
+            .toString()
+        val invite = AuthInviteResponse(
+            inviteId = inviteId,
+            userId = targetUserId,
+            email = email,
+            expiresAt = expiresAt,
+        )
+        authInvitesById[inviteId] = invite
+        return invite
+    }
+
+    override suspend fun requestOtp(payload: AuthOtpRequest): AuthOtpRequestResponse {
+        val invite = authInvitesById[payload.inviteId] ?: error("Invite not found")
+        val email = payload.email.trim().lowercase()
+        if (invite.email.lowercase() != email) error("Invite email mismatch")
+        if (parseInstantValue(invite.expiresAt).isBefore(Instant.now())) error("Invite expired")
+        val key = otpKey(payload.inviteId, email)
+        val code = (((key.hashCode().toUInt().toLong() and 0x7FFFFFFF) % 900_000L) + 100_000L).toString()
+        val expiresAt = Instant.now().plus(10, ChronoUnit.MINUTES)
+        otpCodeByInviteEmail[key] = code
+        otpExpiresByInviteEmail[key] = expiresAt
+        return AuthOtpRequestResponse(
+            status = "otp_sent",
+            expiresAt = expiresAt.toString(),
+        )
+    }
+
+    override suspend fun verifyOtp(payload: AuthOtpVerifyRequest): AuthOtpVerifyResponse {
+        val invite = authInvitesById[payload.inviteId] ?: error("Invite not found")
+        val email = payload.email.trim().lowercase()
+        if (invite.email.lowercase() != email) error("Invite email mismatch")
+        if (parseInstantValue(invite.expiresAt).isBefore(Instant.now())) error("Invite expired")
+        val key = otpKey(payload.inviteId, email)
+        val expected = otpCodeByInviteEmail[key] ?: error("OTP not requested")
+        val expiresAt = otpExpiresByInviteEmail[key] ?: Instant.EPOCH
+        if (expiresAt.isBefore(Instant.now())) error("OTP expired")
+        if (payload.otpCode.trim() != expected) error("Invalid OTP")
+        otpCodeByInviteEmail.remove(key)
+        otpExpiresByInviteEmail.remove(key)
+        return AuthOtpVerifyResponse(
+            accessToken = "mock-otp-token-${invite.userId}",
+            tokenType = "bearer",
+            userId = invite.userId,
+            expiresAt = Instant.now().plus(7, ChronoUnit.DAYS).toString(),
+        )
+    }
+
+    override suspend fun logout(): AuthLogoutResponse {
+        return AuthLogoutResponse(status = "ok")
+    }
+
+    override suspend fun deleteAccount(userId: String): AuthDeleteResponse {
+        notifications.removeAll { notification -> notification.userId == userId }
+        userProfilesByUserId.remove(userId)
+        val inviteIds = authInvitesById.values
+            .filter { invite -> invite.userId == userId }
+            .map { invite -> invite.inviteId }
+        inviteIds.forEach { inviteId ->
+            authInvitesById.remove(inviteId)
+            val otpKeys = otpCodeByInviteEmail.keys.filter { key -> key.startsWith("$inviteId:") }
+            otpKeys.forEach { key ->
+                otpCodeByInviteEmail.remove(key)
+                otpExpiresByInviteEmail.remove(key)
+            }
+        }
+        val threadIdsToDelete = threadParticipants
+            .filterValues { participants ->
+                participants.first == userId || participants.second == userId
+            }
+            .keys
+            .toList()
+        threadIdsToDelete.forEach { threadId ->
+            threadParticipants.remove(threadId)
+            messagesByThread.remove(threadId)
+        }
+        val readKeysToDelete = threadReadMarkers.keys
+            .filter { key ->
+                key.startsWith("$userId|") || threadIdsToDelete.any { threadId -> key.endsWith("|$threadId") }
+            }
+            .toList()
+        readKeysToDelete.forEach { key -> threadReadMarkers.remove(key) }
+        return AuthDeleteResponse(status = "deleted", userId = userId)
+    }
+
+    override suspend fun getUserProfile(userId: String): UserProfileResponse {
+        val normalized = userId.trim()
+        if (normalized.isBlank()) error("user_id is required")
+        return userProfilesByUserId.getOrPut(normalized) { defaultUserProfile(normalized) }
+    }
+
+    override suspend fun upsertUserProfile(payload: UserProfileUpsertRequest): UserProfileResponse {
+        val normalizedUserId = payload.requesterUserId.trim()
+        if (normalizedUserId.isBlank()) error("requester_user_id is required")
+        val normalizedEmail = payload.email.trim().lowercase()
+        if (normalizedEmail.isNotBlank() && !normalizedEmail.contains("@")) error("Invalid email")
+        val profile = UserProfileResponse(
+            userId = normalizedUserId,
+            displayName = payload.displayName.trim(),
+            email = normalizedEmail,
+            phone = payload.phone.trim(),
+            humanPronouns = payload.humanPronouns.trim(),
+            humanRoleLabel = payload.humanRoleLabel.trim(),
+            dogName = payload.dogName.trim(),
+            dogAgeMonths = payload.dogAgeMonths.coerceAtLeast(0),
+            dogBreedMix = payload.dogBreedMix.trim(),
+            dogSexNeuter = payload.dogSexNeuter.trim(),
+            dogWeightClass = payload.dogWeightClass.trim(),
+            dogPhotoUrls = payload.dogPhotoUrls
+                .map { value -> value.trim() }
+                .filter { value -> value.isNotBlank() }
+                .distinct()
+                .take(8),
+            secondaryDogName = payload.secondaryDogName.trim(),
+            secondaryDogAgeMonths = payload.secondaryDogAgeMonths.coerceAtLeast(0),
+            secondaryDogPhotoUrl = payload.secondaryDogPhotoUrl.trim(),
+            bio = payload.bio.trim(),
+            suburb = payload.suburb.trim(),
+            favoriteSuburbs = payload.favoriteSuburbs
+                .map { value -> value.trim() }
+                .filter { value -> value.isNotBlank() }
+                .distinct()
+                .take(8),
+            playEnergyLevel = payload.playEnergyLevel.trim(),
+            playStyle = payload.playStyle.trim(),
+            socialConfidence = payload.socialConfidence.trim(),
+            triggerNotes = payload.triggerNotes.trim(),
+            idealMatch = payload.idealMatch.trim(),
+            walkPreferences = payload.walkPreferences.trim(),
+            trainingStyle = payload.trainingStyle.trim(),
+            feedingRules = payload.feedingRules.trim(),
+            consentBoundaries = payload.consentBoundaries.trim(),
+            vaccinationStatus = payload.vaccinationStatus.trim(),
+            microchipped = payload.microchipped,
+            recallTrained = payload.recallTrained,
+            leashReliability = payload.leashReliability.trim(),
+            emergencyContactName = payload.emergencyContactName.trim(),
+            emergencyContactPhone = payload.emergencyContactPhone.trim(),
+            fieldVisibility = payload.fieldVisibility
+                .mapKeys { (key, _) -> key.trim().lowercase() }
+                .mapValues { (_, value) -> value.trim().lowercase() }
+                .filter { (key, value) -> key.isNotBlank() && value.isNotBlank() }
+                .toMap(),
+            updatedAt = Instant.now().toString(),
+        )
+        userProfilesByUserId[normalizedUserId] = profile
+        return profile
+    }
+
+    override suspend fun getMessageThreads(userId: String, limit: Int): List<ApiMessageThread> {
+        return threadParticipants
+            .mapNotNull { (threadId, participants) ->
+                val participantUserId = when (userId) {
+                    participants.first -> participants.second
+                    participants.second -> participants.first
+                    else -> return@mapNotNull null
+                }
+                val messages = messagesByThread[threadId]
+                    .orEmpty()
+                    .sortedBy { message -> parseInstantValue(message.createdAt) }
+                val lastMessage = messages.lastOrNull()
+                val readMarker = threadReadMarkers[readMarkerKey(userId, threadId)]
+                val unreadCount = messages.count { message ->
+                    message.recipientUserId == userId &&
+                        (readMarker == null || parseInstantValue(message.createdAt).isAfter(readMarker))
+                }
+                ApiMessageThread(
+                    id = threadId,
+                    participantUserId = participantUserId,
+                    lastMessage = lastMessage?.body.orEmpty(),
+                    lastMessageAt = lastMessage?.createdAt ?: now.toString(),
+                    unreadCount = unreadCount,
+                )
+            }
+            .sortedByDescending { thread -> parseInstantValue(thread.lastMessageAt) }
+            .take(limit.coerceIn(1, 300))
+    }
+
+    override suspend fun getThreadMessages(threadId: String, userId: String, limit: Int): List<ApiDirectMessage> {
+        val participants = threadParticipants[threadId] ?: return emptyList()
+        if (userId != participants.first && userId != participants.second) return emptyList()
+        val messages = messagesByThread[threadId].orEmpty().sortedBy { message -> parseInstantValue(message.createdAt) }
+        val cappedLimit = limit.coerceIn(1, 500)
+        return messages.takeLast(cappedLimit)
+    }
+
+    override suspend fun sendThreadMessage(threadId: String, payload: MessageSendRequest): ApiDirectMessage {
+        val expectedThreadId = canonicalThreadId(payload.userId, payload.recipientUserId)
+        if (threadId != expectedThreadId) error("thread_id does not match participants")
+        val body = payload.body.trim()
+        if (body.isBlank()) error("Message body cannot be empty")
+        threadParticipants.putIfAbsent(
+            expectedThreadId,
+            orderedParticipants(payload.userId, payload.recipientUserId),
+        )
+        val message = ApiDirectMessage(
+            id = "msg_${directMessageCounter++}",
+            threadId = expectedThreadId,
+            senderUserId = payload.userId,
+            recipientUserId = payload.recipientUserId,
+            body = body,
+            createdAt = Instant.now().toString(),
+        )
+        val threadMessages = messagesByThread.getOrPut(expectedThreadId) { mutableListOf() }
+        threadMessages += message
+        notifications.add(
+            0,
+            AppNotification(
+                id = "notif_msg_${directMessageCounter}",
+                userId = payload.recipientUserId,
+                title = "New message",
+                body = "${payload.userId}: ${body.take(80)}",
+                category = "message",
+                read = false,
+                createdAt = message.createdAt,
+                deepLink = "thread:$expectedThreadId",
+            ),
+        )
+        return message
+    }
+
+    override suspend fun markThreadRead(threadId: String, payload: MessageMarkReadRequest): Map<String, String> {
+        val participants = threadParticipants[threadId] ?: return mapOf("status" to "ok", "read_seq" to "0")
+        if (payload.userId != participants.first && payload.userId != participants.second) {
+            return mapOf("status" to "ok", "read_seq" to "0")
+        }
+        threadReadMarkers[readMarkerKey(payload.userId, threadId)] = Instant.now()
+        val readSeq = messagesByThread[threadId].orEmpty().size
+        return mapOf(
+            "status" to "ok",
+            "read_seq" to readSeq.toString(),
         )
     }
 
@@ -2234,6 +3137,30 @@ class MockApiService private constructor() : ApiService {
         if (responseTimeMinutes != null) lines += "Typically responds in about $responseTimeMinutes min"
         if (!highlightedVetUntil.isNullOrBlank()) lines += "Highlighted vet owner until ${highlightedVetUntil.take(10)}"
         return lines
+    }
+
+    private fun canonicalThreadId(userA: String, userB: String): String {
+        val ordered = listOf(userA.trim(), userB.trim()).sorted()
+        return "dm_${ordered[0]}_${ordered[1]}"
+    }
+
+    private fun orderedParticipants(userA: String, userB: String): Pair<String, String> {
+        val ordered = listOf(userA.trim(), userB.trim()).sorted()
+        return ordered[0] to ordered[1]
+    }
+
+    private fun otpKey(inviteId: String, email: String): String {
+        return "${inviteId.trim()}:${email.trim().lowercase()}"
+    }
+
+    private fun readMarkerKey(userId: String, threadId: String): String {
+        return "${userId.trim()}|${threadId.trim()}"
+    }
+
+    private fun parseInstantValue(raw: String): Instant {
+        return runCatching { Instant.parse(raw) }
+            .recoverCatching { OffsetDateTime.parse(raw).toInstant() }
+            .getOrElse { Instant.EPOCH }
     }
 
     companion object {

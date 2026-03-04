@@ -116,14 +116,57 @@ fun ProfileScreen(
     var displayName by rememberSaveable(profileInfo.displayName) { mutableStateOf(profileInfo.displayName) }
     var email by rememberSaveable(profileInfo.email) { mutableStateOf(profileInfo.email) }
     var phone by rememberSaveable(profileInfo.phone) { mutableStateOf(profileInfo.phone) }
+    var humanPronouns by rememberSaveable(profileInfo.humanPronouns) { mutableStateOf(profileInfo.humanPronouns) }
+    var humanRoleLabel by rememberSaveable(profileInfo.humanRoleLabel) { mutableStateOf(profileInfo.humanRoleLabel) }
     var dogName by rememberSaveable(profileInfo.dogName) { mutableStateOf(profileInfo.dogName) }
+    var dogAgeMonthsText by rememberSaveable(profileInfo.dogAgeMonths) {
+        mutableStateOf(profileInfo.dogAgeMonths.takeIf { it > 0 }?.toString().orEmpty())
+    }
+    var dogBreedMix by rememberSaveable(profileInfo.dogBreedMix) { mutableStateOf(profileInfo.dogBreedMix) }
+    var dogSexNeuter by rememberSaveable(profileInfo.dogSexNeuter) { mutableStateOf(profileInfo.dogSexNeuter) }
+    var dogWeightClass by rememberSaveable(profileInfo.dogWeightClass) { mutableStateOf(profileInfo.dogWeightClass) }
     var dogPhotoUrlsText by rememberSaveable(profileInfo.dogPhotoUrls) {
         mutableStateOf(profileInfo.dogPhotoUrls.joinToString("\n"))
     }
+    var secondaryDogName by rememberSaveable(profileInfo.secondaryDogName) { mutableStateOf(profileInfo.secondaryDogName) }
+    var secondaryDogAgeMonthsText by rememberSaveable(profileInfo.secondaryDogAgeMonths) {
+        mutableStateOf(profileInfo.secondaryDogAgeMonths.takeIf { it > 0 }?.toString().orEmpty())
+    }
+    var secondaryDogPhotoUrl by rememberSaveable(profileInfo.secondaryDogPhotoUrl) { mutableStateOf(profileInfo.secondaryDogPhotoUrl) }
     var bio by rememberSaveable(profileInfo.bio) { mutableStateOf(profileInfo.bio) }
     var suburb by rememberSaveable(profileInfo.suburb) { mutableStateOf(profileInfo.suburb) }
     var favoriteSuburbsText by rememberSaveable(profileInfo.favoriteSuburbs) {
         mutableStateOf(profileInfo.favoriteSuburbs.joinToString(", "))
+    }
+    var playEnergyLevel by rememberSaveable(profileInfo.playEnergyLevel) { mutableStateOf(profileInfo.playEnergyLevel) }
+    var playStyle by rememberSaveable(profileInfo.playStyle) { mutableStateOf(profileInfo.playStyle) }
+    var socialConfidence by rememberSaveable(profileInfo.socialConfidence) { mutableStateOf(profileInfo.socialConfidence) }
+    var triggerNotes by rememberSaveable(profileInfo.triggerNotes) { mutableStateOf(profileInfo.triggerNotes) }
+    var idealMatch by rememberSaveable(profileInfo.idealMatch) { mutableStateOf(profileInfo.idealMatch) }
+    var walkPreferences by rememberSaveable(profileInfo.walkPreferences) { mutableStateOf(profileInfo.walkPreferences) }
+    var trainingStyle by rememberSaveable(profileInfo.trainingStyle) { mutableStateOf(profileInfo.trainingStyle) }
+    var feedingRules by rememberSaveable(profileInfo.feedingRules) { mutableStateOf(profileInfo.feedingRules) }
+    var consentBoundaries by rememberSaveable(profileInfo.consentBoundaries) { mutableStateOf(profileInfo.consentBoundaries) }
+    var vaccinationStatus by rememberSaveable(profileInfo.vaccinationStatus) { mutableStateOf(profileInfo.vaccinationStatus) }
+    var microchipped by rememberSaveable(profileInfo.microchipped) { mutableStateOf(profileInfo.microchipped) }
+    var recallTrained by rememberSaveable(profileInfo.recallTrained) { mutableStateOf(profileInfo.recallTrained) }
+    var leashReliability by rememberSaveable(profileInfo.leashReliability) { mutableStateOf(profileInfo.leashReliability) }
+    var emergencyContactName by rememberSaveable(profileInfo.emergencyContactName) { mutableStateOf(profileInfo.emergencyContactName) }
+    var emergencyContactPhone by rememberSaveable(profileInfo.emergencyContactPhone) { mutableStateOf(profileInfo.emergencyContactPhone) }
+    var emailVisibility by rememberSaveable(profileInfo.fieldVisibility["email"]) {
+        mutableStateOf(profileInfo.fieldVisibility["email"] ?: "private")
+    }
+    var phoneVisibility by rememberSaveable(profileInfo.fieldVisibility["phone"]) {
+        mutableStateOf(profileInfo.fieldVisibility["phone"] ?: "private")
+    }
+    var suburbVisibility by rememberSaveable(profileInfo.fieldVisibility["suburb"]) {
+        mutableStateOf(profileInfo.fieldVisibility["suburb"] ?: "group")
+    }
+    var dogNameVisibility by rememberSaveable(profileInfo.fieldVisibility["dog_name"]) {
+        mutableStateOf(profileInfo.fieldVisibility["dog_name"] ?: "friends")
+    }
+    var triggerNotesVisibility by rememberSaveable(profileInfo.fieldVisibility["trigger_notes"]) {
+        mutableStateOf(profileInfo.fieldVisibility["trigger_notes"] ?: "private")
     }
 
     var friendSearchQuery by rememberSaveable { mutableStateOf("") }
@@ -165,6 +208,26 @@ fun ProfileScreen(
     val profileCompletionRatio = remember(profileInfo, profileDogPhotoUrls) {
         profileCompletenessRatio(profileInfo, profileDogPhotoUrls)
     }
+    val humanProfileCompletion = remember(profileInfo) {
+        completionRatio(
+            profileInfo.displayName.isNotBlank(),
+            profileInfo.email.isNotBlank(),
+            profileInfo.phone.isNotBlank(),
+            profileInfo.suburb.isNotBlank(),
+            profileInfo.bio.isNotBlank(),
+            profileInfo.emergencyContactName.isNotBlank() && profileInfo.emergencyContactPhone.isNotBlank(),
+        )
+    }
+    val dogProfileCompletion = remember(profileInfo, profileDogPhotoUrls) {
+        completionRatio(
+            profileInfo.dogName.isNotBlank(),
+            profileInfo.dogAgeMonths > 0,
+            profileInfo.dogBreedMix.isNotBlank(),
+            profileInfo.playEnergyLevel.isNotBlank(),
+            profileInfo.socialConfidence.isNotBlank(),
+            profileDogPhotoUrls.isNotEmpty(),
+        )
+    }
     val totalFriendCount = remember(friendProfiles) {
         friendProfiles.count { profile -> profile.isFriend }
     }
@@ -177,8 +240,10 @@ fun ProfileScreen(
             .filter(::isJoinedEventUpcoming)
             .sortedBy { event -> event.date }
     }
-    val profileRoleLabel = remember(profileInfo.email) {
-        if (profileInfo.email.isBlank()) "Guest" else "Member"
+    val profileRoleLabel = remember(profileInfo.email, profileInfo.humanRoleLabel) {
+        profileInfo.humanRoleLabel.ifBlank {
+            if (profileInfo.email.isBlank()) "Guest" else "Member"
+        }
     }
     val profileInitial = remember(profileInfo.displayName, activeAccountLabel) {
         (profileInfo.displayName.ifBlank { activeAccountLabel })
@@ -259,6 +324,7 @@ fun ProfileScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -329,6 +395,122 @@ fun ProfileScreen(
                             }
                         }
                     }
+                    AdaptiveSplitCards(
+                        first = { modifier ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                modifier = modifier,
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("Human profile", style = MaterialTheme.typography.labelLarge)
+                                    Text(
+                                        profileInfo.displayName.ifBlank { activeAccountLabel },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Text(
+                                        listOf(
+                                            profileInfo.humanPronouns.takeIf { it.isNotBlank() },
+                                            profileInfo.humanRoleLabel.takeIf { it.isNotBlank() },
+                                        ).joinToString(" • ").ifBlank { "Role not set" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        "Suburb: ${profileInfo.suburb.ifBlank { "Not set" }}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        "Human completeness ${(humanProfileCompletion * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                    LinearProgressIndicator(
+                                        progress = { humanProfileCompletion },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
+                        },
+                        second = { modifier ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                modifier = modifier,
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("Dog profile", style = MaterialTheme.typography.labelLarge)
+                                    Text(
+                                        profileInfo.dogName.ifBlank { "Dog name not set" },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Text(
+                                        listOf(
+                                            profileInfo.dogBreedMix.takeIf { it.isNotBlank() },
+                                            profileInfo.dogSexNeuter.takeIf { it.isNotBlank() },
+                                            profileInfo.dogWeightClass.takeIf { it.isNotBlank() },
+                                        ).joinToString(" • ").ifBlank { "Breed / size not set" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    val ageLabel = profileInfo.dogAgeMonths
+                                        .takeIf { it > 0 }
+                                        ?.let { months -> "$months months old" }
+                                        ?: "Age not set"
+                                    Text(
+                                        ageLabel,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    profileInfo.secondaryDogName.takeIf { it.isNotBlank() }?.let { secondDog ->
+                                        Text(
+                                            "Companion dog: $secondDog",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    Text(
+                                        "Dog completeness ${(dogProfileCompletion * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                    LinearProgressIndicator(
+                                        progress = { dogProfileCompletion },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
+                        },
+                    )
+                    ProfileDetailSection(
+                        title = "Play compatibility",
+                        details = listOf(
+                            "Energy: ${profileInfo.playEnergyLevel.ifBlank { "Not set" }}",
+                            "Style: ${profileInfo.playStyle.ifBlank { "Not set" }}",
+                            "Social confidence: ${profileInfo.socialConfidence.ifBlank { "Not set" }}",
+                            "Ideal match: ${profileInfo.idealMatch.ifBlank { "Not set" }}",
+                            profileInfo.triggerNotes.takeIf { it.isNotBlank() }?.let { "Triggers: $it" },
+                        ),
+                    )
+                    ProfileDetailSection(
+                        title = "Care preferences",
+                        details = listOf(
+                            "Walks: ${profileInfo.walkPreferences.ifBlank { "Not set" }}",
+                            "Training: ${profileInfo.trainingStyle.ifBlank { "Not set" }}",
+                            "Feeding: ${profileInfo.feedingRules.ifBlank { "Not set" }}",
+                            "Boundaries: ${profileInfo.consentBoundaries.ifBlank { "Not set" }}",
+                        ),
+                    )
+                    ProfileTrustBadges(
+                        vaccinationStatus = profileInfo.vaccinationStatus,
+                        microchipped = profileInfo.microchipped,
+                        recallTrained = profileInfo.recallTrained,
+                        leashReliability = profileInfo.leashReliability,
+                        emergencyContactReady = profileInfo.emergencyContactName.isNotBlank() && profileInfo.emergencyContactPhone.isNotBlank(),
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ProfileStatChip(label = "Friends", value = totalFriendCount.toString())
                         ProfileStatChip(label = "Photos", value = profileDogPhotoUrls.size.toString())
@@ -1043,10 +1225,22 @@ fun ProfileScreen(
         val normalizedDisplayName = displayName.trim()
         val normalizedEmail = email.trim()
         val normalizedPhone = phone.trim()
+        val normalizedHumanPronouns = humanPronouns.trim()
+        val normalizedHumanRoleLabel = humanRoleLabel.trim()
         val normalizedDogName = dogName.trim()
+        val normalizedDogAgeMonths = dogAgeMonthsText.trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val isDogAgeValid = dogAgeMonthsText.trim().isBlank() || dogAgeMonthsText.trim().toIntOrNull() != null
+        val normalizedDogBreedMix = dogBreedMix.trim()
+        val normalizedDogSexNeuter = dogSexNeuter.trim()
+        val normalizedDogWeightClass = dogWeightClass.trim()
         val normalizedSuburb = suburb.trim()
         val normalizedBio = bio.trim()
-        val parsedDogPhotoUrls = parseCommaOrNewlineValues(dogPhotoUrlsText)
+        val normalizedSecondaryDogName = secondaryDogName.trim()
+        val normalizedSecondaryDogAgeMonths = secondaryDogAgeMonthsText.trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val isSecondaryDogAgeValid =
+            secondaryDogAgeMonthsText.trim().isBlank() || secondaryDogAgeMonthsText.trim().toIntOrNull() != null
+        val normalizedSecondaryDogPhotoUrl = secondaryDogPhotoUrl.trim()
+        val parsedDogPhotoUrls = parseDogPhotoValues(dogPhotoUrlsText)
         val validDogPhotoUrls = parsedDogPhotoUrls
             .filter(::isValidProfilePhotoUrl)
             .distinct()
@@ -1055,15 +1249,44 @@ fun ProfileScreen(
         val normalizedFavoriteSuburbs = parseCommaOrNewlineValues(favoriteSuburbsText)
             .distinct()
             .take(8)
+        val normalizedPlayEnergyLevel = playEnergyLevel.trim()
+        val normalizedPlayStyle = playStyle.trim()
+        val normalizedSocialConfidence = socialConfidence.trim()
+        val normalizedTriggerNotes = triggerNotes.trim()
+        val normalizedIdealMatch = idealMatch.trim()
+        val normalizedWalkPreferences = walkPreferences.trim()
+        val normalizedTrainingStyle = trainingStyle.trim()
+        val normalizedFeedingRules = feedingRules.trim()
+        val normalizedConsentBoundaries = consentBoundaries.trim()
+        val normalizedVaccinationStatus = vaccinationStatus.trim()
+        val normalizedLeashReliability = leashReliability.trim()
+        val normalizedEmergencyContactName = emergencyContactName.trim()
+        val normalizedEmergencyContactPhone = emergencyContactPhone.trim()
+        val normalizedVisibility = buildMap {
+            put("email", normalizeVisibilityValue(emailVisibility))
+            put("phone", normalizeVisibilityValue(phoneVisibility))
+            put("suburb", normalizeVisibilityValue(suburbVisibility))
+            put("dog_name", normalizeVisibilityValue(dogNameVisibility))
+            put("trigger_notes", normalizeVisibilityValue(triggerNotesVisibility))
+        }
         val isEmailValid = normalizedEmail.isBlank() || isLikelyEmail(normalizedEmail)
         val isPhoneValid = normalizedPhone.isBlank() || isLikelyPhoneNumber(normalizedPhone)
-        val canSaveProfile = isEmailValid && isPhoneValid && !hasInvalidDogPhotoUrls
+        val isEmergencyPhoneValid =
+            normalizedEmergencyContactPhone.isBlank() || isLikelyPhoneNumber(normalizedEmergencyContactPhone)
+        val isSecondaryPhotoValid = normalizedSecondaryDogPhotoUrl.isBlank() || isValidProfilePhotoUrl(normalizedSecondaryDogPhotoUrl)
+        val canSaveProfile = isEmailValid &&
+            isPhoneValid &&
+            isEmergencyPhoneValid &&
+            isDogAgeValid &&
+            isSecondaryDogAgeValid &&
+            isSecondaryPhotoValid &&
+            !hasInvalidDogPhotoUrls
         val appendDogPhotoUrl: (String) -> Unit = append@{ rawUrl ->
             val normalizedUrl = rawUrl.trim()
             if (normalizedUrl.isBlank()) {
                 return@append
             }
-            val updatedUrls = (parseCommaOrNewlineValues(dogPhotoUrlsText) + normalizedUrl)
+            val updatedUrls = (parseDogPhotoValues(dogPhotoUrlsText) + normalizedUrl)
                 .map { value -> value.trim() }
                 .filter { value -> value.isNotBlank() }
                 .distinct()
@@ -1128,9 +1351,45 @@ fun ProfileScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
+                        value = humanPronouns,
+                        onValueChange = { humanPronouns = it.take(32) },
+                        label = { Text("Pronouns") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = humanRoleLabel,
+                        onValueChange = { humanRoleLabel = it.take(48) },
+                        label = { Text("Role label (e.g. Member, Provider + Parent)") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
                         value = dogName,
                         onValueChange = { dogName = it.take(48) },
                         label = { Text("Dog name") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = dogAgeMonthsText,
+                        onValueChange = { dogAgeMonthsText = it.filter { ch -> ch.isDigit() }.take(4) },
+                        label = { Text("Dog age (months)") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = dogBreedMix,
+                        onValueChange = { dogBreedMix = it.take(64) },
+                        label = { Text("Dog breed / mix") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = dogSexNeuter,
+                        onValueChange = { dogSexNeuter = it.take(64) },
+                        label = { Text("Dog sex + neuter status") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = dogWeightClass,
+                        onValueChange = { dogWeightClass = it.take(48) },
+                        label = { Text("Dog weight class") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text("Dog photos", style = MaterialTheme.typography.labelMedium)
@@ -1215,6 +1474,25 @@ fun ProfileScreen(
                             }
                         }
                     }
+                    Text("Companion dog (optional)", style = MaterialTheme.typography.labelMedium)
+                    OutlinedTextField(
+                        value = secondaryDogName,
+                        onValueChange = { secondaryDogName = it.take(48) },
+                        label = { Text("Second dog name") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = secondaryDogAgeMonthsText,
+                        onValueChange = { secondaryDogAgeMonthsText = it.filter { ch -> ch.isDigit() }.take(4) },
+                        label = { Text("Second dog age (months)") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = secondaryDogPhotoUrl,
+                        onValueChange = { secondaryDogPhotoUrl = it.take(320) },
+                        label = { Text("Second dog photo URL") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     OutlinedTextField(
                         value = suburb,
                         onValueChange = { suburb = it.take(48) },
@@ -1234,6 +1512,126 @@ fun ProfileScreen(
                         minLines = 2,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    Text("Play compatibility", style = MaterialTheme.typography.labelMedium)
+                    OutlinedTextField(
+                        value = playEnergyLevel,
+                        onValueChange = { playEnergyLevel = it.take(48) },
+                        label = { Text("Energy level") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = playStyle,
+                        onValueChange = { playStyle = it.take(72) },
+                        label = { Text("Play style") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = socialConfidence,
+                        onValueChange = { socialConfidence = it.take(72) },
+                        label = { Text("Social confidence") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = triggerNotes,
+                        onValueChange = { triggerNotes = it.take(220) },
+                        label = { Text("Trigger notes") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = idealMatch,
+                        onValueChange = { idealMatch = it.take(120) },
+                        label = { Text("Ideal dog match") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("Care preferences", style = MaterialTheme.typography.labelMedium)
+                    OutlinedTextField(
+                        value = walkPreferences,
+                        onValueChange = { walkPreferences = it.take(120) },
+                        label = { Text("Walk preferences") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = trainingStyle,
+                        onValueChange = { trainingStyle = it.take(120) },
+                        label = { Text("Training style") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = feedingRules,
+                        onValueChange = { feedingRules = it.take(120) },
+                        label = { Text("Feeding rules") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = consentBoundaries,
+                        onValueChange = { consentBoundaries = it.take(160) },
+                        label = { Text("Consent boundaries") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("Safety and trust", style = MaterialTheme.typography.labelMedium)
+                    OutlinedTextField(
+                        value = vaccinationStatus,
+                        onValueChange = { vaccinationStatus = it.take(60) },
+                        label = { Text("Vaccination status") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        FilterChip(
+                            selected = microchipped,
+                            onClick = { microchipped = !microchipped },
+                            label = { Text("Microchipped") },
+                        )
+                        FilterChip(
+                            selected = recallTrained,
+                            onClick = { recallTrained = !recallTrained },
+                            label = { Text("Recall trained") },
+                        )
+                    }
+                    OutlinedTextField(
+                        value = leashReliability,
+                        onValueChange = { leashReliability = it.take(80) },
+                        label = { Text("Leash reliability") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = emergencyContactName,
+                        onValueChange = { emergencyContactName = it.take(64) },
+                        label = { Text("Emergency contact name") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = emergencyContactPhone,
+                        onValueChange = { emergencyContactPhone = it.take(24) },
+                        label = { Text("Emergency contact phone") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("Field visibility", style = MaterialTheme.typography.labelMedium)
+                    VisibilitySelector(
+                        label = "Email visibility",
+                        selected = emailVisibility,
+                        onSelect = { emailVisibility = it },
+                    )
+                    VisibilitySelector(
+                        label = "Phone visibility",
+                        selected = phoneVisibility,
+                        onSelect = { phoneVisibility = it },
+                    )
+                    VisibilitySelector(
+                        label = "Suburb visibility",
+                        selected = suburbVisibility,
+                        onSelect = { suburbVisibility = it },
+                    )
+                    VisibilitySelector(
+                        label = "Dog name visibility",
+                        selected = dogNameVisibility,
+                        onSelect = { dogNameVisibility = it },
+                    )
+                    VisibilitySelector(
+                        label = "Trigger notes visibility",
+                        selected = triggerNotesVisibility,
+                        onSelect = { triggerNotesVisibility = it },
+                    )
                     Text(
                         "Bio ${normalizedBio.length}/260",
                         style = MaterialTheme.typography.labelSmall,
@@ -1249,6 +1647,34 @@ fun ProfileScreen(
                     if (!isPhoneValid) {
                         Text(
                             "Phone format looks invalid.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (!isDogAgeValid) {
+                        Text(
+                            "Dog age must be numeric.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (!isSecondaryDogAgeValid) {
+                        Text(
+                            "Second dog age must be numeric.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (!isSecondaryPhotoValid) {
+                        Text(
+                            "Second dog photo URL must start with http://, https://, file://, or content://",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (!isEmergencyPhoneValid) {
+                        Text(
+                            "Emergency contact phone format looks invalid.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -1271,11 +1697,36 @@ fun ProfileScreen(
                                 displayName = normalizedDisplayName,
                                 email = normalizedEmail,
                                 phone = normalizedPhone,
+                                humanPronouns = normalizedHumanPronouns,
+                                humanRoleLabel = normalizedHumanRoleLabel,
                                 dogName = normalizedDogName,
+                                dogAgeMonths = normalizedDogAgeMonths,
+                                dogBreedMix = normalizedDogBreedMix,
+                                dogSexNeuter = normalizedDogSexNeuter,
+                                dogWeightClass = normalizedDogWeightClass,
                                 dogPhotoUrls = validDogPhotoUrls,
+                                secondaryDogName = normalizedSecondaryDogName,
+                                secondaryDogAgeMonths = normalizedSecondaryDogAgeMonths,
+                                secondaryDogPhotoUrl = normalizedSecondaryDogPhotoUrl,
                                 bio = normalizedBio,
                                 suburb = normalizedSuburb,
                                 favoriteSuburbs = normalizedFavoriteSuburbs,
+                                playEnergyLevel = normalizedPlayEnergyLevel,
+                                playStyle = normalizedPlayStyle,
+                                socialConfidence = normalizedSocialConfidence,
+                                triggerNotes = normalizedTriggerNotes,
+                                idealMatch = normalizedIdealMatch,
+                                walkPreferences = normalizedWalkPreferences,
+                                trainingStyle = normalizedTrainingStyle,
+                                feedingRules = normalizedFeedingRules,
+                                consentBoundaries = normalizedConsentBoundaries,
+                                vaccinationStatus = normalizedVaccinationStatus,
+                                microchipped = microchipped,
+                                recallTrained = recallTrained,
+                                leashReliability = normalizedLeashReliability,
+                                emergencyContactName = normalizedEmergencyContactName,
+                                emergencyContactPhone = normalizedEmergencyContactPhone,
+                                fieldVisibility = normalizedVisibility,
                             )
                         )
                         showProfileEditor = false
@@ -1636,6 +2087,92 @@ private fun ProfileStatChip(
     }
 }
 
+@Composable
+private fun ProfileDetailSection(
+    title: String,
+    details: List<String?>,
+) {
+    val visibleDetails = details
+        .mapNotNull { detail -> detail?.trim() }
+        .filter { detail -> detail.isNotBlank() }
+    if (visibleDetails.isEmpty()) return
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.labelLarge)
+            visibleDetails.forEach { line ->
+                Text(
+                    line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileTrustBadges(
+    vaccinationStatus: String,
+    microchipped: Boolean,
+    recallTrained: Boolean,
+    leashReliability: String,
+    emergencyContactReady: Boolean,
+) {
+    val badges = buildList {
+        add("Vaccination: ${vaccinationStatus.ifBlank { "Not set" }}")
+        add(if (microchipped) "Microchipped" else "Microchip not confirmed")
+        add(if (recallTrained) "Recall trained" else "Recall training in progress")
+        add("Leash: ${leashReliability.ifBlank { "Not set" }}")
+        add(if (emergencyContactReady) "Emergency contact ready" else "Emergency contact missing")
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Safety + trust", style = MaterialTheme.typography.labelLarge)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
+                badges.forEach { badge ->
+                    AssistChip(onClick = {}, label = { Text(badge) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VisibilitySelector(
+    label: String,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) {
+            VISIBILITY_OPTIONS.forEach { option ->
+                FilterChip(
+                    selected = selected == option,
+                    onClick = { onSelect(option) },
+                    label = { Text(option.replaceFirstChar { it.uppercase() }) },
+                )
+            }
+        }
+    }
+}
+
 private fun profileCompletenessRatio(
     profileInfo: ProfileInfo,
     dogPhotoUrls: List<String>,
@@ -1650,10 +2187,21 @@ private fun profileCompletenessRatio(
     return checks.count { passed -> passed }.toFloat() / checks.size.toFloat()
 }
 
+private fun completionRatio(vararg checks: Boolean): Float {
+    if (checks.isEmpty()) return 0f
+    return checks.count { passed -> passed }.toFloat() / checks.size.toFloat()
+}
+
 private const val HOME_SETTINGS_PREFS = "home_settings"
 private const val HOME_THEME_MODE_KEY = "theme_mode"
 private const val HOME_THEME_MODE_LIGHT = "light"
 private const val HOME_THEME_MODE_DARK = "dark"
+private val VISIBILITY_OPTIONS = listOf("public", "group", "friends", "private")
+
+private fun normalizeVisibilityValue(raw: String): String {
+    val normalized = raw.trim().lowercase()
+    return normalized.takeIf { value -> value in VISIBILITY_OPTIONS } ?: "private"
+}
 
 private fun profilePlayStyleText(
     bio: String,
@@ -1676,6 +2224,13 @@ private fun profilePlayStyleText(
 private fun parseCommaOrNewlineValues(raw: String): List<String> {
     return raw
         .split(",", "\n")
+        .map { value -> value.trim() }
+        .filter { value -> value.isNotBlank() }
+}
+
+private fun parseDogPhotoValues(raw: String): List<String> {
+    return raw
+        .lines()
         .map { value -> value.trim() }
         .filter { value -> value.isNotBlank() }
 }
