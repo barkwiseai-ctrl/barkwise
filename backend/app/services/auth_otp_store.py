@@ -123,7 +123,29 @@ class AuthOtpStore:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_auth_otp_invite_email ON auth_otp_codes(invite_id, email, created_at DESC)"
                 )
+                self._migrate_user_profiles_table(conn)
                 conn.commit()
+
+    def _migrate_user_profiles_table(self, conn: sqlite3.Connection) -> None:
+        required_columns: dict[str, str] = {
+            "display_name": "TEXT NOT NULL DEFAULT ''",
+            "email": "TEXT NOT NULL DEFAULT ''",
+            "phone": "TEXT NOT NULL DEFAULT ''",
+            "dog_name": "TEXT NOT NULL DEFAULT ''",
+            "dog_photo_urls": "TEXT NOT NULL DEFAULT '[]'",
+            "bio": "TEXT NOT NULL DEFAULT ''",
+            "suburb": "TEXT NOT NULL DEFAULT ''",
+            "favorite_suburbs": "TEXT NOT NULL DEFAULT '[]'",
+            "updated_at": "TEXT NOT NULL DEFAULT ''",
+        }
+        existing_columns = {
+            str(row["name"]).strip()
+            for row in conn.execute("PRAGMA table_info(user_profiles)").fetchall()
+        }
+        for column_name, column_ddl in required_columns.items():
+            if column_name in existing_columns:
+                continue
+            conn.execute(f"ALTER TABLE user_profiles ADD COLUMN {column_name} {column_ddl}")
 
     def create_invite(
         self,

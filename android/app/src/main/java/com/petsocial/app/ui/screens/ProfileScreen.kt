@@ -1,37 +1,62 @@
 package com.petsocial.app.ui.screens
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Comment
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Event
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,977 +65,472 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
-import com.petsocial.app.BuildConfig
 import com.petsocial.app.data.CalendarEvent
-import com.petsocial.app.data.CommunityFunnelMetrics
-import com.petsocial.app.data.CommunityReport
-import com.petsocial.app.data.Group
 import com.petsocial.app.data.AppNotification
-import com.petsocial.app.data.ServiceProvider
+import com.petsocial.app.ui.FriendProfile
+import com.petsocial.app.ui.JoinedEvent
 import com.petsocial.app.ui.OwnerBooking
 import com.petsocial.app.ui.ProfileInfo
 import com.petsocial.app.ui.ProviderBooking
-import com.petsocial.app.ui.ProviderConfig
 import com.petsocial.app.ui.ProviderListing
-import com.petsocial.app.ui.HomeLoadMetrics
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
-import java.time.Instant
+import com.petsocial.app.ui.calendar.calendarEventToCalendarDraft
+import com.petsocial.app.ui.calendar.openCalendarDraft
 import java.time.LocalDate
-import java.time.OffsetDateTime
-import java.time.ZoneId
-import java.time.YearMonth
-import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
-import java.time.temporal.ChronoUnit
-
-private data class PendingAction(
-    val title: String,
-    val message: String,
-    val onConfirm: () -> Unit,
-)
+import java.io.File
+import java.io.FileOutputStream
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun ProfileScreen(
     profileInfo: ProfileInfo,
     activeUserId: String,
-    allProviders: List<ServiceProvider>,
+    friendProfiles: List<FriendProfile>,
+    joinedEvents: List<JoinedEvent>,
     ownerBookings: List<OwnerBooking>,
-    joinedGroups: List<Group>,
-    createdGroups: List<Group>,
     providerListings: List<ProviderListing>,
-    providerConfig: ProviderConfig,
     providerBookings: List<ProviderBooking>,
     calendarEvents: List<CalendarEvent>,
-    selectedCalendarRole: String,
     notifications: List<AppNotification>,
-    latestHomeLoadMetrics: HomeLoadMetrics?,
-    homeLoadHistory: List<HomeLoadMetrics>,
-    acknowledgedCommunityNotificationIds: Set<String>,
-    acknowledgedMessageNotificationIds: Set<String>,
-    selectedNotificationFilter: String,
     notifyFollowedGroupAlerts: Boolean,
     notifySavedPostUpdates: Boolean,
     notifySafetyAlerts: Boolean,
-    isCommunityModerator: Boolean,
-    moderationReports: List<CommunityReport>,
-    communityFunnelMetrics: CommunityFunnelMetrics?,
-    blockedUserIds: List<String>,
-    onOpenCommunityGroup: (String) -> Unit,
+    showIdentityHeader: Boolean,
+    onAddFriend: (String) -> Unit,
+    onRemoveFriend: (String) -> Unit,
+    onOpenFriendMessages: (String) -> Unit,
+    onOpenMessages: (String?) -> Unit,
     onSaveProfile: (ProfileInfo) -> Unit,
-    onCreateProviderListing: (
-        name: String,
-        category: String,
-        suburb: String,
-        description: String,
-        priceFrom: Int,
-        imageUrls: List<String>,
-    ) -> Unit,
-    onEditProviderListing: (
-        listingId: String,
-        name: String,
-        description: String,
-        priceFrom: Int,
-        imageUrls: List<String>,
-    ) -> Unit,
-    onCancelProviderListing: (String) -> Unit,
-    onRestoreProviderListing: (String) -> Unit,
-    onSaveProviderConfig: (availableTimeSlots: String, preferredSuburbs: String) -> Unit,
-    onConfirmProviderBooking: (String) -> Unit,
-    onCancelProviderBooking: (String) -> Unit,
-    onCalendarRoleChange: (String) -> Unit,
     onMarkNotificationRead: (String) -> Unit,
-    onMarkNotificationIdsRead: (List<String>) -> Unit,
     onMarkAllNotificationsRead: () -> Unit,
-    onClearLocalNotificationIds: (List<String>) -> Unit,
     onClearLocalNotifications: () -> Unit,
     onOpenNotificationDeepLink: (AppNotification) -> Unit,
     onUpdateNotificationPreferences: (followedGroupAlerts: Boolean, savedPostUpdates: Boolean, safetyAlerts: Boolean) -> Unit,
-    onResolveModerationReport: (reportId: String, action: String, note: String) -> Unit,
-    onUnblockCommunityUser: (targetUserId: String) -> Unit,
-    onSwitchAccount: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
     var displayName by rememberSaveable(profileInfo.displayName) { mutableStateOf(profileInfo.displayName) }
     var email by rememberSaveable(profileInfo.email) { mutableStateOf(profileInfo.email) }
     var phone by rememberSaveable(profileInfo.phone) { mutableStateOf(profileInfo.phone) }
+    var dogName by rememberSaveable(profileInfo.dogName) { mutableStateOf(profileInfo.dogName) }
+    var dogPhotoUrlsText by rememberSaveable(profileInfo.dogPhotoUrls) {
+        mutableStateOf(profileInfo.dogPhotoUrls.joinToString("\n"))
+    }
     var bio by rememberSaveable(profileInfo.bio) { mutableStateOf(profileInfo.bio) }
     var suburb by rememberSaveable(profileInfo.suburb) { mutableStateOf(profileInfo.suburb) }
     var favoriteSuburbsText by rememberSaveable(profileInfo.favoriteSuburbs) {
         mutableStateOf(profileInfo.favoriteSuburbs.joinToString(", "))
     }
 
-    var groupsExpanded by rememberSaveable { mutableStateOf(false) }
-
-    var listingsExpanded by rememberSaveable { mutableStateOf(false) }
-    var configExpanded by rememberSaveable { mutableStateOf(false) }
-    var incomingBookingsExpanded by rememberSaveable { mutableStateOf(false) }
-    var providerBookingsExpanded by rememberSaveable { mutableStateOf(false) }
-    var calendarExpanded by rememberSaveable { mutableStateOf(false) }
-    var testMatrixExpanded by rememberSaveable { mutableStateOf(false) }
-    var notificationsExpanded by rememberSaveable { mutableStateOf(false) }
-    var communitySafetyExpanded by rememberSaveable { mutableStateOf(false) }
-    var appShareExpanded by rememberSaveable { mutableStateOf(false) }
-    var testAccountExpanded by rememberSaveable { mutableStateOf(false) }
-    var showAccountPicker by rememberSaveable { mutableStateOf(false) }
+    var friendSearchQuery by rememberSaveable { mutableStateOf("") }
+    var friendFilter by rememberSaveable { mutableStateOf("suggested") }
     var showProfileEditor by rememberSaveable { mutableStateOf(false) }
-    var showCreateListingDialog by rememberSaveable { mutableStateOf(false) }
-    var showEditListingDialog by rememberSaveable { mutableStateOf(false) }
-    var collapsedNotificationBuckets by rememberSaveable { mutableStateOf(setOf<String>()) }
-    var listingName by rememberSaveable { mutableStateOf("") }
-    var listingCategory by rememberSaveable { mutableStateOf("dog_walking") }
-    var listingSuburb by rememberSaveable(profileInfo.suburb) { mutableStateOf(profileInfo.suburb) }
-    var listingDescription by rememberSaveable { mutableStateOf("") }
-    var listingPriceFrom by rememberSaveable { mutableStateOf("") }
-    var listingImageUrls by rememberSaveable { mutableStateOf("") }
-    var editingListingId by rememberSaveable { mutableStateOf("") }
-    var editingListingName by rememberSaveable { mutableStateOf("") }
-    var editingListingDescription by rememberSaveable { mutableStateOf("") }
-    var editingListingPriceFrom by rememberSaveable { mutableStateOf("") }
-    var editingListingImageUrls by rememberSaveable { mutableStateOf("") }
-
-    var pendingAction by remember { mutableStateOf<PendingAction?>(null) }
-    var notificationFilter by rememberSaveable { mutableStateOf("all") }
-    val testAccounts = listOf(
-        "user_1" to "Sesame",
-        "user_2" to "Snowy",
-        "user_3" to "Anika",
-        "user_4" to "Tommy",
-    )
-    val activeAccountLabel = testAccounts.firstOrNull { it.first == activeUserId }?.second ?: activeUserId
-    val listState = rememberLazyListState()
-    val incomingStatuses = remember {
-        setOf("pending_provider_confirmation", "requested", "rescheduled", "reschedule_requested")
+    var showSocialSheet by rememberSaveable { mutableStateOf(false) }
+    var showNotificationsSheet by rememberSaveable { mutableStateOf(false) }
+    var showPlansSheet by rememberSaveable { mutableStateOf(false) }
+    var plansSheetSection by rememberSaveable { mutableStateOf("all") }
+    var showSettingsSheet by rememberSaveable { mutableStateOf(false) }
+    var showHelpDialog by rememberSaveable { mutableStateOf(false) }
+    var showSecurityDetails by rememberSaveable { mutableStateOf(false) }
+    var biometricLockEnabled by rememberSaveable { mutableStateOf(false) }
+    var selectedAppointment by remember { mutableStateOf<AppointmentPopupState?>(null) }
+    val settingsPrefs = remember(context) {
+        context.getSharedPreferences(HOME_SETTINGS_PREFS, Context.MODE_PRIVATE)
     }
-    val incomingProviderBookings = remember(providerBookings) {
-        providerBookings.filter { it.status in incomingStatuses }
+    val defaultThemeMode = remember(context) {
+        val isDarkMode =
+            (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        if (isDarkMode) HOME_THEME_MODE_DARK else HOME_THEME_MODE_LIGHT
     }
-    val filteredNotifications = remember(notifications, notificationFilter) {
-        notifications.filter { notification ->
-            when (notificationFilter) {
-                "community" -> notification.category.startsWith("community")
-                "messages" -> notification.category.contains("message")
-                "safety" -> notification.category.contains("safety") || notification.category.contains("moderation")
-                else -> true
+    var themeMode by rememberSaveable {
+        mutableStateOf(
+            settingsPrefs.getString(HOME_THEME_MODE_KEY, defaultThemeMode)
+                ?.takeIf { storedMode -> storedMode == HOME_THEME_MODE_LIGHT || storedMode == HOME_THEME_MODE_DARK }
+                ?: defaultThemeMode,
+        )
+    }
+    val activeAccountLabel = activeUserId
+    val profileDogPhotoUrls = remember(profileInfo.dogPhotoUrls) {
+        profileInfo.dogPhotoUrls
+            .asSequence()
+            .map { url -> url.trim() }
+            .filter { url -> url.isNotBlank() }
+            .distinct()
+            .toList()
+    }
+    val profileCompletionRatio = remember(profileInfo, profileDogPhotoUrls) {
+        profileCompletenessRatio(profileInfo, profileDogPhotoUrls)
+    }
+    val totalFriendCount = remember(friendProfiles) {
+        friendProfiles.count { profile -> profile.isFriend }
+    }
+    val unreadNotificationsCount = remember(notifications) {
+        notifications.count { notification -> !notification.read }
+    }
+    val totalNotificationsCount = notifications.size
+    val upcomingJoinedEvents = remember(joinedEvents) {
+        joinedEvents
+            .filter(::isJoinedEventUpcoming)
+            .sortedBy { event -> event.date }
+    }
+    val profileRoleLabel = remember(profileInfo.email) {
+        if (profileInfo.email.isBlank()) "Guest" else "Member"
+    }
+    val profileInitial = remember(profileInfo.displayName, activeAccountLabel) {
+        (profileInfo.displayName.ifBlank { activeAccountLabel })
+            .trim()
+            .firstOrNull()
+            ?.uppercase()
+            ?: "B"
+    }
+    val totalActiveBookings = ownerBookings.size + providerBookings.size
+    val communitySubtitle = if (upcomingJoinedEvents.isNotEmpty()) {
+        "${upcomingJoinedEvents.size} plans upcoming"
+    } else {
+        "No plans upcoming"
+    }
+    val listingsSubtitle = if (totalActiveBookings > 0) {
+        "$totalActiveBookings active bookings"
+    } else {
+        "No active bookings"
+    }
+    val filteredFriendProfiles = remember(friendProfiles, friendSearchQuery, friendFilter) {
+        val normalizedQuery = friendSearchQuery.trim().lowercase()
+        friendProfiles
+            .asSequence()
+            .filter { profile ->
+                when (friendFilter) {
+                    "friends" -> profile.isFriend
+                    "suggested" -> !profile.isFriend
+                    else -> true
+                }
+            }
+            .filter { profile ->
+                normalizedQuery.isBlank() ||
+                    profile.humanName.lowercase().contains(normalizedQuery) ||
+                    profile.dogName.lowercase().contains(normalizedQuery)
+            }
+            .toList()
+    }
+    val applyThemeMode: (String) -> Unit = remember(settingsPrefs) {
+        { mode ->
+            val normalizedMode = if (mode == HOME_THEME_MODE_DARK) HOME_THEME_MODE_DARK else HOME_THEME_MODE_LIGHT
+            if (themeMode != normalizedMode) {
+                settingsPrefs.edit().putString(HOME_THEME_MODE_KEY, normalizedMode).apply()
+                themeMode = normalizedMode
             }
         }
     }
-    val groupedNotifications = remember(filteredNotifications) {
-        val limited = filteredNotifications.take(20)
-        NotificationTimeBucket.entries.associateWith { bucket ->
-            limited.filter { notification -> notificationBucketFor(notification.createdAt) == bucket }
-        }
-    }
-    val managedProviderBookings = remember(providerBookings) {
-        providerBookings.filterNot { it.status in incomingStatuses }
-    }
-    LaunchedEffect(selectedNotificationFilter) {
-        notificationFilter = when (selectedNotificationFilter) {
-            "community", "messages", "safety" -> selectedNotificationFilter
-            else -> "all"
-        }
-    }
-    @OptIn(ExperimentalFoundationApi::class)
-    LazyColumn(
-        state = listState,
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(bottom = 6.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(bottom = 90.dp),
     ) {
-        stickyHeader {
+        if (showIdentityHeader) {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    SectionHeader(
-                        title = "Test account",
-                        expanded = testAccountExpanded,
-                        onToggle = { testAccountExpanded = !testAccountExpanded },
-                    )
-                    if (testAccountExpanded) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "Current: $activeAccountLabel",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Button(onClick = { showAccountPicker = true }) {
-                                Text("Switch test account")
-                            }
-                        }
-                        Text(
-                            "Profile: ${displayName.ifBlank { "Unnamed" }}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        latestHomeLoadMetrics?.let { metrics ->
-                            Text(
-                                "Load ${metrics.totalMs}ms (fetch ${metrics.fetchMs}ms, apply ${metrics.applyMs}ms) • ${metrics.source}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (homeLoadHistory.isNotEmpty()) {
-                            val totals = homeLoadHistory.map { it.totalMs.toDouble() }
-                            val p50 = percentile(totals, 0.50)
-                            val p95 = percentile(totals, 0.95)
-                            val latestTotalMs = latestHomeLoadMetrics?.totalMs
-                            Text(
-                                "Perf history (${homeLoadHistory.size} loads): p50 ${p50.toLong()}ms • p95 ${p95.toLong()}ms",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            val trendLabel = latestTotalMs?.let { latest ->
-                                val baseline = recentBaselineMedian(homeLoadHistory)
-                                val trend = classifyTrend(latestMs = latest.toDouble(), baselineMs = baseline)
-                                "Trend: ${trend.label} (${trend.percentDeltaLabel})"
-                            }
-                            if (trendLabel != null) {
-                                Text(
-                                    trendLabel,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            val sparkline = homeLoadSparkline(homeLoadHistory)
-                            if (sparkline.isNotBlank()) {
-                                Text(
-                                    "Recent: $sparkline",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (homeLoadHistory.size >= 5 && latestTotalMs != null && latestTotalMs > p95) {
-                                AssistChip(
-                                    onClick = {},
-                                    label = {
-                                        Text(
-                                            "Slow load warning: ${latestTotalMs}ms > p95 ${p95.toLong()}ms",
-                                            color = MaterialTheme.colorScheme.error,
-                                        )
-                                    },
-                                )
-                            }
-                        }
-                        Button(onClick = { showProfileEditor = true }) {
-                            Text("Edit my profile")
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            SectionHeader(
-                title = "Notifications (${notifications.count { !it.read }})",
-                expanded = notificationsExpanded,
-                onToggle = { notificationsExpanded = !notificationsExpanded },
-            )
-        }
-        if (notificationsExpanded) {
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Notification preferences", style = MaterialTheme.typography.titleSmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = notifyFollowedGroupAlerts,
-                                onClick = {
-                                    onUpdateNotificationPreferences(
-                                        !notifyFollowedGroupAlerts,
-                                        notifySavedPostUpdates,
-                                        notifySafetyAlerts,
-                                    )
-                                },
-                                label = { Text("Followed groups") },
-                            )
-                            FilterChip(
-                                selected = notifySavedPostUpdates,
-                                onClick = {
-                                    onUpdateNotificationPreferences(
-                                        notifyFollowedGroupAlerts,
-                                        !notifySavedPostUpdates,
-                                        notifySafetyAlerts,
-                                    )
-                                },
-                                label = { Text("Saved alerts") },
-                            )
-                            FilterChip(
-                                selected = notifySafetyAlerts,
-                                onClick = {
-                                    onUpdateNotificationPreferences(
-                                        notifyFollowedGroupAlerts,
-                                        notifySavedPostUpdates,
-                                        !notifySafetyAlerts,
-                                    )
-                                },
-                                label = { Text("Safety") },
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = notificationFilter == "all",
-                                onClick = { notificationFilter = "all" },
-                                label = { Text("All") },
-                            )
-                            FilterChip(
-                                selected = notificationFilter == "community",
-                                onClick = { notificationFilter = "community" },
-                                label = { Text("Community") },
-                            )
-                            FilterChip(
-                                selected = notificationFilter == "messages",
-                                onClick = { notificationFilter = "messages" },
-                                label = { Text("Messages") },
-                            )
-                            FilterChip(
-                                selected = notificationFilter == "safety",
-                                onClick = { notificationFilter = "safety" },
-                                label = { Text("Safety") },
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = onMarkAllNotificationsRead) {
-                                Text("Mark local read")
-                            }
-                            OutlinedButton(onClick = onClearLocalNotifications) {
-                                Text("Clear local")
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    collapsedNotificationBuckets = NotificationTimeBucket.entries
-                                        .map { bucket -> bucket.name }
-                                        .toSet()
-                                },
-                            ) {
-                                Text("Collapse all")
-                            }
-                            OutlinedButton(onClick = { collapsedNotificationBuckets = emptySet() }) {
-                                Text("Expand all")
-                            }
-                        }
-                    }
-                }
-            }
-            if (filteredNotifications.isEmpty()) {
-                item { Text("No notifications yet", style = MaterialTheme.typography.bodySmall) }
-            } else {
-                NotificationTimeBucket.entries.forEach { bucket ->
-                    val bucketNotifications = groupedNotifications[bucket].orEmpty()
-                    if (bucketNotifications.isNotEmpty()) {
-                        val unreadInBucket = bucketNotifications.count { notification -> !notification.read }
-                        val unreadIdsInBucket = bucketNotifications
-                            .asSequence()
-                            .filter { notification -> !notification.read }
-                            .map { notification -> notification.id }
-                            .toList()
-                        val localIdsInBucket = bucketNotifications
-                            .asSequence()
-                            .map { notification -> notification.id }
-                            .filter { id -> id.startsWith("local:") }
-                            .toList()
-                        val isCollapsed = bucket.name in collapsedNotificationBuckets
-                        stickyHeader {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surface),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    "${bucket.label} ($unreadInBucket unread)",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                TextButton(
-                                    onClick = {
-                                        collapsedNotificationBuckets = if (isCollapsed) {
-                                            collapsedNotificationBuckets - bucket.name
-                                        } else {
-                                            collapsedNotificationBuckets + bucket.name
-                                        }
-                                    },
-                                ) {
-                                    Text(if (isCollapsed) "Show" else "Hide")
-                                }
-                                TextButton(
-                                    enabled = unreadIdsInBucket.isNotEmpty(),
-                                    onClick = { onMarkNotificationIdsRead(unreadIdsInBucket) },
-                                ) {
-                                    Text("Mark read")
-                                }
-                                TextButton(
-                                    enabled = localIdsInBucket.isNotEmpty(),
-                                    onClick = { onClearLocalNotificationIds(localIdsInBucket) },
-                                ) {
-                                    Text("Clear local")
-                                }
-                            }
-                        }
-                        if (!isCollapsed) {
-                            items(bucketNotifications, key = { notification -> notification.id }) { notification ->
-                            val isCommunityNotification = notification.category.startsWith("community") || notification.category.contains("group")
-                            val isMessageNotification = notification.category.contains("message")
-                            val isAcknowledged = when {
-                                isCommunityNotification -> notification.id in acknowledgedCommunityNotificationIds
-                                isMessageNotification -> notification.id in acknowledgedMessageNotificationIds
-                                else -> notification.read
-                            }
-                            val isNew = !notification.read && !isAcknowledged
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        if (isNew) {
-                                            Spacer(
-                                                modifier = Modifier
-                                                    .size(8.dp)
-                                                    .background(
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        shape = RoundedCornerShape(99.dp),
-                                                    ),
-                                            )
-                                        }
-                                        Text(notification.title, style = MaterialTheme.typography.titleSmall)
-                                    }
-                                    Text(notification.body, style = MaterialTheme.typography.bodySmall)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        StatusBadge(if (notification.read) "read" else "unread")
-                                        if (!notification.deepLink.isNullOrBlank()) {
-                                            TextButton(onClick = { onOpenNotificationDeepLink(notification) }) {
-                                                Text("Open")
-                                            }
-                                        }
-                                        if (!notification.read) {
-                                            TextButton(onClick = { onMarkNotificationRead(notification.id) }) {
-                                                Text("Mark read")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            SectionHeader(
-                title = "Calendar (${calendarEvents.size})",
-                expanded = calendarExpanded,
-                onToggle = { calendarExpanded = !calendarExpanded },
-            )
-        }
-
-        if (calendarExpanded) {
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("all", "owner", "provider").forEach { role ->
-                        FilterChip(
-                            selected = selectedCalendarRole == role,
-                            onClick = { onCalendarRoleChange(role) },
-                            label = { Text(role.replaceFirstChar { it.uppercaseChar() }) },
-                        )
-                    }
-                }
-            }
-            item { CalendarPlanner(events = calendarEvents) }
-        }
-
-        item {
-            SectionHeader(
-                title = "Groups",
-                expanded = groupsExpanded,
-                onToggle = { groupsExpanded = !groupsExpanded },
-            )
-        }
-        if (groupsExpanded) {
-            item { Text("Joined groups", style = MaterialTheme.typography.titleSmall) }
-            if (joinedGroups.isEmpty()) {
-                item { Text("No joined groups yet") }
-            } else {
-                items(joinedGroups) { group ->
-                    Text(
-                        "${group.name} • ${group.memberCount} members",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.clickable { onOpenCommunityGroup(group.id) },
-                    )
-                }
-            }
-
-            item { Text("Created groups", style = MaterialTheme.typography.titleSmall) }
-            if (createdGroups.isEmpty()) {
-                item { Text("No created groups yet") }
-            } else {
-                items(createdGroups) { group ->
-                    Text(
-                        "${group.name} • ${group.suburb}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.clickable { onOpenCommunityGroup(group.id) },
-                    )
-                }
-            }
-        }
-
-        item {
-            val sectionCount = blockedUserIds.size + if (isCommunityModerator) moderationReports.size else 0
-            SectionHeader(
-                title = "Community safety ($sectionCount)",
-                expanded = communitySafetyExpanded,
-                onToggle = { communitySafetyExpanded = !communitySafetyExpanded },
-            )
-        }
-        if (communitySafetyExpanded) {
-            if (blockedUserIds.isEmpty()) {
-                item { Text("No blocked users", style = MaterialTheme.typography.bodySmall) }
-            } else {
-                items(blockedUserIds) { blockedUserId ->
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "Blocked: ${accountDisplayName(blockedUserId)}",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            TextButton(onClick = { onUnblockCommunityUser(blockedUserId) }) {
-                                Text("Unblock")
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (isCommunityModerator) {
-                item {
-                    Text(
-                        "Moderation queue",
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                }
-                if (moderationReports.isEmpty()) {
-                    item { Text("No open reports", style = MaterialTheme.typography.bodySmall) }
-                } else {
-                    items(moderationReports) { report ->
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Text(
-                                    "${report.targetType.replace("_", " ")} • ${report.reason}",
-                                    style = MaterialTheme.typography.titleSmall,
-                                )
-                                Text(
-                                    "Reporter: ${accountDisplayName(report.reporterUserId)} • ${report.createdAt.toLocalDateString()}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                if (report.details.isNotBlank()) {
-                                    Text(report.details, style = MaterialTheme.typography.bodySmall)
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                        onClick = {
-                                            onResolveModerationReport(
-                                                report.id,
-                                                "action_taken",
-                                                "Handled by moderator from profile queue",
-                                            )
-                                        },
-                                    ) {
-                                        Text("Action taken")
-                                    }
-                                    OutlinedButton(
-                                        onClick = {
-                                            onResolveModerationReport(
-                                                report.id,
-                                                "dismissed",
-                                                "Dismissed by moderator from profile queue",
-                                            )
-                                        },
-                                    ) {
-                                        Text("Dismiss")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                communityFunnelMetrics?.let { funnel ->
-                    item {
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Text("Community funnel (${funnel.windowHours}h)", style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "Feed views: ${funnel.communityFeedViews} • Lost/found views: ${funnel.lostFoundFeedViews}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                                Text(
-                                    "Create attempts: ${funnel.lostFoundCreateAttempts} • Successes: ${funnel.lostFoundCreateSuccesses} • Conversion: ${"%.1f".format(funnel.lostFoundCreateConversionPct)}%",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                                Text(
-                                    "Resolved alerts: ${funnel.lostFoundResolutionActions} • Reports: ${funnel.moderationReportsSubmitted} • Blocks: ${funnel.blocksSubmitted}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            SectionHeader(
-                title = "Listings (${providerListings.size})",
-                expanded = listingsExpanded,
-                onToggle = { listingsExpanded = !listingsExpanded },
-            )
-        }
-
-        if (listingsExpanded) {
-            item {
-                Button(onClick = { showCreateListingDialog = true }) {
-                    Text("Create listing")
-                }
-            }
-            if (providerListings.isEmpty()) {
-                item { Text("No listings yet") }
-            } else {
-                items(providerListings) { listing ->
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(listing.title, style = MaterialTheme.typography.titleSmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("${listing.category} • From \$${listing.priceFrom}")
-                                StatusBadge(listing.status)
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = {
-                                        editingListingId = listing.id
-                                        editingListingName = listing.title
-                                        editingListingDescription = listing.description
-                                        editingListingPriceFrom = listing.priceFrom.toString()
-                                        editingListingImageUrls = listing.imageUrls.joinToString(", ")
-                                        showEditListingDialog = true
-                                    },
-                                    enabled = listing.status != "cancelled",
-                                ) {
-                                    Text("Edit")
-                                }
-                                Button(
-                                    onClick = if (listing.status == "cancelled") {
-                                        { onRestoreProviderListing(listing.id) }
-                                    } else {
-                                        {
-                                            pendingAction = PendingAction(
-                                                title = "Cancel listing?",
-                                                message = "This listing will be marked as cancelled.",
-                                                onConfirm = { onCancelProviderListing(listing.id) },
-                                            )
-                                        }
-                                    },
-                                ) {
-                                    Text(if (listing.status == "cancelled") "Restore" else "Cancel")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            item {
-                SectionHeader(
-                    title = "Listing setup defaults",
-                    expanded = configExpanded,
-                    onToggle = { configExpanded = !configExpanded },
-                )
-            }
-            if (configExpanded) {
-                item {
-                    val config = remember(providerConfig) { providerConfig }
-                    var availableSlots by rememberSaveable(config.availableTimeSlots) { mutableStateOf(config.availableTimeSlots) }
-                    var preferredSuburbs by rememberSaveable(config.preferredSuburbs) { mutableStateOf(config.preferredSuburbs) }
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            OutlinedTextField(
-                                value = availableSlots,
-                                onValueChange = { availableSlots = it },
-                                label = { Text("Available time slots") },
-                                minLines = 2,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            OutlinedTextField(
-                                value = preferredSuburbs,
-                                onValueChange = { preferredSuburbs = it },
-                                label = { Text("Preferred suburbs") },
-                                minLines = 2,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Button(onClick = { onSaveProviderConfig(availableSlots.trim(), preferredSuburbs.trim()) }) {
-                                Text("Save defaults")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            SectionHeader(
-                title = "Incoming bookings (${incomingProviderBookings.size})",
-                expanded = incomingBookingsExpanded,
-                onToggle = { incomingBookingsExpanded = !incomingBookingsExpanded },
-            )
-        }
-        if (incomingBookingsExpanded) {
-            if (incomingProviderBookings.isEmpty()) {
-                item { Text("No incoming bookings") }
-            } else {
-                items(incomingProviderBookings) { booking ->
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("${booking.petName} • ${booking.serviceName}", style = MaterialTheme.typography.titleSmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("${booking.date} ${booking.timeSlot}")
-                                StatusBadge(booking.status)
-                            }
-                            if (booking.ownerUserId.isNotBlank()) {
-                                Text("Customer account: ${accountDisplayName(booking.ownerUserId)}", style = MaterialTheme.typography.labelSmall)
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = { onConfirmProviderBooking(booking.id) },
-                                    enabled = booking.status in incomingStatuses,
-                                ) {
-                                    Text("Accept")
-                                }
-                                Button(
-                                    onClick = {
-                                        pendingAction = PendingAction(
-                                            title = "Cancel incoming booking?",
-                                            message = "This booking will be marked as cancelled.",
-                                            onConfirm = { onCancelProviderBooking(booking.id) },
-                                        )
-                                    },
-                                    enabled = booking.status != "cancelled_by_provider" && booking.status != "cancelled_by_owner",
-                                ) {
-                                    Text("Cancel booking")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            SectionHeader(
-                title = "Bookings (${managedProviderBookings.size})",
-                expanded = providerBookingsExpanded,
-                onToggle = { providerBookingsExpanded = !providerBookingsExpanded },
-            )
-        }
-        if (providerBookingsExpanded) {
-            item {
                 Text(
-                    "Confirmed bookings are reflected in Calendar.",
-                    style = MaterialTheme.typography.bodySmall,
+                    "Signed in as ${displayName.ifBlank { activeAccountLabel }}",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (managedProviderBookings.isEmpty()) {
-                item { Text("No managed bookings yet") }
-            } else {
-                items(managedProviderBookings) { booking ->
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("${booking.petName} • ${booking.serviceName}", style = MaterialTheme.typography.titleSmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("${booking.date} ${booking.timeSlot}")
-                                StatusBadge(booking.status)
-                            }
-                            if (booking.ownerUserId.isNotBlank()) {
-                                Text("Customer account: ${accountDisplayName(booking.ownerUserId)}", style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
-                }
-            }
         }
 
-        item {
-            SectionHeader(
-                title = "Share App QR",
-                expanded = appShareExpanded,
-                onToggle = { appShareExpanded = !appShareExpanded },
-            )
-        }
-        if (appShareExpanded) {
-            item {
-                val trimmedLink = BuildConfig.INSTALL_PAGE_URL.trim()
-                val canRenderQr = trimmedLink.startsWith("http://") || trimmedLink.startsWith("https://")
-                val qrUrl = if (canRenderQr) qrImageUrl(trimmedLink) else null
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Card(
+                onClick = { showProfileEditor = true },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Install page link")
-                        Text(
-                            trimmedLink,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = { clipboard.setText(AnnotatedString(trimmedLink)) },
-                                enabled = canRenderQr,
-                            ) {
-                                Text("Copy link")
-                            }
-                            Button(
-                                onClick = {
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_TEXT, trimmedLink)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share BarkWise install link"))
-                                },
-                                enabled = canRenderQr,
-                            ) {
-                                Text("Share link")
+                        profileDogPhotoUrls.firstOrNull()?.let { photoUrl ->
+                            AsyncImage(
+                                model = photoUrl,
+                                contentDescription = "Primary dog profile photo",
+                                modifier = Modifier.size(92.dp),
+                            )
+                        } ?: Card(
+                            shape = CircleShape,
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1F22)),
+                            modifier = Modifier.size(92.dp),
+                        ) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text(
+                                    profileInitial,
+                                    style = MaterialTheme.typography.headlineLarge,
+                                    color = Color.White,
+                                )
                             }
                         }
-                        if (qrUrl != null) {
-                            Text("Scan this QR to open install page", style = MaterialTheme.typography.labelMedium)
-                            AsyncImage(
-                                model = qrUrl,
-                                contentDescription = "App install QR",
-                                modifier = Modifier
-                                    .size(220.dp)
-                                    .align(Alignment.CenterHorizontally),
-                            )
-                        } else {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
                             Text(
-                                "Enter a valid http(s) URL to generate QR.",
+                                profileInfo.displayName.ifBlank { activeAccountLabel },
+                                style = MaterialTheme.typography.titleLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                profileRoleLabel,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                            Text(
+                                profileInfo.dogName.ifBlank { "Add your dog's name" },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                profileInfo.suburb.ifBlank { "Set your suburb" },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
+                    }
+                    if (profileDogPhotoUrls.size > 1) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            profileDogPhotoUrls.drop(1).take(3).forEachIndexed { index, url ->
+                                AsyncImage(
+                                    model = url,
+                                    contentDescription = "Dog photo preview ${index + 2}",
+                                    modifier = Modifier.size(32.dp),
+                                )
+                            }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ProfileStatChip(label = "Friends", value = totalFriendCount.toString())
+                        ProfileStatChip(label = "Photos", value = profileDogPhotoUrls.size.toString())
+                        ProfileStatChip(label = "Unread", value = unreadNotificationsCount.toString())
+                    }
+                    LinearProgressIndicator(
+                        progress = { profileCompletionRatio },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                HomeTileCard(
+                    title = "Social",
+                    subtitle = "$totalFriendCount friends",
+                    preview = "Open your network",
+                    badgeText = totalFriendCount.takeIf { it > 0 }?.toString(),
+                    icon = { Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(36.dp)) },
+                    onClick = { showSocialSheet = true },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
+                HomeTileCard(
+                    title = "Notifications",
+                    subtitle = "$totalNotificationsCount updates",
+                    preview = "Review now",
+                    badgeText = unreadNotificationsCount.takeIf { it > 0 }?.toString(),
+                    icon = { Icon(Icons.Default.NotificationsNone, contentDescription = null, modifier = Modifier.size(36.dp)) },
+                    onClick = { showNotificationsSheet = true },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
+            }
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Plans", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        HomeTileCard(
+                            title = "Community",
+                            subtitle = communitySubtitle,
+                            preview = "See meetup plans",
+                            badgeText = upcomingJoinedEvents.size.takeIf { it > 0 }?.toString(),
+                            icon = { Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                            onClick = {
+                                plansSheetSection = "community"
+                                showPlansSheet = true
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                        )
+                        HomeTileCard(
+                            title = "Listings",
+                            subtitle = listingsSubtitle,
+                            preview = "Manage bookings",
+                            badgeText = (ownerBookings.size + providerBookings.size).takeIf { it > 0 }?.toString(),
+                            icon = { Icon(Icons.Default.Event, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                            onClick = {
+                                plansSheetSection = "listings"
+                                showPlansSheet = true
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                        )
                     }
                 }
             }
         }
 
-        item {
-            SectionHeader(
-                title = "Test Matrix",
-                expanded = testMatrixExpanded,
-                onToggle = { testMatrixExpanded = !testMatrixExpanded },
-            )
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                HomeActionRow(
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    title = "Settings",
+                    subtitle = "Theme, privacy, security",
+                    onClick = { showSettingsSheet = true },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                HomeActionRow(
+                    icon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.HelpOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    title = "Help",
+                    subtitle = "Get support",
+                    onClick = { showHelpDialog = true },
+                )
+            }
         }
+    }
 
-        if (testMatrixExpanded) {
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            AsyncImage(
-                                model = accountPhotoUrl(activeUserId),
-                                contentDescription = "${accountDisplayName(activeUserId)} profile photo",
-                                modifier = Modifier.size(34.dp),
-                            )
-                            Text("Current test account: ${accountDisplayName(activeUserId)}", style = MaterialTheme.typography.titleSmall)
-                        }
-                        Text("Use these mappings to run cross-account booking and approval tests.", style = MaterialTheme.typography.bodySmall)
+    if (showSocialSheet) {
+        ModalBottomSheet(onDismissRequest = { showSocialSheet = false }) {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            ) {
+                item {
+                    Text("Social", style = MaterialTheme.typography.titleLarge)
+                }
+                item {
+                    OutlinedTextField(
+                        value = friendSearchQuery,
+                        onValueChange = { friendSearchQuery = it },
+                        label = { Text("Find by human or dog name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        FilterChip(
+                            selected = friendFilter == "friends",
+                            onClick = { friendFilter = "friends" },
+                            label = { Text("Friends") },
+                        )
+                        FilterChip(
+                            selected = friendFilter == "suggested",
+                            onClick = { friendFilter = "suggested" },
+                            label = { Text("Suggested") },
+                        )
+                        FilterChip(
+                            selected = friendFilter == "all",
+                            onClick = { friendFilter = "all" },
+                            label = { Text("All") },
+                        )
                     }
                 }
-            }
-
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text("Listing ownership map", style = MaterialTheme.typography.titleSmall)
-                        if (allProviders.isEmpty()) {
-                            Text("No listings loaded. Refresh Listings tab first.", style = MaterialTheme.typography.bodySmall)
-                        }
-                        allProviders.forEach { provider ->
-                            val ownerUserId = provider.ownerUserId
-                            val owner = provider.ownerLabel
-                                ?: ownerUserId?.let(::accountDisplayName)
-                                ?: "Unknown owner"
-                            val suggestedBooker = listOf("Sesame", "Snowy", "Anika", "Tommy")
-                                .firstOrNull { it != owner } ?: "another account"
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(provider.name, style = MaterialTheme.typography.titleSmall)
-                                    Text("Owner: $owner", style = MaterialTheme.typography.bodySmall)
+                if (filteredFriendProfiles.isEmpty()) {
+                    item { HomeEmptyCard("No matching profiles.") }
+                } else {
+                    items(filteredFriendProfiles, key = { profile -> profile.userId }) { profile ->
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                AsyncImage(
+                                    model = profile.dogPhotoUrl,
+                                    contentDescription = "${profile.dogName} photo",
+                                    modifier = Modifier.size(64.dp),
+                                )
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(profile.humanName, style = MaterialTheme.typography.titleSmall)
                                     Text(
-                                        "Book as $suggestedBooker, then switch to $owner to Accept.",
-                                        style = MaterialTheme.typography.labelSmall,
+                                        profile.dogName.ifBlank { "Dog" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    if (!ownerUserId.isNullOrBlank() && ownerUserId != activeUserId) {
-                                        Button(onClick = { onSwitchAccount(ownerUserId) }) {
-                                            Text("Switch to $owner")
+                                    StatusBadge(if (profile.isFriend) "friend" else "suggested")
+                                }
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    if (profile.isFriend) {
+                                        Button(onClick = { onOpenFriendMessages(profile.userId) }) {
+                                            Text("Message")
+                                        }
+                                        TextButton(onClick = { onRemoveFriend(profile.userId) }) {
+                                            Text("Remove")
+                                        }
+                                    } else {
+                                        Button(onClick = { onAddFriend(profile.userId) }) {
+                                            Text("Add")
                                         }
                                     }
                                 }
@@ -1019,32 +539,106 @@ fun ProfileScreen(
                     }
                 }
             }
+        }
+    }
 
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text("Pending booking actions", style = MaterialTheme.typography.titleSmall)
-                        val pendingOwner = ownerBookings.filter { it.status in setOf("requested", "rescheduled", "reschedule_requested") }
-                        val pendingProvider = providerBookings.filter { it.status in setOf("requested", "rescheduled", "reschedule_requested") }
-                        if (pendingOwner.isEmpty() && pendingProvider.isEmpty()) {
-                            Text("No pending booking actions right now.", style = MaterialTheme.typography.bodySmall)
-                        } else {
-                            pendingOwner.forEach { booking ->
-                                Text(
-                                    "• ${booking.serviceName}: switch to ${booking.providerAccountLabel} to confirm/decline.",
-                                    style = MaterialTheme.typography.bodySmall,
+    if (showNotificationsSheet) {
+        ModalBottomSheet(onDismissRequest = { showNotificationsSheet = false }) {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            ) {
+                item {
+                    Text("Notifications", style = MaterialTheme.typography.titleLarge)
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        AssistChip(onClick = onMarkAllNotificationsRead, label = { Text("Mark all read") })
+                        AssistChip(onClick = onClearLocalNotifications, label = { Text("Clear local") })
+                    }
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        FilterChip(
+                            selected = notifyFollowedGroupAlerts,
+                            onClick = {
+                                onUpdateNotificationPreferences(
+                                    !notifyFollowedGroupAlerts,
+                                    notifySavedPostUpdates,
+                                    notifySafetyAlerts,
                                 )
-                            }
-                            pendingProvider.forEach { booking ->
-                                Text(
-                                    "• ${booking.serviceName}: currently on provider side. Customer is ${accountDisplayName(booking.ownerUserId)}.",
-                                    style = MaterialTheme.typography.bodySmall,
+                            },
+                            label = { Text("Groups") },
+                        )
+                        FilterChip(
+                            selected = notifySavedPostUpdates,
+                            onClick = {
+                                onUpdateNotificationPreferences(
+                                    notifyFollowedGroupAlerts,
+                                    !notifySavedPostUpdates,
+                                    notifySafetyAlerts,
                                 )
+                            },
+                            label = { Text("Saved") },
+                        )
+                        FilterChip(
+                            selected = notifySafetyAlerts,
+                            onClick = {
+                                onUpdateNotificationPreferences(
+                                    notifyFollowedGroupAlerts,
+                                    notifySavedPostUpdates,
+                                    !notifySafetyAlerts,
+                                )
+                            },
+                            label = { Text("Safety") },
+                        )
+                    }
+                }
+                if (notifications.isEmpty()) {
+                    item { HomeEmptyCard("No notifications yet.") }
+                } else {
+                    items(notifications.take(30), key = { notification -> notification.id }) { notification ->
+                        Card(
+                            onClick = {
+                                val appointment = resolveAppointmentFromNotification(
+                                    notification = notification,
+                                    ownerBookings = ownerBookings,
+                                    providerBookings = providerBookings,
+                                )
+                                if (appointment != null) {
+                                    selectedAppointment = appointment
+                                    showNotificationsSheet = false
+                                    if (!notification.read) onMarkNotificationRead(notification.id)
+                                } else {
+                                    onOpenNotificationDeepLink(notification)
+                                }
+                            },
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(notification.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                Text(
+                                    notification.body,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 3,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (!notification.read) {
+                                        TextButton(
+                                            onClick = { onMarkNotificationRead(notification.id) },
+                                            modifier = Modifier.wrapContentWidth(),
+                                        ) { Text("Mark read") }
+                                    }
+                                    if (notification.read) {
+                                        StatusBadge("read")
+                                    }
+                                }
                             }
                         }
                     }
@@ -1053,206 +647,460 @@ fun ProfileScreen(
         }
     }
 
-    if (showCreateListingDialog) {
-        AlertDialog(
-            onDismissRequest = { showCreateListingDialog = false },
-            title = { Text("Create listing") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = listingName,
-                        onValueChange = { listingName = it },
-                        label = { Text("Listing name") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    if (showPlansSheet) {
+        val showCommunitySection = plansSheetSection != "listings"
+        val showListingsSection = plansSheetSection != "community"
+        ModalBottomSheet(onDismissRequest = { showPlansSheet = false }) {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            ) {
+                item {
+                    Text("Plans & bookings", style = MaterialTheme.typography.titleLarge)
+                }
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    ) {
                         FilterChip(
-                            selected = listingCategory == "dog_walking",
-                            onClick = { listingCategory = "dog_walking" },
-                            label = { Text("Dog walking") },
+                            selected = plansSheetSection == "all",
+                            onClick = { plansSheetSection = "all" },
+                            label = { Text("All") },
                         )
                         FilterChip(
-                            selected = listingCategory == "grooming",
-                            onClick = { listingCategory = "grooming" },
-                            label = { Text("Grooming") },
+                            selected = plansSheetSection == "community",
+                            onClick = { plansSheetSection = "community" },
+                            label = { Text("Community") },
+                        )
+                        FilterChip(
+                            selected = plansSheetSection == "listings",
+                            onClick = { plansSheetSection = "listings" },
+                            label = { Text("Listings") },
                         )
                     }
-                    OutlinedTextField(
-                        value = listingSuburb,
-                        onValueChange = { listingSuburb = it },
-                        label = { Text("Suburb") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = listingDescription,
-                        onValueChange = { listingDescription = it },
-                        label = { Text("Description") },
-                        minLines = 2,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = listingPriceFrom,
-                        onValueChange = { listingPriceFrom = it.filter { ch -> ch.isDigit() } },
-                        label = { Text("Price from") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = listingImageUrls,
-                        onValueChange = { listingImageUrls = it },
-                        label = { Text("Image URLs (optional, comma-separated)") },
-                        minLines = 2,
-                        modifier = Modifier.fillMaxWidth(),
+                }
+                item {
+                    Text(
+                        "Community events and listings bookings in one workspace.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            },
-            confirmButton = {
-                val parsedPrice = listingPriceFrom.toIntOrNull()
-                val parsedImageUrls = listingImageUrls
-                    .split(",", "\n")
-                    .map { value -> value.trim() }
-                    .filter { value -> value.isNotEmpty() }
-                val canSubmit = listingName.isNotBlank() &&
-                    listingSuburb.isNotBlank() &&
-                    listingDescription.isNotBlank() &&
-                    parsedPrice != null &&
-                    parsedPrice > 0
-                Button(
-                    onClick = {
-                        onCreateProviderListing(
-                            listingName.trim(),
-                            listingCategory,
-                            listingSuburb.trim(),
-                            listingDescription.trim(),
-                            parsedPrice ?: 0,
-                            parsedImageUrls,
-                        )
-                        showCreateListingDialog = false
-                        listingName = ""
-                        listingSuburb = profileInfo.suburb
-                        listingDescription = ""
-                        listingPriceFrom = ""
-                        listingImageUrls = ""
-                        listingCategory = "dog_walking"
-                    },
-                    enabled = canSubmit,
-                ) {
-                    Text("Create")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreateListingDialog = false }) {
-                    Text("Cancel")
-                }
-            },
-        )
-    }
-
-    if (showEditListingDialog) {
-        AlertDialog(
-            onDismissRequest = { showEditListingDialog = false },
-            title = { Text("Edit listing") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = editingListingName,
-                        onValueChange = { editingListingName = it },
-                        label = { Text("Listing name") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = editingListingDescription,
-                        onValueChange = { editingListingDescription = it },
-                        label = { Text("Description") },
-                        minLines = 2,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = editingListingPriceFrom,
-                        onValueChange = { editingListingPriceFrom = it.filter { ch -> ch.isDigit() } },
-                        label = { Text("Price from") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = editingListingImageUrls,
-                        onValueChange = { editingListingImageUrls = it },
-                        label = { Text("Image URLs (optional, comma-separated)") },
-                        minLines = 2,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            },
-            confirmButton = {
-                val parsedPrice = editingListingPriceFrom.toIntOrNull()
-                val parsedImageUrls = editingListingImageUrls
-                    .split(",", "\n")
-                    .map { value -> value.trim() }
-                    .filter { value -> value.isNotEmpty() }
-                val canSubmit = editingListingId.isNotBlank() &&
-                    editingListingName.isNotBlank() &&
-                    editingListingDescription.isNotBlank() &&
-                    parsedPrice != null &&
-                    parsedPrice > 0
-                Button(
-                    onClick = {
-                        onEditProviderListing(
-                            editingListingId,
-                            editingListingName.trim(),
-                            editingListingDescription.trim(),
-                            parsedPrice ?: 0,
-                            parsedImageUrls,
-                        )
-                        showEditListingDialog = false
-                    },
-                    enabled = canSubmit,
-                ) {
-                    Text("Save")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showEditListingDialog = false }) {
-                    Text("Cancel")
-                }
-            },
-        )
-    }
-
-    if (showAccountPicker) {
-        AlertDialog(
-            onDismissRequest = { showAccountPicker = false },
-            title = { Text("Select test account") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    testAccounts.forEach { (id, label) ->
-                        Button(
-                            onClick = {
-                                onSwitchAccount(id)
-                                showAccountPicker = false
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                AsyncImage(
-                                    model = accountPhotoUrl(id),
-                                    contentDescription = "$label profile photo",
-                                    modifier = Modifier.size(26.dp),
-                                )
-                                Text(if (activeUserId == id) "$label (Current)" else label)
+                if (showCommunitySection) {
+                    item { Text("Community events", style = MaterialTheme.typography.titleSmall) }
+                    if (upcomingJoinedEvents.isEmpty()) {
+                        item { HomeEmptyCard("No upcoming community events.") }
+                    } else {
+                        items(upcomingJoinedEvents.take(12), key = { event -> event.id }) { event ->
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(event.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                    Text(
+                                        "${event.date.toLocalDateString()} • ${event.suburb}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }
                 }
+                if (showListingsSection) {
+                    item { Text("Calendar", style = MaterialTheme.typography.titleSmall) }
+                    if (calendarEvents.isEmpty()) {
+                        item { HomeEmptyCard("No calendar events yet.") }
+                    } else {
+                        items(calendarEvents.take(20), key = { event -> "calendar_${event.id}" }) { event ->
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(event.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                        Text(
+                                            "${event.date.toLocalDateString()} ${event.timeSlot}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            calendarEventToCalendarDraft(event)?.let { draft ->
+                                                context.openCalendarDraft(draft)
+                                            }
+                                        },
+                                        modifier = Modifier.wrapContentWidth(),
+                                    ) {
+                                        Text("Add")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item { Text("Owner bookings", style = MaterialTheme.typography.titleSmall) }
+                    item {
+                        Text(
+                            "Bookings you made as an owner",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (ownerBookings.isEmpty()) {
+                        item { HomeEmptyCard("No owner bookings yet.") }
+                    } else {
+                        items(ownerBookings.take(20), key = { booking -> booking.id }) { booking ->
+                            Card(
+                                onClick = {
+                                    selectedAppointment = booking.toAppointmentPopupState(sourceLabel = "Owner bookings")
+                                },
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(booking.serviceName, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                        Text(
+                                            "${booking.date.toLocalDateString()} ${booking.timeSlot}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    StatusBadge(booking.status)
+                                }
+                            }
+                        }
+                    }
+                    item { Text("Provider bookings", style = MaterialTheme.typography.titleSmall) }
+                    item {
+                        Text(
+                            "Bookings requested from your provider listings",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (providerBookings.isEmpty()) {
+                        item { HomeEmptyCard("No provider bookings yet.") }
+                    } else {
+                        items(providerBookings.take(20), key = { booking -> "provider_booking_${booking.id}" }) { booking ->
+                            Card(
+                                onClick = {
+                                    selectedAppointment = booking.toAppointmentPopupState(sourceLabel = "Provider bookings")
+                                },
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(booking.serviceName, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                        Text(
+                                            "${booking.date.toLocalDateString()} ${booking.timeSlot}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    StatusBadge(booking.status)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showSettingsSheet) {
+        ModalBottomSheet(onDismissRequest = { showSettingsSheet = false }) {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            ) {
+                item { Text("Settings", style = MaterialTheme.typography.titleLarge) }
+                item {
+                    Text(
+                        "Appearance",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    ) {
+                        FilterChip(
+                            selected = themeMode == HOME_THEME_MODE_LIGHT,
+                            onClick = { applyThemeMode(HOME_THEME_MODE_LIGHT) },
+                            label = { Text("Light") },
+                        )
+                        FilterChip(
+                            selected = themeMode == HOME_THEME_MODE_DARK,
+                            onClick = { applyThemeMode(HOME_THEME_MODE_DARK) },
+                            label = { Text("Dark") },
+                        )
+                    }
+                }
+                item {
+                    Text(
+                        "Security",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
+                item {
+                    Card(
+                        onClick = { showSecurityDetails = true },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("Session protection", style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "Invite + OTP is enabled for closed testing.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                item {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("Biometric lock", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "Preview for closed testing (local only).",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = biometricLockEnabled,
+                                onCheckedChange = { biometricLockEnabled = it },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showHelpDialog) {
+        AlertDialog(
+            onDismissRequest = { showHelpDialog = false },
+            title = { Text("Help") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Need help during closed testing?")
+                    Text(
+                        "Use this area for FAQ and support contact actions. Dev contact actions will be wired next.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             },
-            confirmButton = {},
+            confirmButton = {
+                TextButton(onClick = { showHelpDialog = false }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
+
+    if (showSecurityDetails) {
+        AlertDialog(
+            onDismissRequest = { showSecurityDetails = false },
+            title = { Text("Security details") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Current protections")
+                    Text(
+                        "Invite + OTP sign-in, authenticated API calls, and server-side session enforcement are enabled.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Biometric unlock is staged for a later release.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSecurityDetails = false }) {
+                    Text("Done")
+                }
+            },
+        )
+    }
+
+    selectedAppointment?.let { appointment ->
+        AlertDialog(
+            onDismissRequest = { selectedAppointment = null },
+            title = { Text(appointment.title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        appointment.scheduleLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "${appointment.counterpartLabel} • ${appointment.statusLabel}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    appointment.description?.takeIf { it.isNotBlank() }?.let { description ->
+                        Text(
+                            description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    appointment.bookingId?.let { bookingId ->
+                        Text(
+                            "Appointment $bookingId",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        selectedAppointment = null
+                        showPlansSheet = false
+                        showNotificationsSheet = false
+                        onOpenMessages(appointment.messageUserId)
+                    },
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Comment,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text("Message", modifier = Modifier.padding(start = 6.dp))
+                }
+            },
             dismissButton = {
-                TextButton(onClick = { showAccountPicker = false }) { Text("Close") }
+                TextButton(onClick = { selectedAppointment = null }) {
+                    Text("Close")
+                }
             },
         )
     }
 
     if (showProfileEditor) {
+        val normalizedDisplayName = displayName.trim()
+        val normalizedEmail = email.trim()
+        val normalizedPhone = phone.trim()
+        val normalizedDogName = dogName.trim()
+        val normalizedSuburb = suburb.trim()
+        val normalizedBio = bio.trim()
+        val parsedDogPhotoUrls = parseCommaOrNewlineValues(dogPhotoUrlsText)
+        val validDogPhotoUrls = parsedDogPhotoUrls
+            .filter(::isValidProfilePhotoUrl)
+            .distinct()
+            .take(8)
+        val hasInvalidDogPhotoUrls = parsedDogPhotoUrls.any { value -> !isValidProfilePhotoUrl(value) }
+        val normalizedFavoriteSuburbs = parseCommaOrNewlineValues(favoriteSuburbsText)
+            .distinct()
+            .take(8)
+        val isEmailValid = normalizedEmail.isBlank() || isLikelyEmail(normalizedEmail)
+        val isPhoneValid = normalizedPhone.isBlank() || isLikelyPhoneNumber(normalizedPhone)
+        val canSaveProfile = isEmailValid && isPhoneValid && !hasInvalidDogPhotoUrls
+        val appendDogPhotoUrl: (String) -> Unit = append@{ rawUrl ->
+            val normalizedUrl = rawUrl.trim()
+            if (normalizedUrl.isBlank()) {
+                return@append
+            }
+            val updatedUrls = (parseCommaOrNewlineValues(dogPhotoUrlsText) + normalizedUrl)
+                .map { value -> value.trim() }
+                .filter { value -> value.isNotBlank() }
+                .distinct()
+                .take(8)
+            dogPhotoUrlsText = updatedUrls.joinToString("\n")
+        }
+        val photoPickerLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocument(),
+        ) { uri ->
+            if (uri != null) {
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                } catch (_: SecurityException) {
+                    // Best effort only; some providers do not support persistable permissions.
+                }
+                appendDogPhotoUrl(uri.toString())
+            }
+        }
+        val cameraLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.TakePicturePreview(),
+        ) { bitmap ->
+            if (bitmap != null) {
+                saveProfilePhotoBitmap(context, bitmap)?.let { savedUri ->
+                    appendDogPhotoUrl(savedUri.toString())
+                }
+            }
+        }
+        val cameraPermissionLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            if (granted) {
+                runCatching { cameraLauncher.launch(null) }
+            }
+        }
         AlertDialog(
             onDismissRequest = { showProfileEditor = false },
             title = { Text("Edit profile") },
@@ -1263,64 +1111,177 @@ fun ProfileScreen(
                 ) {
                     OutlinedTextField(
                         value = displayName,
-                        onValueChange = { displayName = it },
+                        onValueChange = { displayName = it.take(48) },
                         label = { Text("Display name") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = email,
-                        onValueChange = { email = it },
+                        onValueChange = { email = it.take(96) },
                         label = { Text("Email") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = phone,
-                        onValueChange = { phone = it },
+                        onValueChange = { phone = it.take(24) },
                         label = { Text("Phone") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
+                        value = dogName,
+                        onValueChange = { dogName = it.take(48) },
+                        label = { Text("Dog name") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("Dog photos", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                val permissionState = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.CAMERA,
+                                )
+                                if (permissionState == PackageManager.PERMISSION_GRANTED) {
+                                    runCatching { cameraLauncher.launch(null) }
+                                } else {
+                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                }
+                            },
+                            enabled = parsedDogPhotoUrls.size < 8,
+                        ) {
+                            Text(if (parsedDogPhotoUrls.size < 8) "Take photo" else "Photo limit reached")
+                        }
+                        Button(
+                            onClick = { photoPickerLauncher.launch(arrayOf("image/*")) },
+                            enabled = parsedDogPhotoUrls.size < 8,
+                        ) {
+                            Text(if (parsedDogPhotoUrls.size < 8) "Upload photo" else "Photo limit reached")
+                        }
+                    }
+                    if (parsedDogPhotoUrls.isEmpty()) {
+                        Text(
+                            "No photos yet. Upload from your phone.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        ) {
+                            parsedDogPhotoUrls.forEachIndexed { index, photoUrl ->
+                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                                    Column(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                    ) {
+                                        AsyncImage(
+                                            model = photoUrl,
+                                            contentDescription = "Dog photo ${index + 1}",
+                                            modifier = Modifier.size(88.dp),
+                                        )
+                                        if (index == 0) {
+                                            Text(
+                                                "Main photo",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                        } else {
+                                            TextButton(
+                                                onClick = {
+                                                    val reordered = buildList {
+                                                        add(photoUrl)
+                                                        parsedDogPhotoUrls
+                                                            .filterIndexed { i, _ -> i != index }
+                                                            .forEach(::add)
+                                                    }
+                                                    dogPhotoUrlsText = reordered.joinToString("\n")
+                                                },
+                                                modifier = Modifier.wrapContentWidth(),
+                                            ) { Text("Set as main") }
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                val updatedUrls = parsedDogPhotoUrls
+                                                    .filterIndexed { i, _ -> i != index }
+                                                    .joinToString("\n")
+                                                dogPhotoUrlsText = updatedUrls
+                                            },
+                                            modifier = Modifier.wrapContentWidth(),
+                                        ) { Text("Remove") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    OutlinedTextField(
                         value = suburb,
-                        onValueChange = { suburb = it },
+                        onValueChange = { suburb = it.take(48) },
                         label = { Text("Home suburb") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = favoriteSuburbsText,
-                        onValueChange = { favoriteSuburbsText = it },
-                        label = { Text("Favorite suburbs (comma separated)") },
+                        onValueChange = { favoriteSuburbsText = it.take(180) },
+                        label = { Text("Favorite suburbs (comma/newline)") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = bio,
-                        onValueChange = { bio = it },
+                        onValueChange = { bio = it.take(260) },
                         label = { Text("Bio") },
                         minLines = 2,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    Text(
+                        "Bio ${normalizedBio.length}/260",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (!isEmailValid) {
+                        Text(
+                            "Email format looks invalid.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (!isPhoneValid) {
+                        Text(
+                            "Phone format looks invalid.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (hasInvalidDogPhotoUrls) {
+                        Text(
+                            "Dog photo URLs must start with http://, https://, file://, or content://",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
+                    enabled = canSaveProfile,
                     onClick = {
                         onSaveProfile(
                             ProfileInfo(
-                                displayName = displayName.trim(),
-                                email = email.trim(),
-                                phone = phone.trim(),
-                                bio = bio.trim(),
-                                suburb = suburb.trim(),
-                                favoriteSuburbs = favoriteSuburbsText
-                                    .split(",")
-                                    .map { it.trim() }
-                                    .filter { it.isNotBlank() }
-                                    .distinct(),
+                                displayName = normalizedDisplayName,
+                                email = normalizedEmail,
+                                phone = normalizedPhone,
+                                dogName = normalizedDogName,
+                                dogPhotoUrls = validDogPhotoUrls,
+                                bio = normalizedBio,
+                                suburb = normalizedSuburb,
+                                favoriteSuburbs = normalizedFavoriteSuburbs,
                             )
                         )
                         showProfileEditor = false
                     },
                 ) {
-                    Text("Save")
+                    Text("Save profile")
                 }
             },
             dismissButton = {
@@ -1331,194 +1292,303 @@ fun ProfileScreen(
         )
     }
 
-    pendingAction?.let { action ->
-        AlertDialog(
-            onDismissRequest = { pendingAction = null },
-            title = { Text(action.title) },
-            text = { Text(action.message) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        action.onConfirm()
-                        pendingAction = null
-                    },
-                ) {
-                    Text("Confirm")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingAction = null }) {
-                    Text("Keep")
-                }
-            },
-        )
+}
+
+@Composable
+private fun AdaptiveSplitCards(
+    surfaceOnly: Boolean = false,
+    first: @Composable (Modifier) -> Unit,
+    second: @Composable (Modifier) -> Unit,
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val splitCards = maxWidth >= 640.dp
+        if (splitCards) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                val firstModifier = Modifier.weight(1f)
+                val secondModifier = Modifier.weight(1f)
+                first(firstModifier)
+                second(secondModifier)
+            }
+        } else {
+            val spacing = if (surfaceOnly) 8.dp else 10.dp
+            Column(verticalArrangement = Arrangement.spacedBy(spacing), modifier = Modifier.fillMaxWidth()) {
+                first(Modifier.fillMaxWidth())
+                second(Modifier.fillMaxWidth())
+            }
+        }
     }
 }
 
 @Composable
-private fun CalendarPlanner(events: List<CalendarEvent>) {
-    val today = remember { LocalDate.now() }
-    var visibleMonth by rememberSaveable { mutableStateOf(YearMonth.from(today).toString()) }
-    var selectedDate by rememberSaveable { mutableStateOf(today.toString()) }
-    val month = remember(visibleMonth) { YearMonth.parse(visibleMonth) }
-    val selectedLocalDate = remember(selectedDate) { parseCalendarDate(selectedDate) ?: today }
-
-    val monthLabel = remember(month) {
-        month.atDay(1).format(DateTimeFormatter.ofPattern("MMMM yyyy"))
-    }
-    val dayCells = remember(month) { buildMonthGrid(month) }
-    val eventsByDate = remember(events) {
-        events.groupBy { event -> event.date.toLocalDateString() }
-    }
-    val selectedEvents = remember(eventsByDate, selectedDate) {
-        (eventsByDate[selectedDate] ?: emptyList())
-            .sortedBy { it.timeSlot }
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    TextButton(
-                        onClick = {
-                            val prev = month.minusMonths(1)
-                            visibleMonth = prev.toString()
-                            selectedDate = prev.atDay(1).toString()
-                        },
-                    ) { Text("Prev") }
-                    Text(monthLabel, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    TextButton(
-                        onClick = {
-                            val next = month.plusMonths(1)
-                            visibleMonth = next.toString()
-                            selectedDate = next.atDay(1).toString()
-                        },
-                    ) { Text("Next") }
-                }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun").forEach { day ->
-                        Text(
-                            day,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
-
-                dayCells.chunked(7).forEach { week ->
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        week.forEach { day ->
-                            if (day == null) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            } else {
-                                val key = day.toString()
-                                val isSelected = key == selectedDate
-                                val isToday = day == today
-                                val hasEvents = (eventsByDate[key]?.isNotEmpty() == true)
-                                val bgColor = when {
-                                    isSelected -> MaterialTheme.colorScheme.primaryContainer
-                                    isToday -> MaterialTheme.colorScheme.secondaryContainer
-                                    else -> MaterialTheme.colorScheme.surface
-                                }
-                                val textColor = when {
-                                    isSelected -> MaterialTheme.colorScheme.primary
-                                    isToday -> MaterialTheme.colorScheme.secondary
-                                    else -> MaterialTheme.colorScheme.onSurface
-                                }
-                                TextButton(
-                                    onClick = { selectedDate = key },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .background(bgColor, RoundedCornerShape(10.dp)),
-                                ) {
-                                    Column(
-                                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                                    ) {
-                                        Text(day.dayOfMonth.toString(), color = textColor, style = MaterialTheme.typography.bodySmall)
-                                        if (hasEvents) {
-                                            Spacer(
-                                                modifier = Modifier
-                                                    .size(5.dp)
-                                                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp)),
-                                            )
-                                        } else {
-                                            Spacer(modifier = Modifier.size(5.dp))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+private fun HomeSummaryCard(
+    title: String,
+    primary: String,
+    secondary: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(
+                primary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            secondary?.let { secondaryText ->
                 Text(
-                    selectedLocalDate.format(DateTimeFormatter.ofPattern("EEE, d MMM yyyy")),
-                    style = MaterialTheme.typography.titleSmall,
+                    secondaryText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                if (selectedEvents.isEmpty()) {
-                    Text("No events for this day", style = MaterialTheme.typography.bodySmall)
-                } else {
-                    selectedEvents.forEach { event ->
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(event.title, style = MaterialTheme.typography.titleSmall)
-                                Text(event.subtitle, style = MaterialTheme.typography.bodySmall)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("${event.date.toLocalDateString()} ${event.timeSlot}")
-                                    StatusBadge(event.status)
-                                    Text(event.role, style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
     }
 }
 
-private fun buildMonthGrid(month: YearMonth): List<LocalDate?> {
-    val first = month.atDay(1)
-    val daysInMonth = month.lengthOfMonth()
-    val leading = first.dayOfWeek.value - 1
-    val cells = mutableListOf<LocalDate?>()
-    repeat(leading) { cells += null }
-    repeat(daysInMonth) { offset -> cells += month.atDay(offset + 1) }
-    while (cells.size % 7 != 0) {
-        cells += null
+@Composable
+private fun HomeTileCard(
+    title: String,
+    subtitle: String,
+    preview: String? = null,
+    badgeText: String? = null,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                icon()
+                if (!badgeText.isNullOrBlank()) {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                        Text(
+                            badgeText,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!preview.isNullOrBlank()) {
+                Text(
+                    preview,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
-    return cells
+}
+
+@Composable
+private fun HomeActionRow(
+    icon: @Composable () -> Unit,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                icon()
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlanSnapshotCard(
+    title: String,
+    primary: String,
+    secondary: String,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.labelMedium)
+            Text(primary, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                secondary,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private data class AppointmentPopupState(
+    val bookingId: String?,
+    val title: String,
+    val scheduleLabel: String,
+    val counterpartLabel: String,
+    val statusLabel: String,
+    val description: String? = null,
+    val messageUserId: String? = null,
+)
+
+private fun resolveAppointmentFromNotification(
+    notification: AppNotification,
+    ownerBookings: List<OwnerBooking>,
+    providerBookings: List<ProviderBooking>,
+): AppointmentPopupState? {
+    val deepLink = notification.deepLink?.trim().orEmpty()
+    if (deepLink.isBlank()) return null
+    if (deepLink.startsWith("booking:")) {
+        val bookingId = deepLink.removePrefix("booking:").trim()
+        ownerBookings.firstOrNull { booking -> booking.id == bookingId }?.let { booking ->
+            return booking.toAppointmentPopupState(sourceLabel = notification.title.ifBlank { "Appointment" })
+        }
+        providerBookings.firstOrNull { booking -> booking.id == bookingId }?.let { booking ->
+            return booking.toAppointmentPopupState(sourceLabel = notification.title.ifBlank { "Appointment" })
+        }
+        return AppointmentPopupState(
+            bookingId = bookingId.ifBlank { null },
+            title = notification.title.ifBlank { "Appointment update" },
+            scheduleLabel = "Open Listings for latest status.",
+            counterpartLabel = "Booking",
+            statusLabel = "Updated",
+            description = notification.body.takeIf { text -> text.isNotBlank() },
+            messageUserId = null,
+        )
+    }
+    if (deepLink.startsWith("quote:")) {
+        val candidate = ownerBookings
+            .sortedBy { booking -> "${booking.date}_${booking.timeSlot}" }
+            .firstOrNull()
+            ?.toAppointmentPopupState(sourceLabel = "Quote response")
+            ?: providerBookings
+                .sortedBy { booking -> "${booking.date}_${booking.timeSlot}" }
+                .firstOrNull()
+                ?.toAppointmentPopupState(sourceLabel = "Quote response")
+        return candidate ?: AppointmentPopupState(
+            bookingId = null,
+            title = notification.title.ifBlank { "Quote response received" },
+            scheduleLabel = "Appointment not scheduled yet.",
+            counterpartLabel = "Listings",
+            statusLabel = "Awaiting booking",
+            description = notification.body.takeIf { text -> text.isNotBlank() },
+            messageUserId = null,
+        )
+    }
+    return null
+}
+
+private fun OwnerBooking.toAppointmentPopupState(sourceLabel: String): AppointmentPopupState {
+    return AppointmentPopupState(
+        bookingId = id,
+        title = "$sourceLabel • $serviceName",
+        scheduleLabel = "${date.toLocalDateString()} $timeSlot",
+        counterpartLabel = providerAccountLabel.ifBlank { "Provider" },
+        statusLabel = status.toReadableLabel(),
+        description = note.takeIf { value -> value.isNotBlank() },
+        messageUserId = providerUserId.takeIf { value -> value.isNotBlank() },
+    )
+}
+
+private fun ProviderBooking.toAppointmentPopupState(sourceLabel: String): AppointmentPopupState {
+    return AppointmentPopupState(
+        bookingId = id,
+        title = "$sourceLabel • $serviceName",
+        scheduleLabel = "${date.toLocalDateString()} $timeSlot",
+        counterpartLabel = "Owner ${ownerUserId.ifBlank { petName }}",
+        statusLabel = status.toReadableLabel(),
+        description = "Pet: $petName",
+        messageUserId = ownerUserId.takeIf { value -> value.isNotBlank() },
+    )
+}
+
+private fun String.toReadableLabel(): String {
+    return split("_")
+        .filter { part -> part.isNotBlank() }
+        .joinToString(" ") { part ->
+            part.replaceFirstChar { char -> if (char.isLowerCase()) char.titlecase() else char.toString() }
+        }
+        .ifBlank { this }
 }
 
 private fun parseCalendarDate(date: String): LocalDate? = try {
     LocalDate.parse(date.take(10))
 } catch (_: DateTimeParseException) {
     null
-}
-
-private fun qrImageUrl(url: String): String {
-    val encoded = URLEncoder.encode(url, StandardCharsets.UTF_8.toString())
-    return "https://quickchart.io/qr?size=260&text=$encoded"
 }
 
 private fun String.toLocalDateString(): String {
@@ -1530,20 +1600,121 @@ private fun String.toLocalDateString(): String {
 }
 
 @Composable
-private fun SectionHeader(
-    title: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
+private fun HomeEmptyCard(
+    message: String,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        TextButton(onClick = onToggle, modifier = Modifier.wrapContentWidth()) {
-            Text(if (expanded) "Hide" else "Show")
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        Text(
+            message,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ProfileStatChip(
+    label: String,
+    value: String,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(value, style = MaterialTheme.typography.labelLarge)
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
+}
+
+private fun profileCompletenessRatio(
+    profileInfo: ProfileInfo,
+    dogPhotoUrls: List<String>,
+): Float {
+    val checks = listOf(
+        profileInfo.displayName.isNotBlank(),
+        profileInfo.dogName.isNotBlank(),
+        profileInfo.suburb.isNotBlank(),
+        profileInfo.bio.isNotBlank(),
+        dogPhotoUrls.isNotEmpty(),
+    )
+    return checks.count { passed -> passed }.toFloat() / checks.size.toFloat()
+}
+
+private const val HOME_SETTINGS_PREFS = "home_settings"
+private const val HOME_THEME_MODE_KEY = "theme_mode"
+private const val HOME_THEME_MODE_LIGHT = "light"
+private const val HOME_THEME_MODE_DARK = "dark"
+
+private fun profilePlayStyleText(
+    bio: String,
+    dogName: String,
+): String {
+    val normalizedBio = bio.lowercase()
+    if ("social" in normalizedBio || "group" in normalizedBio) {
+        return "Social and group-friendly"
+    }
+    if ("calm" in normalizedBio || "chill" in normalizedBio) {
+        return "Calm, slower-paced outings"
+    }
+    return if (dogName.isBlank()) {
+        "Add a short line about how your dog likes to play."
+    } else {
+        "$dogName enjoys local walks and friendly meetups."
+    }
+}
+
+private fun parseCommaOrNewlineValues(raw: String): List<String> {
+    return raw
+        .split(",", "\n")
+        .map { value -> value.trim() }
+        .filter { value -> value.isNotBlank() }
+}
+
+private fun isJoinedEventUpcoming(event: JoinedEvent): Boolean {
+    val eventDate = parseCalendarDate(event.date) ?: return false
+    return !eventDate.isBefore(LocalDate.now())
+}
+
+private fun saveProfilePhotoBitmap(context: Context, bitmap: Bitmap): Uri? {
+    return runCatching {
+        val directory = File(context.filesDir, "profile_dog_photos")
+        if (!directory.exists()) {
+            directory.mkdirs()
+        }
+        val file = File(directory, "profile_${System.currentTimeMillis()}.jpg")
+        FileOutputStream(file).use { output ->
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) {
+                error("Failed to encode image")
+            }
+        }
+        Uri.fromFile(file)
+    }.getOrNull()
+}
+
+private fun isValidProfilePhotoUrl(value: String): Boolean {
+    val normalized = value.trim().lowercase()
+    return normalized.startsWith("https://") ||
+        normalized.startsWith("http://") ||
+        normalized.startsWith("file://") ||
+        normalized.startsWith("content://")
+}
+
+private fun isLikelyEmail(value: String): Boolean {
+    return Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$").matches(value)
+}
+
+private fun isLikelyPhoneNumber(value: String): Boolean {
+    return Regex("^\\+?[0-9()\\-\\s]{6,20}$").matches(value)
 }
 
 @Composable
@@ -1566,100 +1737,4 @@ private fun StatusBadge(status: String) {
             .background(bg, RoundedCornerShape(12.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp),
     )
-}
-
-private fun accountDisplayName(userId: String): String = when (userId) {
-    "user_1" -> "Sesame"
-    "user_2" -> "Snowy"
-    "user_3" -> "Anika"
-    "user_4" -> "Tommy"
-    else -> userId
-}
-
-private fun accountPhotoUrl(userId: String): String = when (userId) {
-    "user_1" -> "https://loremflickr.com/640/640/bordoodle,dog?lock=201"
-    "user_2" -> "https://loremflickr.com/640/640/black,white,dog?lock=202"
-    "user_3" -> "https://loremflickr.com/640/640/cavoodle,dog?lock=203"
-    "user_4" -> "https://loremflickr.com/640/640/brown,toy,dog,cavoodle?lock=204"
-    else -> "https://images.unsplash.com/photo-1517849845537-4d257902454a"
-}
-
-private enum class NotificationTimeBucket(val label: String) {
-    Today("Today"),
-    ThisWeek("This week"),
-    Earlier("Earlier"),
-}
-
-private fun notificationBucketFor(createdAt: String): NotificationTimeBucket {
-    val date = parseNotificationLocalDate(createdAt) ?: return NotificationTimeBucket.Earlier
-    val today = LocalDate.now()
-    return when {
-        date == today -> NotificationTimeBucket.Today
-        ChronoUnit.DAYS.between(date, today) in 1..7 -> NotificationTimeBucket.ThisWeek
-        else -> NotificationTimeBucket.Earlier
-    }
-}
-
-private fun parseNotificationLocalDate(raw: String): LocalDate? {
-    return runCatching {
-        Instant.parse(raw)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDate()
-    }.recoverCatching {
-        OffsetDateTime.parse(raw)
-            .atZoneSameInstant(ZoneId.systemDefault())
-            .toLocalDate()
-    }.getOrNull()
-}
-
-private fun percentile(values: List<Double>, quantile: Double): Double {
-    if (values.isEmpty()) return 0.0
-    val sorted = values.sorted()
-    val q = quantile.coerceIn(0.0, 1.0)
-    val position = (sorted.size - 1) * q
-    val lowerIndex = kotlin.math.floor(position).toInt()
-    val upperIndex = kotlin.math.ceil(position).toInt()
-    if (lowerIndex == upperIndex) return sorted[lowerIndex]
-    val weight = position - lowerIndex
-    return (sorted[lowerIndex] * (1.0 - weight)) + (sorted[upperIndex] * weight)
-}
-
-private data class LoadTrend(
-    val label: String,
-    val percentDeltaLabel: String,
-)
-
-private fun recentBaselineMedian(history: List<HomeLoadMetrics>): Double {
-    if (history.size <= 1) return history.lastOrNull()?.totalMs?.toDouble() ?: 0.0
-    val withoutLatest = history.dropLast(1)
-    return percentile(withoutLatest.map { metric -> metric.totalMs.toDouble() }, 0.50)
-}
-
-private fun classifyTrend(latestMs: Double, baselineMs: Double): LoadTrend {
-    if (baselineMs <= 0.0) return LoadTrend(label = "stable", percentDeltaLabel = "0%")
-    val deltaPct = ((latestMs - baselineMs) / baselineMs) * 100.0
-    val rounded = kotlin.math.round(deltaPct)
-    val absRounded = kotlin.math.abs(rounded).toLong()
-    val signedLabel = if (rounded > 0) "+${absRounded}%" else "${rounded.toLong()}%"
-    val label = when {
-        deltaPct <= -8.0 -> "improving"
-        deltaPct >= 8.0 -> "regressing"
-        else -> "stable"
-    }
-    return LoadTrend(label = label, percentDeltaLabel = signedLabel)
-}
-
-private fun homeLoadSparkline(history: List<HomeLoadMetrics>): String {
-    if (history.isEmpty()) return ""
-    val recent = history.takeLast(8).map { metric -> metric.totalMs.toDouble() }
-    val min = recent.minOrNull() ?: return ""
-    val max = recent.maxOrNull() ?: return ""
-    if (recent.size == 1 || max <= min) return recent.joinToString(" ") { value -> "${value.toLong()}ms" }
-    val levels = "▁▂▃▄▅▆▇█"
-    val bars = recent.map { value ->
-        val normalized = ((value - min) / (max - min)).coerceIn(0.0, 1.0)
-        val index = kotlin.math.round(normalized * (levels.length - 1)).toInt()
-        levels[index]
-    }.joinToString("")
-    return "$bars (${recent.last().toLong()}ms)"
 }
