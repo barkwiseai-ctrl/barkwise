@@ -261,6 +261,7 @@ def send_otp_via_resend(*, email: str, otp_code: str) -> bool:
         return False
     try:
         import json
+        import urllib.error
         import urllib.request
 
         payload = {
@@ -280,6 +281,22 @@ def send_otp_via_resend(*, email: str, otp_code: str) -> bool:
         )
         with urllib.request.urlopen(req, timeout=10) as response:  # nosec: B310
             return int(response.status) in {200, 201, 202}
+    except urllib.error.HTTPError as exc:
+        response_body = ""
+        try:
+            response_body = exc.read().decode("utf-8", errors="ignore").strip()
+        except Exception:
+            response_body = ""
+        logger.error(
+            "Resend email HTTP error status=%s reason=%s body=%s",
+            getattr(exc, "code", "unknown"),
+            getattr(exc, "reason", "unknown"),
+            response_body,
+        )
+        return False
+    except urllib.error.URLError as exc:
+        logger.error("Resend email URL error reason=%s", exc.reason)
+        return False
     except Exception:
         logger.exception("Failed to send OTP email via Resend")
         return False
