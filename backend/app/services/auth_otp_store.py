@@ -276,6 +276,7 @@ def send_otp_via_resend(*, email: str, otp_code: str) -> bool:
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "User-Agent": "barkwise-backend/1.0",
             },
             data=json.dumps(payload).encode("utf-8"),
         )
