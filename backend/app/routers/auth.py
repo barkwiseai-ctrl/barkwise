@@ -130,7 +130,7 @@ def _ensure_basic_email_format(email: str, *, detail: str) -> None:
 
 def _send_otp_or_raise(email: str, otp_code: str) -> None:
     sent = send_otp_via_resend(email=email, otp_code=otp_code)
-    if AUTH_REQUIRED and not sent:
+    if not sent:
         raise HTTPException(status_code=503, detail="Unable to deliver OTP email right now. Please retry.")
 
 
