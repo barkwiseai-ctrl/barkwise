@@ -211,6 +211,67 @@ def test_auth_otp_verify_rejects_expired_code(monkeypatch):
     assert "invalid or expired otp" in verify_response.json()["detail"].lower()
 
 
+def test_auth_profile_upsert_and_fetch_round_trip():
+    suffix = uuid4().hex[:8]
+    user_id = f"profile_user_{suffix}"
+    initial = client.get(
+        "/auth/profile",
+        params={"user_id": user_id},
+    )
+    assert initial.status_code == 200
+    initial_payload = initial.json()
+    assert initial_payload["user_id"] == user_id
+
+    upsert = client.put(
+        "/auth/profile",
+        json={
+            "requester_user_id": user_id,
+            "display_name": "Chris Xu",
+            "email": f"{suffix}@example.com",
+            "phone": "+61 400 123 456",
+            "dog_name": "Milo",
+            "dog_photo_urls": ["https://example.com/milo.jpg", "content://photos/2"],
+            "bio": "Dog parent in Melbourne.",
+            "suburb": "Richmond",
+            "favorite_suburbs": ["Richmond", "Collingwood"],
+        },
+    )
+    assert upsert.status_code == 200
+    upsert_payload = upsert.json()
+    assert upsert_payload["display_name"] == "Chris Xu"
+    assert upsert_payload["dog_photo_urls"][0] == "https://example.com/milo.jpg"
+    assert upsert_payload["suburb"] == "Richmond"
+
+    fetched = client.get(
+        "/auth/profile",
+        params={"user_id": user_id},
+    )
+    assert fetched.status_code == 200
+    fetched_payload = fetched.json()
+    assert fetched_payload["display_name"] == "Chris Xu"
+    assert fetched_payload["dog_name"] == "Milo"
+    assert fetched_payload["favorite_suburbs"] == ["Richmond", "Collingwood"]
+
+
+def test_auth_profile_rejects_invalid_email():
+    response = client.put(
+        "/auth/profile",
+        json={
+            "requester_user_id": "user_2",
+            "display_name": "Alex",
+            "email": "invalid-email",
+            "phone": "",
+            "dog_name": "Milo",
+            "dog_photo_urls": [],
+            "bio": "",
+            "suburb": "Surry Hills",
+            "favorite_suburbs": [],
+        },
+    )
+    assert response.status_code == 400
+    assert "invalid email" in response.json()["detail"].lower()
+
+
 def test_auth_otp_verify_rejects_after_max_attempts(monkeypatch):
     sent: dict[str, str] = {}
 

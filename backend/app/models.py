@@ -772,6 +772,31 @@ class AuthDeleteResponse(BaseModel):
     user_id: str
 
 
+class UserProfile(BaseModel):
+    user_id: str
+    display_name: str = ""
+    email: str = ""
+    phone: str = ""
+    dog_name: str = ""
+    dog_photo_urls: list[str] = Field(default_factory=list)
+    bio: str = ""
+    suburb: str = ""
+    favorite_suburbs: list[str] = Field(default_factory=list)
+    updated_at: str
+
+
+class UserProfileUpsertRequest(BaseModel):
+    requester_user_id: str
+    display_name: str = ""
+    email: str = ""
+    phone: str = ""
+    dog_name: str = ""
+    dog_photo_urls: list[str] = Field(default_factory=list)
+    bio: str = ""
+    suburb: str = ""
+    favorite_suburbs: list[str] = Field(default_factory=list)
+
+
 class MessageThreadView(BaseModel):
     id: str
     participant_user_id: str

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import hashlib
 import hmac
+import json
 import logging
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ from threading import Lock
 from typing import Optional
 from uuid import uuid4
 
-from app.models import AuthInviteResponse
+from app.models import AuthInviteResponse, UserProfile
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,22 @@ class AuthOtpStore:
                     """
                 )
                 conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_profiles (
+                        user_id TEXT PRIMARY KEY,
+                        display_name TEXT NOT NULL,
+                        email TEXT NOT NULL,
+                        phone TEXT NOT NULL,
+                        dog_name TEXT NOT NULL,
+                        dog_photo_urls TEXT NOT NULL,
+                        bio TEXT NOT NULL,
+                        suburb TEXT NOT NULL,
+                        favorite_suburbs TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_auth_otp_invite_email ON auth_otp_codes(invite_id, email, created_at DESC)"
                 )
                 conn.commit()
@@ -155,6 +172,190 @@ class AuthOtpStore:
                     """,
                     (invite_id,),
                 ).fetchone()
+
+    def _lookup_user_email(self, conn: sqlite3.Connection, user_id: str) -> str:
+        row = conn.execute(
+            "SELECT email FROM auth_users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        email = str(row["email"]).strip().lower() if row else ""
+        return email or f"{user_id}@barkwise.test"
+
+    def _default_profile(self, *, user_id: str, email: str, updated_at: str) -> UserProfile:
+        display_name = user_id.replace("_", " ").strip().title()
+        if not display_name:
+            display_name = user_id
+        return UserProfile(
+            user_id=user_id,
+            display_name=display_name,
+            email=email.strip().lower(),
+            phone="",
+            dog_name="",
+            dog_photo_urls=[],
+            bio="",
+            suburb="",
+            favorite_suburbs=[],
+            updated_at=updated_at,
+        )
+
+    def _row_to_profile(self, row: sqlite3.Row) -> UserProfile:
+        dog_photo_urls: list[str]
+        favorite_suburbs: list[str]
+        try:
+            parsed_photos = json.loads(str(row["dog_photo_urls"]))
+            dog_photo_urls = [str(value).strip() for value in parsed_photos if str(value).strip()]
+        except Exception:
+            dog_photo_urls = []
+        try:
+            parsed_favorites = json.loads(str(row["favorite_suburbs"]))
+            favorite_suburbs = [str(value).strip() for value in parsed_favorites if str(value).strip()]
+        except Exception:
+            favorite_suburbs = []
+        return UserProfile(
+            user_id=str(row["user_id"]),
+            display_name=str(row["display_name"]),
+            email=str(row["email"]),
+            phone=str(row["phone"]),
+            dog_name=str(row["dog_name"]),
+            dog_photo_urls=dog_photo_urls,
+            bio=str(row["bio"]),
+            suburb=str(row["suburb"]),
+            favorite_suburbs=favorite_suburbs,
+            updated_at=str(row["updated_at"]),
+        )
+
+    def get_or_create_user_profile(self, *, user_id: str) -> UserProfile:
+        normalized_user_id = user_id.strip()
+        if not normalized_user_id:
+            raise ValueError("user_id is required")
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT user_id, display_name, email, phone, dog_name, dog_photo_urls, bio, suburb, favorite_suburbs, updated_at
+                    FROM user_profiles
+                    WHERE user_id = ?
+                    """,
+                    (normalized_user_id,),
+                ).fetchone()
+                if row:
+                    return self._row_to_profile(row)
+
+                now = datetime.now(timezone.utc).isoformat()
+                email = self._lookup_user_email(conn, normalized_user_id)
+                profile = self._default_profile(
+                    user_id=normalized_user_id,
+                    email=email,
+                    updated_at=now,
+                )
+                conn.execute(
+                    """
+                    INSERT INTO user_profiles (
+                        user_id, display_name, email, phone, dog_name,
+                        dog_photo_urls, bio, suburb, favorite_suburbs, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        profile.user_id,
+                        profile.display_name,
+                        profile.email,
+                        profile.phone,
+                        profile.dog_name,
+                        json.dumps(profile.dog_photo_urls),
+                        profile.bio,
+                        profile.suburb,
+                        json.dumps(profile.favorite_suburbs),
+                        profile.updated_at,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO auth_users(user_id, email, created_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        email = excluded.email
+                    """,
+                    (profile.user_id, profile.email, now),
+                )
+                conn.commit()
+                return profile
+
+    def upsert_user_profile(
+        self,
+        *,
+        user_id: str,
+        display_name: str,
+        email: str,
+        phone: str,
+        dog_name: str,
+        dog_photo_urls: list[str],
+        bio: str,
+        suburb: str,
+        favorite_suburbs: list[str],
+    ) -> UserProfile:
+        normalized_user_id = user_id.strip()
+        if not normalized_user_id:
+            raise ValueError("user_id is required")
+        now = datetime.now(timezone.utc).isoformat()
+        normalized_email = email.strip().lower()
+        normalized_profile = UserProfile(
+            user_id=normalized_user_id,
+            display_name=display_name.strip(),
+            email=normalized_email,
+            phone=phone.strip(),
+            dog_name=dog_name.strip(),
+            dog_photo_urls=[value.strip() for value in dog_photo_urls if value.strip()][:8],
+            bio=bio.strip(),
+            suburb=suburb.strip(),
+            favorite_suburbs=[value.strip() for value in favorite_suburbs if value.strip()][:8],
+            updated_at=now,
+        )
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO user_profiles (
+                        user_id, display_name, email, phone, dog_name,
+                        dog_photo_urls, bio, suburb, favorite_suburbs, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        email = excluded.email,
+                        phone = excluded.phone,
+                        dog_name = excluded.dog_name,
+                        dog_photo_urls = excluded.dog_photo_urls,
+                        bio = excluded.bio,
+                        suburb = excluded.suburb,
+                        favorite_suburbs = excluded.favorite_suburbs,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        normalized_profile.user_id,
+                        normalized_profile.display_name,
+                        normalized_profile.email,
+                        normalized_profile.phone,
+                        normalized_profile.dog_name,
+                        json.dumps(normalized_profile.dog_photo_urls),
+                        normalized_profile.bio,
+                        normalized_profile.suburb,
+                        json.dumps(normalized_profile.favorite_suburbs),
+                        normalized_profile.updated_at,
+                    ),
+                )
+                if normalized_profile.email:
+                    conn.execute(
+                        """
+                        INSERT INTO auth_users(user_id, email, created_at)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(user_id) DO UPDATE SET
+                            email = excluded.email
+                        """,
+                        (normalized_profile.user_id, normalized_profile.email, now),
+                    )
+                conn.commit()
+        return normalized_profile
 
     def issue_otp(
         self,
@@ -249,6 +450,7 @@ class AuthOtpStore:
                         "DELETE FROM auth_invites WHERE invite_id = ?",
                         [(invite_id,) for invite_id in invite_ids],
                     )
+                conn.execute("DELETE FROM user_profiles WHERE user_id = ?", (user_id,))
                 conn.execute("DELETE FROM auth_users WHERE user_id = ?", (user_id,))
                 conn.commit()
 
@@ -260,7 +462,6 @@ def send_otp_via_resend(*, email: str, otp_code: str) -> bool:
         logger.info("OTP email skipped (RESEND_API_KEY/RESEND_FROM_EMAIL missing) for %s", email)
         return False
     try:
-        import json
         import urllib.error
         import urllib.request
 

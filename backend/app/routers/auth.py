@@ -26,6 +26,8 @@ from app.models import (
     AuthOtpRequestResponse,
     AuthOtpVerifyRequest,
     AuthOtpVerifyResponse,
+    UserProfile,
+    UserProfileUpsertRequest,
 )
 from app.services.auth_otp_store import auth_otp_store, send_otp_via_resend
 from app.services.message_store import message_store
@@ -100,6 +102,37 @@ def login(payload: AuthLoginRequest, request: Request):
 @router.get("/me", response_model=AuthMeResponse)
 def me(user_id: str = Depends(require_authenticated_user)):
     return AuthMeResponse(user_id=user_id)
+
+
+@router.get("/profile", response_model=UserProfile)
+def get_profile(
+    user_id: str = Query(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=user_id, authorization=authorization)
+    return auth_otp_store.get_or_create_user_profile(user_id=user_id)
+
+
+@router.put("/profile", response_model=UserProfile)
+def upsert_profile(payload: UserProfileUpsertRequest, authorization: Optional[str] = Header(default=None)):
+    assert_actor_authorized(actor_user_id=payload.requester_user_id, authorization=authorization)
+    email = _normalized_email(payload.email)
+    if email:
+        _ensure_basic_email_format(email, detail="Invalid email")
+    try:
+        return auth_otp_store.upsert_user_profile(
+            user_id=payload.requester_user_id,
+            display_name=payload.display_name,
+            email=email,
+            phone=payload.phone,
+            dog_name=payload.dog_name,
+            dog_photo_urls=payload.dog_photo_urls,
+            bio=payload.bio,
+            suburb=payload.suburb,
+            favorite_suburbs=payload.favorite_suburbs,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 def _utc_now() -> datetime:
