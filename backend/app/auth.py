@@ -1,13 +1,14 @@
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import os
 from pathlib import Path
 import sqlite3
 from threading import Lock
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import Header, HTTPException, status
 
@@ -18,20 +19,32 @@ def _read_bool_env(name: str, default: str) -> bool:
     return os.getenv(name, default).lower() in {"1", "true", "yes"}
 
 
-def _read_token_ttl_hours() -> int:
-    raw_value = os.getenv("AUTH_TOKEN_TTL_HOURS", "24").strip()
+def _read_positive_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw_value = os.getenv(name, str(default)).strip()
     try:
         parsed = int(raw_value)
     except ValueError:
-        logger.warning("Invalid AUTH_TOKEN_TTL_HOURS=%r; falling back to 24.", raw_value)
-        return 24
-    if parsed <= 0:
-        logger.warning("AUTH_TOKEN_TTL_HOURS=%r must be > 0; falling back to 24.", raw_value)
-        return 24
+        logger.warning("Invalid %s=%r; falling back to %s.", name, raw_value, default)
+        return default
+    if parsed < minimum or parsed > maximum:
+        logger.warning(
+            "%s=%r outside [%s, %s]; falling back to %s.",
+            name,
+            raw_value,
+            minimum,
+            maximum,
+            default,
+        )
+        return default
     return parsed
 
 
+def _read_token_ttl_hours() -> int:
+    return _read_positive_int_env("AUTH_TOKEN_TTL_HOURS", 24, minimum=1, maximum=24 * 30)
+
+
 TOKEN_TTL_HOURS = _read_token_ttl_hours()
+FRIEND_QR_TTL_MINUTES = _read_positive_int_env("AUTH_FRIEND_QR_TTL_MINUTES", 30, minimum=1, maximum=24 * 60)
 AUTH_REQUIRED = _read_bool_env("AUTH_REQUIRED", "false")
 AUTH_ALLOW_DEMO_LOGIN = _read_bool_env("AUTH_ALLOW_DEMO_LOGIN", "false" if AUTH_REQUIRED else "true")
 DEFAULT_AUTH_SECRET = "dev-insecure-secret-change-me"
@@ -160,6 +173,76 @@ def verify_access_token(token: str) -> Optional[str]:
     if is_token_revoked(token):
         return None
     return user_id
+
+
+def _normalize_friend_profile_field(raw: str, *, fallback: str) -> str:
+    cleaned = " ".join(raw.strip().split())
+    return (cleaned[:48] if cleaned else fallback)
+
+
+def create_friend_qr_token(
+    *,
+    user_id: str,
+    human_name: str,
+    dog_name: str,
+) -> tuple[str, str]:
+    normalized_user = user_id.strip()
+    if not normalized_user:
+        raise ValueError("user_id is required")
+    safe_human_name = _normalize_friend_profile_field(human_name, fallback="BarkWise member")
+    safe_dog_name = _normalize_friend_profile_field(dog_name, fallback="Dog")
+    expiry = datetime.now(timezone.utc) + timedelta(minutes=FRIEND_QR_TTL_MINUTES)
+    payload_dict: dict[str, Any] = {
+        "typ": "friend_qr",
+        "uid": normalized_user,
+        "hn": safe_human_name,
+        "dn": safe_dog_name,
+        "exp": int(expiry.timestamp()),
+    }
+    payload_bytes = json.dumps(payload_dict, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    payload_part = _b64url(payload_bytes)
+    signature = hmac.new(
+        _AUTH_SECRET.encode("utf-8"),
+        f"friend_qr:{payload_part}".encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    token = f"{payload_part}.{_b64url(signature)}"
+    return token, expiry.isoformat()
+
+
+def verify_friend_qr_token(token: str) -> Optional[dict[str, str]]:
+    clean_token = token.strip()
+    if not clean_token:
+        return None
+    try:
+        payload_part, signature_part = clean_token.split(".", 1)
+        expected_signature = hmac.new(
+            _AUTH_SECRET.encode("utf-8"),
+            f"friend_qr:{payload_part}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        sent_signature = _b64urldecode(signature_part)
+        if not hmac.compare_digest(sent_signature, expected_signature):
+            return None
+        payload = json.loads(_b64urldecode(payload_part).decode("utf-8"))
+        if payload.get("typ") != "friend_qr":
+            return None
+        user_id = str(payload.get("uid", "")).strip()
+        if not user_id:
+            return None
+        expiry_ts = int(payload.get("exp", 0))
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        if expiry_ts <= now_ts:
+            return None
+        expires_at = datetime.fromtimestamp(expiry_ts, tz=timezone.utc).isoformat()
+        return {
+            "user_id": user_id,
+            "human_name": _normalize_friend_profile_field(str(payload.get("hn", "")), fallback="BarkWise member"),
+            "dog_name": _normalize_friend_profile_field(str(payload.get("dn", "")), fallback="Dog"),
+            "expires_at": expires_at,
+        }
+    except Exception:
+        return None
 
 
 def parse_bearer_token(authorization: Optional[str]) -> Optional[str]:
