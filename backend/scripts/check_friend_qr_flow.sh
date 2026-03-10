@@ -16,7 +16,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 json_field() {
-  python3 - "$1" <<'PY'
+  python3 -c '
 import json
 import sys
 
@@ -29,7 +29,7 @@ value = obj.get(key)
 if value is None:
     raise SystemExit(1)
 print(value)
-PY
+' "$1"
 }
 
 login_token() {
