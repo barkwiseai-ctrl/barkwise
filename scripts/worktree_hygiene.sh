@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:---report}"
 
 GENERATED_PATHS=(
+  "android/.gradle"
   "android/app/build"
   "android/.gradle-local"
   "android/share/mock"
