@@ -7,10 +7,15 @@ BACKEND_DIR="$ROOT_DIR/backend"
 APK_DIR="$ROOT_DIR/backend/app/web/install/apk"
 
 RUN_ANDROID_COMPILE="${RUN_ANDROID_COMPILE:-1}"
+RUN_ANDROID_UNIT_TESTS="${RUN_ANDROID_UNIT_TESTS:-1}"
+RUN_ANDROID_LINT="${RUN_ANDROID_LINT:-1}"
+RUN_ANDROID_BUNDLE="${RUN_ANDROID_BUNDLE:-1}"
+RUN_ANDROID_BUNDLE_VALIDATE="${RUN_ANDROID_BUNDLE_VALIDATE:-1}"
 RUN_BACKEND_TESTS="${RUN_BACKEND_TESTS:-1}"
 RUN_METADATA_CHECK="${RUN_METADATA_CHECK:-1}"
 RUN_SMOKE_HTTP="${RUN_SMOKE_HTTP:-0}"
 BASE_URL="${BASE_URL:-http://localhost:8000}"
+BUNDLE_PATH="${BUNDLE_PATH:-$ANDROID_DIR/app/build/outputs/bundle/prodRelease/app-prod-release.aab}"
 
 step() {
   echo
@@ -33,6 +38,18 @@ check_runtime_db_not_tracked() {
   if [[ -n "$tracked" ]]; then
     echo "$tracked"
     fail "Runtime sqlite files are tracked. Untrack them before release."
+  fi
+}
+
+check_maps_api_key_configured() {
+  local local_props="$ANDROID_DIR/local.properties"
+  local local_value=""
+  if [[ -f "$local_props" ]]; then
+    local_value="$(awk -F= '$1 == "MAPS_API_KEY" { sub(/^[[:space:]]+/, "", $2); print $2; exit }' "$local_props" | tr -d '\r')"
+  fi
+  local env_value="${MAPS_API_KEY:-}"
+  if [[ -z "$env_value" && -z "$local_value" ]]; then
+    fail "Missing MAPS_API_KEY. Set it in android/local.properties or environment before release."
   fi
 }
 
@@ -69,6 +86,23 @@ print(f"Installer metadata OK (latest={latest_version}).")
 PY
 }
 
+validate_signed_bundle() {
+  local bundle="$1"
+  [[ -f "$bundle" ]] || fail "Expected AAB not found: $bundle"
+  [[ -s "$bundle" ]] || fail "AAB is empty: $bundle"
+  if command -v jarsigner >/dev/null 2>&1; then
+    jarsigner -verify "$bundle" >/dev/null 2>&1 || fail "AAB signature verification failed"
+    echo "AAB signature OK: $bundle"
+  else
+    echo "WARN: jarsigner not found; skipping AAB signature verification."
+  fi
+  if command -v bundletool >/dev/null 2>&1; then
+    bundletool validate --bundle="$bundle" || fail "bundletool validation failed"
+  else
+    echo "WARN: bundletool not found; skipping bundle structure validation."
+  fi
+}
+
 require_cmd git
 require_cmd rg
 require_cmd python3
@@ -76,11 +110,20 @@ require_cmd python3
 step "Git hygiene checks"
 check_runtime_db_not_tracked
 
+step "Maps key checks"
+check_maps_api_key_configured
+
 if [[ "$RUN_BACKEND_TESTS" == "1" ]]; then
   step "Backend tests"
+  if [[ -x "$BACKEND_DIR/.venv/bin/pytest" ]]; then
+    PYTEST_CMD="$BACKEND_DIR/.venv/bin/pytest"
+  else
+    require_cmd pytest
+    PYTEST_CMD="pytest"
+  fi
   (
     cd "$BACKEND_DIR"
-    pytest -q
+    "$PYTEST_CMD" -q
   )
 fi
 
@@ -88,8 +131,37 @@ if [[ "$RUN_ANDROID_COMPILE" == "1" ]]; then
   step "Android Kotlin compile checks"
   (
     cd "$ANDROID_DIR"
-    ./gradlew :app:compileDevDebugKotlin :app:compileStagingDebugKotlin :app:compileProdDebugKotlin
+    ./gradlew :app:compileStagingDebugKotlin :app:compileProdDebugKotlin
   )
+fi
+
+if [[ "$RUN_ANDROID_UNIT_TESTS" == "1" ]]; then
+  step "Android unit tests"
+  (
+    cd "$ANDROID_DIR"
+    ./gradlew :app:testStagingDebugUnitTest
+  )
+fi
+
+if [[ "$RUN_ANDROID_LINT" == "1" ]]; then
+  step "Android prod lint checks"
+  (
+    cd "$ANDROID_DIR"
+    ./gradlew :app:lintProdRelease
+  )
+fi
+
+if [[ "$RUN_ANDROID_BUNDLE" == "1" ]]; then
+  step "Android signed prod bundle build"
+  (
+    cd "$ANDROID_DIR"
+    ./gradlew :app:bundleProdRelease
+  )
+fi
+
+if [[ "$RUN_ANDROID_BUNDLE_VALIDATE" == "1" ]]; then
+  step "Signed AAB validation"
+  validate_signed_bundle "$BUNDLE_PATH"
 fi
 
 if [[ "$RUN_METADATA_CHECK" == "1" ]]; then

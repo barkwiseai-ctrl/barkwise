@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -16,10 +17,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -68,10 +70,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import com.petsocial.app.BuildConfig
 import com.petsocial.app.data.CalendarEvent
+import com.petsocial.app.data.CommunityActivationFunnel
 import com.petsocial.app.data.AppNotification
+import com.petsocial.app.data.ProviderInboxItem
 import com.petsocial.app.ui.FriendProfile
 import com.petsocial.app.ui.JoinedEvent
 import com.petsocial.app.ui.OwnerBooking
@@ -80,10 +86,15 @@ import com.petsocial.app.ui.ProviderBooking
 import com.petsocial.app.ui.ProviderListing
 import com.petsocial.app.ui.calendar.calendarEventToCalendarDraft
 import com.petsocial.app.ui.calendar.openCalendarDraft
+import com.petsocial.app.ui.qr.QrPayloadAction
+import com.petsocial.app.ui.qr.QrScannerSheet
+import com.petsocial.app.ui.qr.generateQrImageBitmap
+import com.petsocial.app.ui.qr.parseQrPayload
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.roundToInt
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -95,13 +106,22 @@ fun ProfileScreen(
     ownerBookings: List<OwnerBooking>,
     providerListings: List<ProviderListing>,
     providerBookings: List<ProviderBooking>,
+    providerInboxItems: List<ProviderInboxItem>,
+    loadingProviderInbox: Boolean,
+    sendingQuoteOfferItemIds: Set<String>,
+    isSubmittingProviderInboxAction: Boolean,
     calendarEvents: List<CalendarEvent>,
     notifications: List<AppNotification>,
+    activationFunnelMetrics: CommunityActivationFunnel?,
     notifyFollowedGroupAlerts: Boolean,
     notifySavedPostUpdates: Boolean,
     notifySafetyAlerts: Boolean,
     showIdentityHeader: Boolean,
-    onAddFriend: (String) -> Unit,
+    friendQrPayload: String,
+    friendQrExpiresAt: String?,
+    friendQrLoading: Boolean,
+    onRefreshFriendQrPayload: () -> Unit,
+    onResolveFriendQrToken: (String) -> Unit,
     onRemoveFriend: (String) -> Unit,
     onOpenFriendMessages: (String) -> Unit,
     onOpenMessages: (String?) -> Unit,
@@ -111,28 +131,64 @@ fun ProfileScreen(
     onClearLocalNotifications: () -> Unit,
     onOpenNotificationDeepLink: (AppNotification) -> Unit,
     onUpdateNotificationPreferences: (followedGroupAlerts: Boolean, savedPostUpdates: Boolean, safetyAlerts: Boolean) -> Unit,
+    onRefreshActivationDashboard: () -> Unit,
+    onRefreshProviderInbox: () -> Unit,
+    onSendQuoteOffer: (String, Int, String, String, String, String) -> Unit,
+    onConfirmProviderBooking: (String) -> Unit,
+    onDeclineProviderBooking: (String) -> Unit,
+    onRescheduleProviderBooking: (String, String, String, String) -> Unit,
 ) {
     val context = LocalContext.current
-    var displayName by rememberSaveable(profileInfo.displayName) { mutableStateOf(profileInfo.displayName) }
-    var email by rememberSaveable(profileInfo.email) { mutableStateOf(profileInfo.email) }
-    var phone by rememberSaveable(profileInfo.phone) { mutableStateOf(profileInfo.phone) }
-    var humanPronouns by rememberSaveable(profileInfo.humanPronouns) { mutableStateOf(profileInfo.humanPronouns) }
-    var humanRoleLabel by rememberSaveable(profileInfo.humanRoleLabel) { mutableStateOf(profileInfo.humanRoleLabel) }
+    val displayName = profileInfo.displayName
+    val email = profileInfo.email
+    val phone = profileInfo.phone
+    val humanPronouns = profileInfo.humanPronouns
+    val humanRoleLabel = profileInfo.humanRoleLabel
+    val (initialDogYears, initialDogMonths) = remember(profileInfo.dogAgeMonths) {
+        splitAgeToYearsMonths(profileInfo.dogAgeMonths)
+    }
+    val (initialSecondaryDogYears, initialSecondaryDogMonths) = remember(profileInfo.secondaryDogAgeMonths) {
+        splitAgeToYearsMonths(profileInfo.secondaryDogAgeMonths)
+    }
     var dogName by rememberSaveable(profileInfo.dogName) { mutableStateOf(profileInfo.dogName) }
-    var dogAgeMonthsText by rememberSaveable(profileInfo.dogAgeMonths) {
-        mutableStateOf(profileInfo.dogAgeMonths.takeIf { it > 0 }?.toString().orEmpty())
+    var dogAgeYearsText by rememberSaveable(profileInfo.dogAgeMonths) {
+        mutableStateOf(initialDogYears)
+    }
+    var dogAgeRemainderMonthsText by rememberSaveable(profileInfo.dogAgeMonths) {
+        mutableStateOf(initialDogMonths)
     }
     var dogBreedMix by rememberSaveable(profileInfo.dogBreedMix) { mutableStateOf(profileInfo.dogBreedMix) }
-    var dogSexNeuter by rememberSaveable(profileInfo.dogSexNeuter) { mutableStateOf(profileInfo.dogSexNeuter) }
-    var dogWeightClass by rememberSaveable(profileInfo.dogWeightClass) { mutableStateOf(profileInfo.dogWeightClass) }
+    var dogGender by rememberSaveable(profileInfo.dogGender) {
+        mutableStateOf(normalizeDogGender(profileInfo.dogGender).ifBlank { "male" })
+    }
+    var dogWeightKg by rememberSaveable(profileInfo.dogWeightKg) { mutableStateOf(profileInfo.dogWeightKg) }
     var dogPhotoUrlsText by rememberSaveable(profileInfo.dogPhotoUrls) {
         mutableStateOf(profileInfo.dogPhotoUrls.joinToString("\n"))
     }
     var secondaryDogName by rememberSaveable(profileInfo.secondaryDogName) { mutableStateOf(profileInfo.secondaryDogName) }
-    var secondaryDogAgeMonthsText by rememberSaveable(profileInfo.secondaryDogAgeMonths) {
-        mutableStateOf(profileInfo.secondaryDogAgeMonths.takeIf { it > 0 }?.toString().orEmpty())
+    var secondaryDogAgeYearsText by rememberSaveable(profileInfo.secondaryDogAgeMonths) {
+        mutableStateOf(initialSecondaryDogYears)
     }
-    var secondaryDogPhotoUrl by rememberSaveable(profileInfo.secondaryDogPhotoUrl) { mutableStateOf(profileInfo.secondaryDogPhotoUrl) }
+    var secondaryDogAgeRemainderMonthsText by rememberSaveable(profileInfo.secondaryDogAgeMonths) {
+        mutableStateOf(initialSecondaryDogMonths)
+    }
+    var secondaryDogGender by rememberSaveable(profileInfo.secondaryDogGender) {
+        mutableStateOf(normalizeDogGender(profileInfo.secondaryDogGender).ifBlank { "male" })
+    }
+    var secondaryDogWeightKg by rememberSaveable(profileInfo.secondaryDogWeightKg) { mutableStateOf(profileInfo.secondaryDogWeightKg) }
+    var showSecondDog by rememberSaveable(
+        profileInfo.secondaryDogName,
+        profileInfo.secondaryDogAgeMonths,
+        profileInfo.secondaryDogGender,
+        profileInfo.secondaryDogWeightKg,
+    ) {
+        mutableStateOf(
+            profileInfo.secondaryDogName.isNotBlank() ||
+                profileInfo.secondaryDogAgeMonths > 0 ||
+                profileInfo.secondaryDogGender.isNotBlank() ||
+                profileInfo.secondaryDogWeightKg.isNotBlank(),
+        )
+    }
     var bio by rememberSaveable(profileInfo.bio) { mutableStateOf(profileInfo.bio) }
     var suburb by rememberSaveable(profileInfo.suburb) { mutableStateOf(profileInfo.suburb) }
     var favoriteSuburbsText by rememberSaveable(profileInfo.favoriteSuburbs) {
@@ -153,12 +209,6 @@ fun ProfileScreen(
     var leashReliability by rememberSaveable(profileInfo.leashReliability) { mutableStateOf(profileInfo.leashReliability) }
     var emergencyContactName by rememberSaveable(profileInfo.emergencyContactName) { mutableStateOf(profileInfo.emergencyContactName) }
     var emergencyContactPhone by rememberSaveable(profileInfo.emergencyContactPhone) { mutableStateOf(profileInfo.emergencyContactPhone) }
-    var emailVisibility by rememberSaveable(profileInfo.fieldVisibility["email"]) {
-        mutableStateOf(profileInfo.fieldVisibility["email"] ?: "private")
-    }
-    var phoneVisibility by rememberSaveable(profileInfo.fieldVisibility["phone"]) {
-        mutableStateOf(profileInfo.fieldVisibility["phone"] ?: "private")
-    }
     var suburbVisibility by rememberSaveable(profileInfo.fieldVisibility["suburb"]) {
         mutableStateOf(profileInfo.fieldVisibility["suburb"] ?: "group")
     }
@@ -169,18 +219,32 @@ fun ProfileScreen(
         mutableStateOf(profileInfo.fieldVisibility["trigger_notes"] ?: "private")
     }
 
-    var friendSearchQuery by rememberSaveable { mutableStateOf("") }
-    var friendFilter by rememberSaveable { mutableStateOf("suggested") }
     var showProfileEditor by rememberSaveable { mutableStateOf(false) }
     var showSocialSheet by rememberSaveable { mutableStateOf(false) }
+    var showFriendQrDialog by rememberSaveable { mutableStateOf(false) }
+    var showFriendQrScanner by rememberSaveable { mutableStateOf(false) }
+    var friendQrStatusMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var showNotificationsSheet by rememberSaveable { mutableStateOf(false) }
     var showPlansSheet by rememberSaveable { mutableStateOf(false) }
-    var plansSheetSection by rememberSaveable { mutableStateOf("all") }
+    var showActivationSheet by rememberSaveable { mutableStateOf(false) }
+    var plansSheetSectionKey by rememberSaveable { mutableStateOf(PlansSheetSection.ALL.key) }
     var showSettingsSheet by rememberSaveable { mutableStateOf(false) }
     var showHelpDialog by rememberSaveable { mutableStateOf(false) }
+    var showInstallQrDialog by rememberSaveable { mutableStateOf(false) }
     var showSecurityDetails by rememberSaveable { mutableStateOf(false) }
     var biometricLockEnabled by rememberSaveable { mutableStateOf(false) }
     var selectedAppointment by remember { mutableStateOf<AppointmentPopupState?>(null) }
+    var offerDialogItemId by rememberSaveable { mutableStateOf<String?>(null) }
+    var offerPriceAud by rememberSaveable { mutableStateOf("65.00") }
+    var offerDate by rememberSaveable { mutableStateOf(LocalDate.now().plusDays(1).toString()) }
+    var offerTimeSlot by rememberSaveable { mutableStateOf("09:00") }
+    var offerExpiryDate by rememberSaveable { mutableStateOf(LocalDate.now().plusDays(2).toString()) }
+    var offerExpiryTime by rememberSaveable { mutableStateOf("09:00") }
+    var offerNote by rememberSaveable { mutableStateOf("") }
+    var rescheduleDialogItemId by rememberSaveable { mutableStateOf<String?>(null) }
+    var rescheduleDate by rememberSaveable { mutableStateOf(LocalDate.now().plusDays(1).toString()) }
+    var rescheduleTimeSlot by rememberSaveable { mutableStateOf("09:00") }
+    var rescheduleNote by rememberSaveable { mutableStateOf("") }
     val settingsPrefs = remember(context) {
         context.getSharedPreferences(HOME_SETTINGS_PREFS, Context.MODE_PRIVATE)
     }
@@ -253,34 +317,52 @@ fun ProfileScreen(
             ?: "B"
     }
     val totalActiveBookings = ownerBookings.size + providerBookings.size
-    val communitySubtitle = if (upcomingJoinedEvents.isNotEmpty()) {
-        "${upcomingJoinedEvents.size} plans upcoming"
-    } else {
-        "No plans upcoming"
+    val pendingProviderQuoteRequests = remember(providerInboxItems) {
+        providerInboxItems.count { item -> item.itemType == "quote_request" && item.status == "pending" }
     }
-    val listingsSubtitle = if (totalActiveBookings > 0) {
-        "$totalActiveBookings active bookings"
-    } else {
-        "No active bookings"
+    val communitySubtitle = remember(upcomingJoinedEvents) {
+        buildCommunityPlansSubtitle(upcomingJoinedEvents.size)
     }
-    val filteredFriendProfiles = remember(friendProfiles, friendSearchQuery, friendFilter) {
-        val normalizedQuery = friendSearchQuery.trim().lowercase()
+    val listingsSubtitle = remember(totalActiveBookings, pendingProviderQuoteRequests) {
+        buildListingsPlansSubtitle(totalActiveBookings, pendingProviderQuoteRequests)
+    }
+    val activationSummary = remember(activationFunnelMetrics) {
+        buildActivationQaSummary(activationFunnelMetrics)
+    }
+    val showActivationQa = BuildConfig.ENVIRONMENT.equals("staging", ignoreCase = true)
+    val installPageUrl = remember {
+        val configured = BuildConfig.INSTALL_PAGE_URL.trim()
+        when {
+            configured.isBlank() -> PLAY_CLOSED_TESTING_URL
+            configured == LEGACY_INSTALL_URL -> PLAY_CLOSED_TESTING_URL
+            else -> configured
+        }
+    }
+    val installQrBitmap = remember(installPageUrl) {
+        generateQrImageBitmap(
+            content = installPageUrl,
+            sizePx = 720,
+        )
+    }
+    val friendQrPayloadValue = remember(friendQrPayload) { friendQrPayload.trim() }
+    val friendQrBitmap = remember(friendQrPayloadValue) {
+        if (friendQrPayloadValue.isBlank()) {
+            null
+        } else {
+            generateQrImageBitmap(
+                content = friendQrPayloadValue,
+                sizePx = 720,
+            )
+        }
+    }
+    val friendProfilesOnly = remember(friendProfiles) {
         friendProfiles
             .asSequence()
-            .filter { profile ->
-                when (friendFilter) {
-                    "friends" -> profile.isFriend
-                    "suggested" -> !profile.isFriend
-                    else -> true
-                }
-            }
-            .filter { profile ->
-                normalizedQuery.isBlank() ||
-                    profile.humanName.lowercase().contains(normalizedQuery) ||
-                    profile.dogName.lowercase().contains(normalizedQuery)
-            }
+            .filter { profile -> profile.isFriend }
+            .sortedBy { profile -> profile.humanName.lowercase() }
             .toList()
     }
+    val plansSheetSection = remember(plansSheetSectionKey) { PlansSheetSection.fromKey(plansSheetSectionKey) }
     val applyThemeMode: (String) -> Unit = remember(settingsPrefs) {
         { mode ->
             val normalizedMode = if (mode == HOME_THEME_MODE_DARK) HOME_THEME_MODE_DARK else HOME_THEME_MODE_LIGHT
@@ -314,213 +396,48 @@ fun ProfileScreen(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Card(
-                onClick = { showProfileEditor = true },
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
             ) {
-                Column(
+                Row(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        profileDogPhotoUrls.firstOrNull()?.let { photoUrl ->
-                            AsyncImage(
-                                model = photoUrl,
-                                contentDescription = "Primary dog profile photo",
-                                modifier = Modifier.size(92.dp),
-                            )
-                        } ?: Card(
-                            shape = CircleShape,
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1F22)),
-                            modifier = Modifier.size(92.dp),
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(
-                                    profileInitial,
-                                    style = MaterialTheme.typography.headlineLarge,
-                                    color = Color.White,
-                                )
-                            }
-                        }
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            Text(
-                                profileInfo.displayName.ifBlank { activeAccountLabel },
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                profileRoleLabel,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
-                            Text(
-                                profileInfo.dogName.ifBlank { "Add your dog's name" },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                profileInfo.suburb.ifBlank { "Set your suburb" },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                    if (profileDogPhotoUrls.size > 1) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            profileDogPhotoUrls.drop(1).take(3).forEachIndexed { index, url ->
-                                AsyncImage(
-                                    model = url,
-                                    contentDescription = "Dog photo preview ${index + 2}",
-                                    modifier = Modifier.size(32.dp),
-                                )
-                            }
-                        }
-                    }
-                    AdaptiveSplitCards(
-                        first = { modifier ->
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                modifier = modifier,
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    Text("Human profile", style = MaterialTheme.typography.labelLarge)
-                                    Text(
-                                        profileInfo.displayName.ifBlank { activeAccountLabel },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                    )
-                                    Text(
-                                        listOf(
-                                            profileInfo.humanPronouns.takeIf { it.isNotBlank() },
-                                            profileInfo.humanRoleLabel.takeIf { it.isNotBlank() },
-                                        ).joinToString(" • ").ifBlank { "Role not set" },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        "Suburb: ${profileInfo.suburb.ifBlank { "Not set" }}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        "Human completeness ${(humanProfileCompletion * 100).toInt()}%",
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                    LinearProgressIndicator(
-                                        progress = { humanProfileCompletion },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                }
-                            }
-                        },
-                        second = { modifier ->
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                modifier = modifier,
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    Text("Dog profile", style = MaterialTheme.typography.labelLarge)
-                                    Text(
-                                        profileInfo.dogName.ifBlank { "Dog name not set" },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                    )
-                                    Text(
-                                        listOf(
-                                            profileInfo.dogBreedMix.takeIf { it.isNotBlank() },
-                                            profileInfo.dogSexNeuter.takeIf { it.isNotBlank() },
-                                            profileInfo.dogWeightClass.takeIf { it.isNotBlank() },
-                                        ).joinToString(" • ").ifBlank { "Breed / size not set" },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    val ageLabel = profileInfo.dogAgeMonths
-                                        .takeIf { it > 0 }
-                                        ?.let { months -> "$months months old" }
-                                        ?: "Age not set"
-                                    Text(
-                                        ageLabel,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    profileInfo.secondaryDogName.takeIf { it.isNotBlank() }?.let { secondDog ->
-                                        Text(
-                                            "Companion dog: $secondDog",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                    Text(
-                                        "Dog completeness ${(dogProfileCompletion * 100).toInt()}%",
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                    LinearProgressIndicator(
-                                        progress = { dogProfileCompletion },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                }
-                            }
-                        },
+                    val dogSummary = buildDogSummary(profileInfo)
+                    HomeTileCard(
+                        title = "Dog",
+                        subtitle = profileInfo.dogName.ifBlank { "Dog name not set" },
+                        preview = "$dogSummary\n${(dogProfileCompletion * 100).toInt()}% complete",
+                        onClick = { showProfileEditor = true },
+                        contentPadding = PaddingValues(start = 10.dp, top = 10.dp, end = 48.dp, bottom = 10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
                     )
-                    ProfileDetailSection(
-                        title = "Play compatibility",
-                        details = listOf(
-                            "Energy: ${profileInfo.playEnergyLevel.ifBlank { "Not set" }}",
-                            "Style: ${profileInfo.playStyle.ifBlank { "Not set" }}",
-                            "Social confidence: ${profileInfo.socialConfidence.ifBlank { "Not set" }}",
-                            "Ideal match: ${profileInfo.idealMatch.ifBlank { "Not set" }}",
-                            profileInfo.triggerNotes.takeIf { it.isNotBlank() }?.let { "Triggers: $it" },
-                        ),
-                    )
-                    ProfileDetailSection(
-                        title = "Care preferences",
-                        details = listOf(
-                            "Walks: ${profileInfo.walkPreferences.ifBlank { "Not set" }}",
-                            "Training: ${profileInfo.trainingStyle.ifBlank { "Not set" }}",
-                            "Feeding: ${profileInfo.feedingRules.ifBlank { "Not set" }}",
-                            "Boundaries: ${profileInfo.consentBoundaries.ifBlank { "Not set" }}",
-                        ),
-                    )
-                    ProfileTrustBadges(
-                        vaccinationStatus = profileInfo.vaccinationStatus,
-                        microchipped = profileInfo.microchipped,
-                        recallTrained = profileInfo.recallTrained,
-                        leashReliability = profileInfo.leashReliability,
-                        emergencyContactReady = profileInfo.emergencyContactName.isNotBlank() && profileInfo.emergencyContactPhone.isNotBlank(),
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ProfileStatChip(label = "Friends", value = totalFriendCount.toString())
-                        ProfileStatChip(label = "Photos", value = profileDogPhotoUrls.size.toString())
-                        ProfileStatChip(label = "Unread", value = unreadNotificationsCount.toString())
-                    }
-                    LinearProgressIndicator(
-                        progress = { profileCompletionRatio },
-                        modifier = Modifier.fillMaxWidth(),
+                    val humanSubtitle = buildHumanSubtitle(profileInfo, profileRoleLabel)
+                    HomeTileCard(
+                        title = "Human",
+                        subtitle = profileInfo.displayName.ifBlank { activeAccountLabel },
+                        preview = "Suburb: ${profileInfo.suburb.ifBlank { "Not set" }}\n$humanSubtitle",
+                        onClick = { showProfileEditor = true },
+                        contentPadding = PaddingValues(start = 48.dp, top = 10.dp, end = 10.dp, bottom = 10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
                     )
                 }
+                IdentityPhotoThumb(
+                    photoUrl = profileDogPhotoUrls.firstOrNull(),
+                    fallbackLabel = profileInfo.dogName.take(1).ifBlank { profileInitial },
+                    width = 84.dp,
+                    height = 108.dp,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .zIndex(2f),
+                )
             }
 
             Row(
@@ -531,8 +448,8 @@ fun ProfileScreen(
             ) {
                 HomeTileCard(
                     title = "Social",
-                    subtitle = "$totalFriendCount friends",
-                    preview = "Open your network",
+                    subtitle = "$totalFriendCount friends • QR add",
+                    preview = "Friend QR + network",
                     badgeText = totalFriendCount.takeIf { it > 0 }?.toString(),
                     icon = { Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(36.dp)) },
                     onClick = { showSocialSheet = true },
@@ -579,7 +496,7 @@ fun ProfileScreen(
                             badgeText = upcomingJoinedEvents.size.takeIf { it > 0 }?.toString(),
                             icon = { Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(28.dp)) },
                             onClick = {
-                                plansSheetSection = "community"
+                                plansSheetSectionKey = PlansSheetSection.COMMUNITY.key
                                 showPlansSheet = true
                             },
                             modifier = Modifier
@@ -593,7 +510,7 @@ fun ProfileScreen(
                             badgeText = (ownerBookings.size + providerBookings.size).takeIf { it > 0 }?.toString(),
                             icon = { Icon(Icons.Default.Event, contentDescription = null, modifier = Modifier.size(28.dp)) },
                             onClick = {
-                                plansSheetSection = "listings"
+                                plansSheetSectionKey = PlansSheetSection.LISTINGS.key
                                 showPlansSheet = true
                             },
                             modifier = Modifier
@@ -602,6 +519,18 @@ fun ProfileScreen(
                         )
                     }
                 }
+            }
+
+            if (showActivationQa) {
+                HomeTileCard(
+                    title = "Activation QA",
+                    subtitle = activationSummary.subtitle,
+                    preview = activationSummary.preview,
+                    badgeText = activationSummary.failedCount.takeIf { count -> count > 0 }?.toString(),
+                    icon = { Icon(Icons.Default.Event, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                    onClick = { showActivationSheet = true },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
 
@@ -649,37 +578,51 @@ fun ProfileScreen(
                     Text("Social", style = MaterialTheme.typography.titleLarge)
                 }
                 item {
-                    OutlinedTextField(
-                        value = friendSearchQuery,
-                        onValueChange = { friendSearchQuery = it },
-                        label = { Text("Find by human or dog name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
+                    Text(
+                        "For privacy and safety, add friends by scanning each other's QR in person.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                        FilterChip(
-                            selected = friendFilter == "friends",
-                            onClick = { friendFilter = "friends" },
-                            label = { Text("Friends") },
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    ) {
+                        AssistChip(
+                            onClick = {
+                                onRefreshFriendQrPayload()
+                                showFriendQrDialog = true
+                            },
+                            label = { Text("My Friend QR") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.People,
+                                    contentDescription = null,
+                                )
+                            },
                         )
-                        FilterChip(
-                            selected = friendFilter == "suggested",
-                            onClick = { friendFilter = "suggested" },
-                            label = { Text("Suggested") },
-                        )
-                        FilterChip(
-                            selected = friendFilter == "all",
-                            onClick = { friendFilter = "all" },
-                            label = { Text("All") },
+                        AssistChip(
+                            onClick = { showFriendQrScanner = true },
+                            label = { Text("Scan Friend QR") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = null,
+                                )
+                            },
                         )
                     }
                 }
-                if (filteredFriendProfiles.isEmpty()) {
-                    item { HomeEmptyCard("No matching profiles.") }
+                friendQrStatusMessage?.let { statusMessage ->
+                    item {
+                        StatusBadge(statusMessage)
+                    }
+                }
+                if (friendProfilesOnly.isEmpty()) {
+                    item { HomeEmptyCard("No friends added yet. Scan a friend QR to connect.") }
                 } else {
-                    items(filteredFriendProfiles, key = { profile -> profile.userId }) { profile ->
+                    items(friendProfilesOnly, key = { profile -> profile.userId }) { profile ->
                         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                             Row(
                                 modifier = Modifier
@@ -700,20 +643,14 @@ fun ProfileScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    StatusBadge(if (profile.isFriend) "friend" else "suggested")
+                                    StatusBadge("friend")
                                 }
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    if (profile.isFriend) {
-                                        Button(onClick = { onOpenFriendMessages(profile.userId) }) {
-                                            Text("Message")
-                                        }
-                                        TextButton(onClick = { onRemoveFriend(profile.userId) }) {
-                                            Text("Remove")
-                                        }
-                                    } else {
-                                        Button(onClick = { onAddFriend(profile.userId) }) {
-                                            Text("Add")
-                                        }
+                                    Button(onClick = { onOpenFriendMessages(profile.userId) }) {
+                                        Text("Message")
+                                    }
+                                    TextButton(onClick = { onRemoveFriend(profile.userId) }) {
+                                        Text("Remove")
                                     }
                                 }
                             }
@@ -722,6 +659,102 @@ fun ProfileScreen(
                 }
             }
         }
+    }
+
+    if (showFriendQrDialog) {
+        AlertDialog(
+            onDismissRequest = { showFriendQrDialog = false },
+            title = { Text("Add Friend via QR") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Scan this on another phone to add you as a friend.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (friendQrLoading) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    friendQrBitmap?.let { bitmap ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Image(
+                                bitmap = bitmap,
+                                contentDescription = "Friend QR code",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                            )
+                        }
+                    } ?: run {
+                        if (!friendQrLoading) {
+                            Text(
+                                "QR unavailable right now. Tap refresh and try again.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Text(
+                        "${profileInfo.displayName.ifBlank { "Member" }} • ${profileInfo.dogName.ifBlank { "Dog" }}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    formatIsoDateTimeLabel(friendQrExpiresAt)?.let { expiresLabel ->
+                        Text(
+                            "Expires: $expiresLabel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showFriendQrDialog = false }) {
+                    Text("Done")
+                }
+            },
+        )
+    }
+
+    if (showFriendQrScanner) {
+        QrScannerSheet(
+            onDetected = { rawValue ->
+                showFriendQrScanner = false
+                when (val action = parseQrPayload(rawValue)) {
+                    is QrPayloadAction.FriendToken -> {
+                        friendQrStatusMessage = "Verifying friend QR..."
+                        onResolveFriendQrToken(action.token)
+                    }
+
+                    is QrPayloadAction.FriendConnection -> {
+                        friendQrStatusMessage = "Unsigned friend QR not accepted"
+                    }
+
+                    is QrPayloadAction.InviteToken -> {
+                        friendQrStatusMessage = "Invite QR detected. Use Community scanner."
+                    }
+
+                    is QrPayloadAction.OpenUrl -> {
+                        friendQrStatusMessage = "URL QR detected. Use a friend profile QR."
+                    }
+
+                    QrPayloadAction.Invalid -> {
+                        friendQrStatusMessage = "QR payload not recognized"
+                    }
+                }
+            },
+            onDismiss = { showFriendQrScanner = false },
+            sheetTitle = "Scan Friend QR",
+            permissionDescription = "Camera permission is required to scan friend QR codes.",
+            hintDescription = "Point the camera at your friend's BarkWise profile QR.",
+        )
     }
 
     if (showNotificationsSheet) {
@@ -830,8 +863,8 @@ fun ProfileScreen(
     }
 
     if (showPlansSheet) {
-        val showCommunitySection = plansSheetSection != "listings"
-        val showListingsSection = plansSheetSection != "community"
+        val showCommunitySection = plansSheetSection != PlansSheetSection.LISTINGS
+        val showListingsSection = plansSheetSection != PlansSheetSection.COMMUNITY
         ModalBottomSheet(onDismissRequest = { showPlansSheet = false }) {
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -846,18 +879,18 @@ fun ProfileScreen(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                     ) {
                         FilterChip(
-                            selected = plansSheetSection == "all",
-                            onClick = { plansSheetSection = "all" },
+                            selected = plansSheetSection == PlansSheetSection.ALL,
+                            onClick = { plansSheetSectionKey = PlansSheetSection.ALL.key },
                             label = { Text("All") },
                         )
                         FilterChip(
-                            selected = plansSheetSection == "community",
-                            onClick = { plansSheetSection = "community" },
+                            selected = plansSheetSection == PlansSheetSection.COMMUNITY,
+                            onClick = { plansSheetSectionKey = PlansSheetSection.COMMUNITY.key },
                             label = { Text("Community") },
                         )
                         FilterChip(
-                            selected = plansSheetSection == "listings",
-                            onClick = { plansSheetSection = "listings" },
+                            selected = plansSheetSection == PlansSheetSection.LISTINGS,
+                            onClick = { plansSheetSectionKey = PlansSheetSection.LISTINGS.key },
                             label = { Text("Listings") },
                         )
                     }
@@ -894,6 +927,140 @@ fun ProfileScreen(
                     }
                 }
                 if (showListingsSection) {
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Provider inbox", style = MaterialTheme.typography.titleSmall)
+                            AssistChip(
+                                onClick = onRefreshProviderInbox,
+                                enabled = !loadingProviderInbox,
+                                label = { Text(if (loadingProviderInbox) "Refreshing" else "Refresh") },
+                            )
+                        }
+                    }
+                    item {
+                        Text(
+                            "Quote requests and bookings from your listings in one queue.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (loadingProviderInbox) {
+                        item {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    if (providerInboxItems.isEmpty()) {
+                        item { HomeEmptyCard("No provider inbox items yet.") }
+                    } else {
+                        items(providerInboxItems.take(20), key = { item -> "provider_inbox_${item.id}" }) { item ->
+                            val isSendingQuoteOffer = item.id in sendingQuoteOfferItemIds
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            item.title,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        StatusBadge(item.status)
+                                    }
+                                    Text(
+                                        "${item.providerName} • ${item.subtitle}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    val dueLabel = formatIsoDateTimeLabel(item.dueAt)
+                                    val meta = listOfNotNull(
+                                        item.priority.takeIf { value -> value.equals("high", ignoreCase = true) }?.let { "High priority" },
+                                        dueLabel?.let { "Due $it" },
+                                    ).joinToString(" • ")
+                                    if (meta.isNotBlank()) {
+                                        Text(
+                                            meta,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        if (item.itemType == "quote_request" && !item.quoteRequestId.isNullOrBlank()) {
+                                            Button(
+                                                onClick = {
+                                                    offerDialogItemId = item.id
+                                                    offerPriceAud = "65.00"
+                                                    offerDate = LocalDate.now().plusDays(1).toString()
+                                                    offerTimeSlot = "09:00"
+                                                    offerExpiryDate = LocalDate.now().plusDays(2).toString()
+                                                    offerExpiryTime = "09:00"
+                                                    offerNote = ""
+                                                },
+                                                enabled = !isSendingQuoteOffer && !isSubmittingProviderInboxAction,
+                                            ) {
+                                                Text(if (isSendingQuoteOffer) "Sending..." else "Create offer")
+                                            }
+                                        }
+                                        if (item.itemType == "booking" && !item.bookingId.isNullOrBlank()) {
+                                            if (item.status == "requested" || item.status == "reschedule_requested") {
+                                                Button(
+                                                    onClick = { onConfirmProviderBooking(item.bookingId) },
+                                                    enabled = !isSubmittingProviderInboxAction,
+                                                ) {
+                                                    Text("Confirm")
+                                                }
+                                                TextButton(
+                                                    onClick = { onDeclineProviderBooking(item.bookingId) },
+                                                    enabled = !isSubmittingProviderInboxAction,
+                                                ) {
+                                                    Text("Decline")
+                                                }
+                                            }
+                                            if (item.status.lowercase() !in setOf("cancelled", "completed")) {
+                                                TextButton(
+                                                    onClick = {
+                                                        rescheduleDialogItemId = item.id
+                                                        rescheduleDate = firstIsoDateFromText(item.subtitle)
+                                                            ?: LocalDate.now().plusDays(1).toString()
+                                                        rescheduleTimeSlot = firstTimeSlotFromText(item.subtitle) ?: "09:00"
+                                                        rescheduleNote = ""
+                                                    },
+                                                    enabled = !isSubmittingProviderInboxAction,
+                                                ) {
+                                                    Text("Reschedule")
+                                                }
+                                            }
+                                        }
+                                        TextButton(
+                                            onClick = { onOpenMessages(item.customerUserId) },
+                                            enabled = !item.customerUserId.isNullOrBlank(),
+                                        ) {
+                                            Text("Message")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     item { Text("Calendar", style = MaterialTheme.typography.titleSmall) }
                     if (calendarEvents.isEmpty()) {
                         item { HomeEmptyCard("No calendar events yet.") }
@@ -1011,6 +1178,110 @@ fun ProfileScreen(
         }
     }
 
+    if (showActivationQa && showActivationSheet) {
+        ModalBottomSheet(onDismissRequest = { showActivationSheet = false }) {
+            val lastEventLabel = activationFunnelMetrics?.lastEventAt?.toLocalDateString().orEmpty()
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            ) {
+                item { Text("Activation QA", style = MaterialTheme.typography.titleLarge) }
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    ) {
+                        AssistChip(onClick = onRefreshActivationDashboard, label = { Text("Refresh") })
+                        if (lastEventLabel.isNotBlank()) {
+                            AssistChip(
+                                onClick = {},
+                                enabled = false,
+                                label = { Text("Last event $lastEventLabel") },
+                            )
+                        }
+                    }
+                }
+                if (activationFunnelMetrics == null || activationFunnelMetrics.activationEventCount <= 0) {
+                    item { HomeEmptyCard("No activation analytics yet. Run QR invite + OTP flow, then refresh.") }
+                } else {
+                    item {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    "Events: ${activationFunnelMetrics.activationEventCount} • Diagnostics: ${activationFunnelMetrics.activationDiagnosticCount}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    "Users: ${activationFunnelMetrics.uniqueUserCount}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    item { Text("Stage counts", style = MaterialTheme.typography.titleSmall) }
+                    items(
+                        activationFunnelMetrics.byStage
+                            .toList()
+                            .sortedByDescending { (_, count) -> count }
+                            .take(6),
+                        key = { (stage, _) -> "stage_$stage" },
+                    ) { (stage, count) ->
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(stage.toReadableLabel(), style = MaterialTheme.typography.bodyMedium)
+                                StatusBadge(count.toString())
+                            }
+                        }
+                    }
+                    item { Text("Recent failures", style = MaterialTheme.typography.titleSmall) }
+                    if (activationFunnelMetrics.topFailures.isEmpty()) {
+                        item { HomeEmptyCard("No activation failures recorded.") }
+                    } else {
+                        items(
+                            activationFunnelMetrics.topFailures.take(5),
+                            key = { failure -> "${failure.createdAt}_${failure.event}" },
+                        ) { failure ->
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(failure.event.toReadableLabel(), style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        failure.error.ifBlank { "Unknown error" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        failure.createdAt.toLocalDateString(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (showSettingsSheet) {
         ModalBottomSheet(onDismissRequest = { showSettingsSheet = false }) {
             LazyColumn(
@@ -1039,6 +1310,41 @@ fun ProfileScreen(
                             onClick = { applyThemeMode(HOME_THEME_MODE_DARK) },
                             label = { Text("Dark") },
                         )
+                    }
+                }
+                item {
+                    Text(
+                        "Distribution",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
+                item {
+                    Card(
+                        onClick = { showInstallQrDialog = true },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("Install QR", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "Scan on second phone to open Play closed testing",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 item {
@@ -1112,6 +1418,68 @@ fun ProfileScreen(
                 }
             }
         }
+    }
+
+    if (showInstallQrDialog) {
+        AlertDialog(
+            onDismissRequest = { showInstallQrDialog = false },
+            title = { Text("Install BarkWise") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Scan this QR on your second phone to open the Play closed-testing page.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    installQrBitmap?.let { bitmap ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Image(
+                                bitmap = bitmap,
+                                contentDescription = "Install BarkWise QR",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                            )
+                        }
+                    } ?: Text(
+                        "QR unavailable. Open link directly.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        installPageUrl,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse(installPageUrl),
+                                ),
+                            )
+                        }
+                    },
+                ) {
+                    Text("Open link")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showInstallQrDialog = false }) {
+                    Text("Close")
+                }
+            },
+        )
     }
 
     if (showHelpDialog) {
@@ -1221,6 +1589,194 @@ fun ProfileScreen(
         )
     }
 
+    val offerDialogItem = offerDialogItemId?.let { id ->
+        providerInboxItems.firstOrNull { item -> item.id == id }
+    }
+    if (offerDialogItem != null) {
+        val normalizedPriceCents = parseAudPriceToCents(offerPriceAud)
+        val validOfferDate = isIsoDateInput(offerDate)
+        val validOfferTime = isTimeSlotInput(offerTimeSlot)
+        val validExpiryDate = isIsoDateInput(offerExpiryDate)
+        val validExpiryTime = isTimeSlotInput(offerExpiryTime)
+        val expiresAtIso = buildIsoDateTime(offerExpiryDate, offerExpiryTime)
+        val isSubmitting = offerDialogItem.id in sendingQuoteOfferItemIds
+        val canSendOffer = normalizedPriceCents != null &&
+            validOfferDate &&
+            validOfferTime &&
+            validExpiryDate &&
+            validExpiryTime &&
+            !expiresAtIso.isNullOrBlank() &&
+            !isSubmitting
+        AlertDialog(
+            onDismissRequest = {
+                if (!isSubmitting) offerDialogItemId = null
+            },
+            title = { Text("Send quote offer") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "${offerDialogItem.providerName} • ${offerDialogItem.title}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = offerPriceAud,
+                        onValueChange = { offerPriceAud = it },
+                        label = { Text("Price (AUD)") },
+                        singleLine = true,
+                        isError = offerPriceAud.isNotBlank() && normalizedPriceCents == null,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = offerDate,
+                        onValueChange = { offerDate = it },
+                        label = { Text("Proposed date (YYYY-MM-DD)") },
+                        singleLine = true,
+                        isError = offerDate.isNotBlank() && !validOfferDate,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = offerTimeSlot,
+                        onValueChange = { offerTimeSlot = it },
+                        label = { Text("Proposed time (HH:MM)") },
+                        singleLine = true,
+                        isError = offerTimeSlot.isNotBlank() && !validOfferTime,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = offerExpiryDate,
+                        onValueChange = { offerExpiryDate = it },
+                        label = { Text("Expiry date (YYYY-MM-DD)") },
+                        singleLine = true,
+                        isError = offerExpiryDate.isNotBlank() && !validExpiryDate,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = offerExpiryTime,
+                        onValueChange = { offerExpiryTime = it },
+                        label = { Text("Expiry time (HH:MM)") },
+                        singleLine = true,
+                        isError = offerExpiryTime.isNotBlank() && !validExpiryTime,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = offerNote,
+                        onValueChange = { offerNote = it },
+                        label = { Text("Note (optional)") },
+                        enabled = !isSubmitting,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = canSendOffer,
+                    onClick = {
+                        val price = normalizedPriceCents ?: return@Button
+                        val expiresAt = expiresAtIso ?: return@Button
+                        onSendQuoteOffer(
+                            offerDialogItem.id,
+                            price,
+                            offerDate.trim(),
+                            offerTimeSlot.trim(),
+                            expiresAt,
+                            offerNote.trim(),
+                        )
+                        offerDialogItemId = null
+                    },
+                ) {
+                    Text(if (isSubmitting) "Sending..." else "Send offer")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isSubmitting,
+                    onClick = { offerDialogItemId = null },
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    val rescheduleDialogItem = rescheduleDialogItemId?.let { id ->
+        providerInboxItems.firstOrNull { item -> item.id == id }
+    }
+    if (rescheduleDialogItem != null && !rescheduleDialogItem.bookingId.isNullOrBlank()) {
+        val validDate = isIsoDateInput(rescheduleDate)
+        val validTimeSlot = isTimeSlotInput(rescheduleTimeSlot)
+        val canSubmitReschedule = validDate && validTimeSlot && !isSubmittingProviderInboxAction
+        AlertDialog(
+            onDismissRequest = {
+                if (!isSubmittingProviderInboxAction) rescheduleDialogItemId = null
+            },
+            title = { Text("Reschedule booking") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "${rescheduleDialogItem.providerName} • ${rescheduleDialogItem.title}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = rescheduleDate,
+                        onValueChange = { rescheduleDate = it },
+                        label = { Text("Date (YYYY-MM-DD)") },
+                        singleLine = true,
+                        isError = rescheduleDate.isNotBlank() && !validDate,
+                        enabled = !isSubmittingProviderInboxAction,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = rescheduleTimeSlot,
+                        onValueChange = { rescheduleTimeSlot = it },
+                        label = { Text("Time (HH:MM)") },
+                        singleLine = true,
+                        isError = rescheduleTimeSlot.isNotBlank() && !validTimeSlot,
+                        enabled = !isSubmittingProviderInboxAction,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = rescheduleNote,
+                        onValueChange = { rescheduleNote = it },
+                        label = { Text("Reason (optional)") },
+                        enabled = !isSubmittingProviderInboxAction,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = canSubmitReschedule,
+                    onClick = {
+                        onRescheduleProviderBooking(
+                            rescheduleDialogItem.bookingId,
+                            rescheduleDate.trim(),
+                            rescheduleTimeSlot.trim(),
+                            rescheduleNote.trim(),
+                        )
+                        rescheduleDialogItemId = null
+                    },
+                ) {
+                    Text(if (isSubmittingProviderInboxAction) "Saving..." else "Reschedule")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isSubmittingProviderInboxAction,
+                    onClick = { rescheduleDialogItemId = null },
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
     if (showProfileEditor) {
         val normalizedDisplayName = displayName.trim()
         val normalizedEmail = email.trim()
@@ -1228,18 +1784,39 @@ fun ProfileScreen(
         val normalizedHumanPronouns = humanPronouns.trim()
         val normalizedHumanRoleLabel = humanRoleLabel.trim()
         val normalizedDogName = dogName.trim()
-        val normalizedDogAgeMonths = dogAgeMonthsText.trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
-        val isDogAgeValid = dogAgeMonthsText.trim().isBlank() || dogAgeMonthsText.trim().toIntOrNull() != null
+        val normalizedDogAgeYears = dogAgeYearsText.trim().toIntOrNull()
+        val normalizedDogRemainderMonths = dogAgeRemainderMonthsText.trim().toIntOrNull()
+        val isDogAgeValid =
+            (dogAgeYearsText.trim().isBlank() || normalizedDogAgeYears != null) &&
+                (dogAgeRemainderMonthsText.trim().isBlank() || normalizedDogRemainderMonths != null) &&
+                (normalizedDogRemainderMonths == null || normalizedDogRemainderMonths in 0..11)
+        // TODO(public-testing): Revisit age representation before public launch.
+        val normalizedDogAgeMonths = ((normalizedDogAgeYears ?: 0).coerceAtLeast(0) * 12) +
+            (normalizedDogRemainderMonths ?: 0).coerceIn(0, 11)
         val normalizedDogBreedMix = dogBreedMix.trim()
-        val normalizedDogSexNeuter = dogSexNeuter.trim()
-        val normalizedDogWeightClass = dogWeightClass.trim()
+        val normalizedDogGender = normalizeDogGender(dogGender).ifBlank { "male" }
+        val normalizedDogWeightKg = dogWeightKg.trim()
+        val isDogWeightValid = isDogWeightKgFormat(normalizedDogWeightKg)
         val normalizedSuburb = suburb.trim()
         val normalizedBio = bio.trim()
-        val normalizedSecondaryDogName = secondaryDogName.trim()
-        val normalizedSecondaryDogAgeMonths = secondaryDogAgeMonthsText.trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
-        val isSecondaryDogAgeValid =
-            secondaryDogAgeMonthsText.trim().isBlank() || secondaryDogAgeMonthsText.trim().toIntOrNull() != null
-        val normalizedSecondaryDogPhotoUrl = secondaryDogPhotoUrl.trim()
+        val normalizedSecondaryDogName = if (showSecondDog) secondaryDogName.trim() else ""
+        val normalizedSecondaryDogAgeYears = if (showSecondDog) secondaryDogAgeYearsText.trim().toIntOrNull() else 0
+        val normalizedSecondaryDogRemainderMonths =
+            if (showSecondDog) secondaryDogAgeRemainderMonthsText.trim().toIntOrNull() else 0
+        val isSecondaryDogAgeValid = !showSecondDog || (
+            (secondaryDogAgeYearsText.trim().isBlank() || normalizedSecondaryDogAgeYears != null) &&
+                (secondaryDogAgeRemainderMonthsText.trim().isBlank() || normalizedSecondaryDogRemainderMonths != null) &&
+                (normalizedSecondaryDogRemainderMonths == null || normalizedSecondaryDogRemainderMonths in 0..11)
+            )
+        val normalizedSecondaryDogAgeMonths = if (!showSecondDog) {
+            0
+        } else {
+            ((normalizedSecondaryDogAgeYears ?: 0).coerceAtLeast(0) * 12) +
+                (normalizedSecondaryDogRemainderMonths ?: 0).coerceIn(0, 11)
+        }
+        val normalizedSecondaryDogGender = if (showSecondDog) normalizeDogGender(secondaryDogGender).ifBlank { "male" } else ""
+        val normalizedSecondaryDogWeightKg = if (showSecondDog) secondaryDogWeightKg.trim() else ""
+        val isSecondaryDogWeightValid = !showSecondDog || isDogWeightKgFormat(normalizedSecondaryDogWeightKg)
         val parsedDogPhotoUrls = parseDogPhotoValues(dogPhotoUrlsText)
         val validDogPhotoUrls = parsedDogPhotoUrls
             .filter(::isValidProfilePhotoUrl)
@@ -1262,24 +1839,19 @@ fun ProfileScreen(
         val normalizedLeashReliability = leashReliability.trim()
         val normalizedEmergencyContactName = emergencyContactName.trim()
         val normalizedEmergencyContactPhone = emergencyContactPhone.trim()
-        val normalizedVisibility = buildMap {
-            put("email", normalizeVisibilityValue(emailVisibility))
-            put("phone", normalizeVisibilityValue(phoneVisibility))
+        val normalizedVisibility = profileInfo.fieldVisibility.toMutableMap().apply {
             put("suburb", normalizeVisibilityValue(suburbVisibility))
             put("dog_name", normalizeVisibilityValue(dogNameVisibility))
             put("trigger_notes", normalizeVisibilityValue(triggerNotesVisibility))
-        }
-        val isEmailValid = normalizedEmail.isBlank() || isLikelyEmail(normalizedEmail)
-        val isPhoneValid = normalizedPhone.isBlank() || isLikelyPhoneNumber(normalizedPhone)
+        }.mapValues { (_, value) -> normalizeVisibilityValue(value) }
         val isEmergencyPhoneValid =
             normalizedEmergencyContactPhone.isBlank() || isLikelyPhoneNumber(normalizedEmergencyContactPhone)
-        val isSecondaryPhotoValid = normalizedSecondaryDogPhotoUrl.isBlank() || isValidProfilePhotoUrl(normalizedSecondaryDogPhotoUrl)
-        val canSaveProfile = isEmailValid &&
-            isPhoneValid &&
-            isEmergencyPhoneValid &&
+        val canSaveProfile = normalizedDogName.isNotBlank() &&
             isDogAgeValid &&
+            isDogWeightValid &&
             isSecondaryDogAgeValid &&
-            isSecondaryPhotoValid &&
+            isSecondaryDogWeightValid &&
+            isEmergencyPhoneValid &&
             !hasInvalidDogPhotoUrls
         val appendDogPhotoUrl: (String) -> Unit = append@{ rawUrl ->
             val normalizedUrl = rawUrl.trim()
@@ -1333,63 +1905,48 @@ fun ProfileScreen(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                 ) {
                     OutlinedTextField(
-                        value = displayName,
-                        onValueChange = { displayName = it.take(48) },
-                        label = { Text("Display name") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it.take(96) },
-                        label = { Text("Email") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = phone,
-                        onValueChange = { phone = it.take(24) },
-                        label = { Text("Phone") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = humanPronouns,
-                        onValueChange = { humanPronouns = it.take(32) },
-                        label = { Text("Pronouns") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = humanRoleLabel,
-                        onValueChange = { humanRoleLabel = it.take(48) },
-                        label = { Text("Role label (e.g. Member, Provider + Parent)") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
                         value = dogName,
                         onValueChange = { dogName = it.take(48) },
                         label = { Text("Dog name") },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
-                        value = dogAgeMonthsText,
-                        onValueChange = { dogAgeMonthsText = it.filter { ch -> ch.isDigit() }.take(4) },
-                        label = { Text("Dog age (months)") },
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth(),
-                    )
+                    ) {
+                        OutlinedTextField(
+                            value = dogAgeYearsText,
+                            onValueChange = { dogAgeYearsText = it.filter { ch -> ch.isDigit() }.take(2) },
+                            label = { Text("Age years") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = dogAgeRemainderMonthsText,
+                            onValueChange = { dogAgeRemainderMonthsText = it.filter { ch -> ch.isDigit() }.take(2) },
+                            label = { Text("Age months") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                     OutlinedTextField(
                         value = dogBreedMix,
                         onValueChange = { dogBreedMix = it.take(64) },
                         label = { Text("Dog breed / mix") },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
-                        value = dogSexNeuter,
-                        onValueChange = { dogSexNeuter = it.take(64) },
-                        label = { Text("Dog sex + neuter status") },
-                        modifier = Modifier.fillMaxWidth(),
+                    DogGenderSwitch(
+                        label = "Dog gender",
+                        gender = dogGender,
+                        onGenderChange = { dogGender = it },
                     )
                     OutlinedTextField(
-                        value = dogWeightClass,
-                        onValueChange = { dogWeightClass = it.take(48) },
-                        label = { Text("Dog weight class") },
+                        value = dogWeightKg,
+                        onValueChange = { dogWeightKg = it.filter { ch -> ch.isDigit() || ch == '.' }.take(4) },
+                        label = { Text("Weight (kg, example 12.5)") },
+                        placeholder = { Text("12.5") },
+                        singleLine = true,
+                        supportingText = { Text("Format: 2 digits, decimal, 1 digit") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text("Dog photos", style = MaterialTheme.typography.labelMedium)
@@ -1474,25 +2031,74 @@ fun ProfileScreen(
                             }
                         }
                     }
-                    Text("Companion dog (optional)", style = MaterialTheme.typography.labelMedium)
-                    OutlinedTextField(
-                        value = secondaryDogName,
-                        onValueChange = { secondaryDogName = it.take(48) },
-                        label = { Text("Second dog name") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = secondaryDogAgeMonthsText,
-                        onValueChange = { secondaryDogAgeMonthsText = it.filter { ch -> ch.isDigit() }.take(4) },
-                        label = { Text("Second dog age (months)") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = secondaryDogPhotoUrl,
-                        onValueChange = { secondaryDogPhotoUrl = it.take(320) },
-                        label = { Text("Second dog photo URL") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    if (!showSecondDog) {
+                        Button(
+                            onClick = {
+                                showSecondDog = true
+                                if (secondaryDogGender.isBlank()) {
+                                    secondaryDogGender = "male"
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Add second dog")
+                        }
+                    } else {
+                        Text("Second dog", style = MaterialTheme.typography.labelMedium)
+                        OutlinedTextField(
+                            value = secondaryDogName,
+                            onValueChange = { secondaryDogName = it.take(48) },
+                            label = { Text("Second dog name") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            OutlinedTextField(
+                                value = secondaryDogAgeYearsText,
+                                onValueChange = { secondaryDogAgeYearsText = it.filter { ch -> ch.isDigit() }.take(2) },
+                                label = { Text("Age years") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                            OutlinedTextField(
+                                value = secondaryDogAgeRemainderMonthsText,
+                                onValueChange = {
+                                    secondaryDogAgeRemainderMonthsText = it.filter { ch -> ch.isDigit() }.take(2)
+                                },
+                                label = { Text("Age months") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        DogGenderSwitch(
+                            label = "Second dog gender",
+                            gender = secondaryDogGender,
+                            onGenderChange = { secondaryDogGender = it },
+                        )
+                        OutlinedTextField(
+                            value = secondaryDogWeightKg,
+                            onValueChange = { secondaryDogWeightKg = it.filter { ch -> ch.isDigit() || ch == '.' }.take(4) },
+                            label = { Text("Second dog weight (kg, 12.5)") },
+                            placeholder = { Text("12.5") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        TextButton(
+                            onClick = {
+                                showSecondDog = false
+                                secondaryDogName = ""
+                                secondaryDogAgeYearsText = ""
+                                secondaryDogAgeRemainderMonthsText = ""
+                                secondaryDogGender = ""
+                                secondaryDogWeightKg = ""
+                            },
+                            modifier = Modifier.wrapContentWidth(),
+                        ) {
+                            Text("Remove second dog")
+                        }
+                    }
                     OutlinedTextField(
                         value = suburb,
                         onValueChange = { suburb = it.take(48) },
@@ -1589,6 +2195,17 @@ fun ProfileScreen(
                         )
                     }
                     OutlinedTextField(
+                        value = "",
+                        onValueChange = {},
+                        enabled = false,
+                        label = { Text("Microchip number upload") },
+                        placeholder = { Text("Example: 985141000123456") },
+                        supportingText = {
+                            Text("Greyed out for closed testing. Will be enabled for public testing.")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
                         value = leashReliability,
                         onValueChange = { leashReliability = it.take(80) },
                         label = { Text("Leash reliability") },
@@ -1607,16 +2224,6 @@ fun ProfileScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text("Field visibility", style = MaterialTheme.typography.labelMedium)
-                    VisibilitySelector(
-                        label = "Email visibility",
-                        selected = emailVisibility,
-                        onSelect = { emailVisibility = it },
-                    )
-                    VisibilitySelector(
-                        label = "Phone visibility",
-                        selected = phoneVisibility,
-                        onSelect = { phoneVisibility = it },
-                    )
                     VisibilitySelector(
                         label = "Suburb visibility",
                         selected = suburbVisibility,
@@ -1637,37 +2244,30 @@ fun ProfileScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (!isEmailValid) {
-                        Text(
-                            "Email format looks invalid.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                    if (!isPhoneValid) {
-                        Text(
-                            "Phone format looks invalid.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
                     if (!isDogAgeValid) {
                         Text(
-                            "Dog age must be numeric.",
+                            "Dog age must be numeric. Months must be 0-11.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
                     if (!isSecondaryDogAgeValid) {
                         Text(
-                            "Second dog age must be numeric.",
+                            "Second dog age must be numeric. Months must be 0-11.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
-                    if (!isSecondaryPhotoValid) {
+                    if (!isDogWeightValid) {
                         Text(
-                            "Second dog photo URL must start with http://, https://, file://, or content://",
+                            "Dog weight must match the format 12.5",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (!isSecondaryDogWeightValid) {
+                        Text(
+                            "Second dog weight must match the format 12.5",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -1702,12 +2302,13 @@ fun ProfileScreen(
                                 dogName = normalizedDogName,
                                 dogAgeMonths = normalizedDogAgeMonths,
                                 dogBreedMix = normalizedDogBreedMix,
-                                dogSexNeuter = normalizedDogSexNeuter,
-                                dogWeightClass = normalizedDogWeightClass,
+                                dogGender = normalizedDogGender,
+                                dogWeightKg = normalizedDogWeightKg,
                                 dogPhotoUrls = validDogPhotoUrls,
                                 secondaryDogName = normalizedSecondaryDogName,
                                 secondaryDogAgeMonths = normalizedSecondaryDogAgeMonths,
-                                secondaryDogPhotoUrl = normalizedSecondaryDogPhotoUrl,
+                                secondaryDogGender = normalizedSecondaryDogGender,
+                                secondaryDogWeightKg = normalizedSecondaryDogWeightKg,
                                 bio = normalizedBio,
                                 suburb = normalizedSuburb,
                                 favoriteSuburbs = normalizedFavoriteSuburbs,
@@ -1746,62 +2347,72 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun AdaptiveSplitCards(
-    surfaceOnly: Boolean = false,
-    first: @Composable (Modifier) -> Unit,
-    second: @Composable (Modifier) -> Unit,
+private fun DogGenderSwitch(
+    label: String,
+    gender: String,
+    onGenderChange: (String) -> Unit,
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val splitCards = maxWidth >= 640.dp
-        if (splitCards) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                val firstModifier = Modifier.weight(1f)
-                val secondModifier = Modifier.weight(1f)
-                first(firstModifier)
-                second(secondModifier)
-            }
-        } else {
-            val spacing = if (surfaceOnly) 8.dp else 10.dp
-            Column(verticalArrangement = Arrangement.spacedBy(spacing), modifier = Modifier.fillMaxWidth()) {
-                first(Modifier.fillMaxWidth())
-                second(Modifier.fillMaxWidth())
-            }
+    val normalized = normalizeDogGender(gender)
+    val isFemale = normalized == "female"
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Male",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (!isFemale) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Switch(
+                checked = isFemale,
+                onCheckedChange = { checked ->
+                    onGenderChange(if (checked) "female" else "male")
+                },
+            )
+            Text(
+                "Female",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isFemale) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
 @Composable
-private fun HomeSummaryCard(
-    title: String,
-    primary: String,
-    secondary: String?,
-    onClick: () -> Unit,
+private fun IdentityPhotoThumb(
+    photoUrl: String?,
+    fallbackLabel: String,
+    width: androidx.compose.ui.unit.Dp = 56.dp,
+    height: androidx.compose.ui.unit.Dp = 56.dp,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        modifier = modifier,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+    val cleaned = photoUrl?.trim().orEmpty()
+    if (cleaned.isNotBlank()) {
+        Card(
+            shape = RoundedCornerShape(percent = 50),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = modifier.size(width = width, height = height),
         ) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(
-                primary,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            AsyncImage(
+                model = cleaned,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
             )
-            secondary?.let { secondaryText ->
+        }
+    } else {
+        Card(
+            shape = RoundedCornerShape(percent = 50),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1F22)),
+            modifier = modifier.size(width = width, height = height),
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    secondaryText,
+                    fallbackLabel.take(1).ifBlank { "B" }.uppercase(),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    color = Color.White,
                 )
             }
         }
@@ -1814,8 +2425,10 @@ private fun HomeTileCard(
     subtitle: String,
     preview: String? = null,
     badgeText: String? = null,
-    icon: @Composable () -> Unit,
+    icon: (@Composable () -> Unit)? = null,
+    topTrailing: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
+    contentPadding: PaddingValues = PaddingValues(10.dp),
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -1826,22 +2439,32 @@ private fun HomeTileCard(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(10.dp),
+                .padding(contentPadding),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                icon()
-                if (!badgeText.isNullOrBlank()) {
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                        Text(
-                            badgeText,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+            val showHeaderRow = icon != null || topTrailing != null || !badgeText.isNullOrBlank()
+            if (showHeaderRow) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (icon != null) {
+                        icon()
+                    } else {
+                        Spacer(modifier = Modifier.size(24.dp))
+                    }
+                    if (topTrailing != null) {
+                        topTrailing()
+                    }
+                    if (!badgeText.isNullOrBlank()) {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                            Text(
+                                badgeText,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
                     }
                 }
             }
@@ -1916,35 +2539,24 @@ private fun HomeActionRow(
     }
 }
 
-@Composable
-private fun PlanSnapshotCard(
-    title: String,
-    primary: String,
-    secondary: String,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = modifier,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.labelMedium)
-            Text(primary, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                secondary,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+private enum class PlansSheetSection(val key: String) {
+    ALL("all"),
+    COMMUNITY("community"),
+    LISTINGS("listings"),
+    ;
+
+    companion object {
+        fun fromKey(raw: String): PlansSheetSection {
+            return entries.firstOrNull { option -> option.key == raw } ?: ALL
         }
     }
 }
+
+private data class ActivationQaSummary(
+    val subtitle: String,
+    val preview: String,
+    val failedCount: Int,
+)
 
 private data class AppointmentPopupState(
     val bookingId: String?,
@@ -2048,6 +2660,53 @@ private fun String.toLocalDateString(): String {
     } else {
         this
     }
+}
+
+private fun formatIsoDateTimeLabel(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val trimmed = raw.trim()
+    return if (trimmed.length >= 16 && trimmed[10] == 'T') {
+        trimmed.substring(0, 16).replace('T', ' ')
+    } else {
+        trimmed.take(16)
+    }
+}
+
+private fun parseAudPriceToCents(raw: String): Int? {
+    val cleaned = raw.trim().removePrefix("$")
+    val amount = cleaned.toDoubleOrNull() ?: return null
+    if (amount <= 0.0) return null
+    return (amount * 100.0).roundToInt()
+}
+
+private fun isIsoDateInput(raw: String): Boolean {
+    return Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(raw.trim())
+}
+
+private fun isTimeSlotInput(raw: String): Boolean {
+    val match = Regex("^(\\d{2}):(\\d{2})$").matchEntire(raw.trim()) ?: return false
+    val hour = match.groupValues[1].toIntOrNull() ?: return false
+    val minute = match.groupValues[2].toIntOrNull() ?: return false
+    return hour in 0..23 && minute in 0..59
+}
+
+private fun buildIsoDateTime(date: String, time: String): String? {
+    if (!isIsoDateInput(date) || !isTimeSlotInput(time)) return null
+    return "${date.trim()}T${time.trim()}:00"
+}
+
+private fun firstIsoDateFromText(raw: String): String? {
+    return Regex("\\b\\d{4}-\\d{2}-\\d{2}\\b")
+        .find(raw)
+        ?.value
+}
+
+private fun firstTimeSlotFromText(raw: String): String? {
+    val match = Regex("\\b\\d{2}:\\d{2}\\b")
+        .find(raw)
+        ?.value
+        ?: return null
+    return if (isTimeSlotInput(match)) match else null
 }
 
 @Composable
@@ -2192,33 +2851,83 @@ private fun completionRatio(vararg checks: Boolean): Float {
     return checks.count { passed -> passed }.toFloat() / checks.size.toFloat()
 }
 
+private fun buildCommunityPlansSubtitle(upcomingCount: Int): String {
+    return if (upcomingCount > 0) {
+        "$upcomingCount plans upcoming"
+    } else {
+        "No plans upcoming"
+    }
+}
+
+private fun buildListingsPlansSubtitle(
+    totalActiveBookings: Int,
+    pendingProviderQuoteRequests: Int,
+): String {
+    return when {
+        pendingProviderQuoteRequests > 0 ->
+            "$totalActiveBookings active bookings • $pendingProviderQuoteRequests quotes waiting"
+        totalActiveBookings > 0 -> "$totalActiveBookings active bookings"
+        else -> "No active bookings"
+    }
+}
+
+private fun buildActivationQaSummary(
+    activationFunnelMetrics: CommunityActivationFunnel?,
+): ActivationQaSummary {
+    val activationEventCount = activationFunnelMetrics?.activationEventCount ?: 0
+    val activationSucceededCount = activationFunnelMetrics?.byStatus?.get("succeeded") ?: 0
+    val activationFailedCount = activationFunnelMetrics?.byStatus?.get("failed") ?: 0
+    val activationTopStage = activationFunnelMetrics
+        ?.byStage
+        ?.maxByOrNull { entry -> entry.value }
+        ?.key
+        ?.toReadableLabel()
+        ?: "No stage data"
+
+    return if (activationEventCount > 0) {
+        ActivationQaSummary(
+            subtitle = "$activationEventCount activation events",
+            preview = "Success $activationSucceededCount • Fail $activationFailedCount • Top: $activationTopStage",
+            failedCount = activationFailedCount,
+        )
+    } else {
+        ActivationQaSummary(
+            subtitle = "No activation events yet",
+            preview = "Open to view latest QR/auth onboarding telemetry.",
+            failedCount = 0,
+        )
+    }
+}
+
+private fun buildDogSummary(profileInfo: ProfileInfo): String {
+    return buildList {
+        add(profileInfo.dogBreedMix.takeIf { it.isNotBlank() } ?: "Breed not set")
+        profileInfo.dogAgeMonths.takeIf { it > 0 }?.let { months -> add("${months}m old") }
+        add(profileInfo.playEnergyLevel.ifBlank { "Energy not set" })
+    }.joinToString(" • ")
+}
+
+private fun buildHumanSubtitle(
+    profileInfo: ProfileInfo,
+    fallbackRoleLabel: String,
+): String {
+    return listOf(
+        profileInfo.humanRoleLabel.takeIf { it.isNotBlank() },
+        profileInfo.humanPronouns.takeIf { it.isNotBlank() },
+    ).joinToString(" • ").ifBlank { fallbackRoleLabel }
+}
+
 private const val HOME_SETTINGS_PREFS = "home_settings"
 private const val HOME_THEME_MODE_KEY = "theme_mode"
 private const val HOME_THEME_MODE_LIGHT = "light"
 private const val HOME_THEME_MODE_DARK = "dark"
+private const val PLAY_CLOSED_TESTING_URL = "https://play.google.com/apps/testing/com.barkwise.app"
+private const val LEGACY_INSTALL_URL = "https://api.barkwiseai.com/web/"
 private val VISIBILITY_OPTIONS = listOf("public", "group", "friends", "private")
 
 private fun normalizeVisibilityValue(raw: String): String {
     val normalized = raw.trim().lowercase()
     return normalized.takeIf { value -> value in VISIBILITY_OPTIONS } ?: "private"
-}
-
-private fun profilePlayStyleText(
-    bio: String,
-    dogName: String,
-): String {
-    val normalizedBio = bio.lowercase()
-    if ("social" in normalizedBio || "group" in normalizedBio) {
-        return "Social and group-friendly"
-    }
-    if ("calm" in normalizedBio || "chill" in normalizedBio) {
-        return "Calm, slower-paced outings"
-    }
-    return if (dogName.isBlank()) {
-        "Add a short line about how your dog likes to play."
-    } else {
-        "$dogName enjoys local walks and friendly meetups."
-    }
 }
 
 private fun parseCommaOrNewlineValues(raw: String): List<String> {
@@ -2270,6 +2979,25 @@ private fun isLikelyEmail(value: String): Boolean {
 
 private fun isLikelyPhoneNumber(value: String): Boolean {
     return Regex("^\\+?[0-9()\\-\\s]{6,20}$").matches(value)
+}
+
+private fun splitAgeToYearsMonths(totalMonths: Int): Pair<String, String> {
+    if (totalMonths <= 0) return "" to ""
+    val years = totalMonths / 12
+    val months = totalMonths % 12
+    return years.toString() to months.toString()
+}
+
+private fun isDogWeightKgFormat(value: String): Boolean {
+    return Regex("^\\d{2}\\.\\d$").matches(value.trim())
+}
+
+private fun normalizeDogGender(raw: String): String {
+    return when (raw.trim().lowercase()) {
+        "female", "f", "girl" -> "female"
+        "male", "m", "boy" -> "male"
+        else -> ""
+    }
 }
 
 @Composable

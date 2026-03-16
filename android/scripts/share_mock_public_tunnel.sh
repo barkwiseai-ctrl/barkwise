@@ -6,7 +6,7 @@ ANDROID_DIR="$ROOT_DIR/android"
 SHARE_DIR="$ANDROID_DIR/share/mock"
 PORT="${PORT:-8787}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
-APK_NAME="${APK_NAME:-barkwise-dev-mock.apk}"
+APK_NAME="${APK_NAME:-barkwise-test-mock.apk}"
 TUNNEL="${TUNNEL:-auto}" # auto|localhostrun|cloudflared|ngrok
 RETRY_SECONDS="${RETRY_SECONDS:-2}"
 MAX_RETRIES="${MAX_RETRIES:-60}"
@@ -275,7 +275,7 @@ BarkWise mock install is live.
    ${LANDING_URL}
 2) Tap Download APK and install.
 3) If blocked, allow unknown app installs for your browser/files app.
-4) Launch "BarkWise Dev".
+4) Launch "BarkWise Test".
 
 Direct APK:
 ${APK_URL}

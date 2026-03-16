@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ANDROID_DIR="$ROOT_DIR/android"
 SHARE_DIR="$ANDROID_DIR/share/mock"
-APK_SOURCE="$ANDROID_DIR/app/build/outputs/apk/dev/debug/app-dev-debug.apk"
-APK_NAME="${APK_NAME:-barkwise-dev-mock.apk}"
+APK_SOURCE="$ANDROID_DIR/app/build/outputs/apk/staging/debug/app-staging-debug.apk"
+APK_NAME="${APK_NAME:-barkwise-test-mock.apk}"
 PORT="${PORT:-8787}"
 START_SERVER="${START_SERVER:-1}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -88,16 +88,20 @@ QR_URL="$QR_URL_PRIMARY"
 QR_PNG_PATH="$SHARE_DIR/qr.png"
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
-  echo "Building dev debug APK (mock data enabled)..."
+  echo "Building BarkWise Test APK (mock data enabled)..."
   (
     cd "$ANDROID_DIR"
-    ./gradlew :app:assembleDevDebug
+    BARKWISE_TEST_USE_MOCK_DATA=true \
+      BARKWISE_TEST_ALLOW_DEMO_LOGIN=true \
+      BARKWISE_TEST_REQUIRE_INVITE_OTP_AUTH=false \
+      ./gradlew :app:assembleStagingDebug
   )
 fi
 
 if [[ ! -f "$APK_SOURCE" ]]; then
   echo "Missing APK at $APK_SOURCE"
-  echo "Run with SKIP_BUILD=0 or build manually with ./gradlew :app:assembleDevDebug"
+  echo "Run with SKIP_BUILD=0 or build manually with:"
+  echo "  BARKWISE_TEST_USE_MOCK_DATA=true BARKWISE_TEST_ALLOW_DEMO_LOGIN=true BARKWISE_TEST_REQUIRE_INVITE_OTP_AUTH=false ./gradlew :app:assembleStagingDebug"
   exit 1
 fi
 
@@ -170,13 +174,13 @@ cat > "$SHARE_DIR/index.html" <<EOF
   <body>
     <div class="wrap">
       <div class="card">
-        <h1>BarkWise Mock Preview (Android)</h1>
+        <h1>BarkWise Test Mock Preview (Android)</h1>
         <p>This build is fully mock-backed with seeded data and interactive flows.</p>
         <a class="btn" href="./${APK_NAME}">Download APK</a>
         <ol>
           <li>Download and open the APK.</li>
           <li>Allow install from browser/files when prompted.</li>
-          <li>Launch <code>BarkWise Dev</code> and explore Services, Community, BarkAI, Messages, and Profile.</li>
+          <li>Launch <code>BarkWise Test</code> and explore Services, Community, BarkAI, Messages, and Profile.</li>
         </ol>
         <p><strong>APK SHA-256:</strong> <code>${APK_SHA256:-unavailable}</code></p>
         <p>If install is blocked, Android path is usually Settings -> Security -> Install unknown apps.</p>

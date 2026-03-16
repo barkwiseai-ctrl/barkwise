@@ -2,7 +2,9 @@
 
 Executive summary: [EXECUTIVE_SUMMARY.md](/Users/yingxu/public-repos/pet-social-app/EXECUTIVE_SUMMARY.md)
 
-Last updated: 2026-02-18
+Last updated: 2026-02-27
+
+MVP + Google Play plan: [MVP_PLAY_BETA_LAUNCH_PLAN.md](/Users/yingxu/public-repos/pet-social-app/MVP_PLAY_BETA_LAUNCH_PLAN.md)
 
 ## MVP Scope Freeze (Current)
 
@@ -32,12 +34,15 @@ Out of scope until MVP ship:
 - AI assistant flow completed with persistent chat memory, intent routing, tool-calling, emergency safety guardrails, profile suggestion card acceptance, and provider onboarding state management.
 - Streaming chat support added via `POST /chat/stream` (SSE `delta` events followed by a final structured response).
 - Community features completed with official plus user-created groups, nearby suburb discovery, join/apply membership flow, and lost/found post drafting.
+- Community thread interactions now include API-backed comments and replies (`GET/POST /community/posts/{post_id}/comments`).
 - Retrieval-grounded responses added: BarkAI now combines trusted dog-care references with local app entities (providers, groups, posts, events) to ground answers.
 - Offline mode added on Android home data loads with cached fallback and explicit retry sync controls.
 - Search/sort upgrades added for services (`q` + `sort_by`) and community posts (`sort_by`) APIs.
+- Services now include recommendation API support with dog-park/group membership suburb inference (`GET /services/recommendations`) plus inferred-suburb quote requests when suburb is omitted.
 - Auth/session hardening added with bearer token endpoints (`/auth/login`, `/auth/me`) and optional strict enforcement via `AUTH_REQUIRED=true`.
 - Notification infrastructure added with user notification feed and read-state API (`/notifications`).
 - Deploy-ready basics added: backend Dockerfile, root docker-compose, backend CI workflow, and API smoke tests.
+- BarkWiseAI policy guardrails expanded for contentious topics (crating de-escalation goal, corporal punishment block, country-aware ute/truck tray safety policy, and firm anti-long-term outdoor restraint policy).
 
 Security runbook:
 - `/Users/yingxu/public-repos/pet-social-app/backend/SECURITY_OPERATIONS.md`
@@ -195,25 +200,75 @@ export FIREBASE_CREDENTIALS_PATH=/absolute/path/to/firebase-service-account.json
 
 ## Android Environments
 
-- `dev`: `BarkWise Dev` app, package suffix `.dev`, uses in-app mock API data (`USE_MOCK_DATA=true`).
-- `staging`: `BarkWise (test)` app, package suffix `.staging`, uses real backend URL.
+Owner app lane:
+- `staging`: `BarkWise Test` app, package suffix `.staging`, supports switchable test capabilities.
 - `prod`: `BarkWise` app, no package suffix, uses real production backend URL.
 
-Configure backend URLs in `android/local.properties` (or matching env vars):
+Provider app lane (secondary OS shell, same backend truth):
+- `providerStaging`: `BarkWise Provider Test`, package suffix `.provider.staging`.
+- `providerProd`: `BarkWise Provider`, package suffix `.provider`.
+
+Configure backend URLs and optional test toggles in `android/local.properties` (or matching env vars):
 
 ```properties
-BARKWISE_DEV_API_BASE_URL=http://10.0.2.2:8000/
 BARKWISE_STAGING_API_BASE_URL=https://staging-api.barkwise.app/
 BARKWISE_PROD_API_BASE_URL=https://api.barkwise.app/
+BARKWISE_PROVIDER_STAGING_API_BASE_URL=https://staging-api.barkwise.app/
+BARKWISE_PROVIDER_PROD_API_BASE_URL=https://api.barkwise.app/
+BARKWISE_TEST_USE_MOCK_DATA=false
+BARKWISE_TEST_ALLOW_DEMO_LOGIN=false
+BARKWISE_TEST_REQUIRE_INVITE_OTP_AUTH=true
+BARKWISE_TEST_ONBOARD_FAKE_SIGN_IN=false
+BARKWISE_PROVIDER_TEST_USE_MOCK_DATA=false
+BARKWISE_PROVIDER_TEST_ONBOARD_FAKE_SIGN_IN=false
+```
+
+Recommended test presets:
+
+```properties
+# Real backend + OTP guardrails
+BARKWISE_TEST_USE_MOCK_DATA=false
+BARKWISE_TEST_ALLOW_DEMO_LOGIN=false
+BARKWISE_TEST_REQUIRE_INVITE_OTP_AUTH=true
+
+# Mock-backed demo mode inside BarkWise Test
+BARKWISE_TEST_USE_MOCK_DATA=true
+BARKWISE_TEST_ALLOW_DEMO_LOGIN=true
+BARKWISE_TEST_REQUIRE_INVITE_OTP_AUTH=false
 ```
 
 Build examples:
 
 ```bash
 cd /Users/yingxu/public-repos/pet-social-app/android
-./gradlew :app:installDevDebug
 ./gradlew :app:installStagingDebug
 ./gradlew :app:installProdRelease
+./gradlew :app:installProviderStagingDebug
+./gradlew :app:installProviderProdDebug
+```
+
+Install Provider OS on phone:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app
+./android/scripts/install_provider_phone.sh
+```
+
+Provider OS bootstrap notes:
+- [docs/PROVIDER_OS_BOOTSTRAP.md](/Users/yingxu/public-repos/pet-social-app/docs/PROVIDER_OS_BOOTSTRAP.md)
+
+Install staging build on phone against local backend (starts routing watchdog, installs, launches):
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app
+./android/scripts/install_staging_local_phone.sh
+```
+
+Install staging build on phone against Railway:
+
+```bash
+cd /Users/yingxu/public-repos/pet-social-app
+./android/scripts/install_staging_railway_phone.sh
 ```
 
 Keep Android staging app routed to local backend (auto-heal `adb reverse`):
@@ -252,7 +307,7 @@ cd /Users/yingxu/public-repos/pet-social-app
 ./android/scripts/share_mock_qr.sh
 ```
 
-- Builds and packages `BarkWise Dev` (`USE_MOCK_DATA=true`) with seeded interactive data.
+- Builds and packages `BarkWise Test` with mock data and demo login enabled.
 - Hosts a local install page and APK at `http://<your-lan-ip>:8787`.
 - Prints a QR URL and also saves a local QR PNG at `/Users/yingxu/public-repos/pet-social-app/android/share/mock/qr.png` when `curl` is available.
 - If your machine cannot bind `0.0.0.0` in restricted environments, set `BIND_HOST=127.0.0.1` explicitly.
@@ -289,6 +344,12 @@ SKIP_BUILD=1 ./android/scripts/publish_staging_railway_installer.sh
 - Release metadata:
   - `/Users/yingxu/public-repos/pet-social-app/backend/app/web/install/apk/latest.json`
   - `/Users/yingxu/public-repos/pet-social-app/backend/app/web/install/apk/releases.json`
+- Privacy policy page (for Play Console):
+  - `https://<your-service>.up.railway.app/web/privacy/`
+  - Source: `/Users/yingxu/public-repos/pet-social-app/backend/app/web/privacy/index.html`
+- Account deletion page (for Play Console data deletion URL):
+  - `https://<your-service>.up.railway.app/web/privacy/delete-account/`
+  - Source: `/Users/yingxu/public-repos/pet-social-app/backend/app/web/privacy/delete-account/index.html`
 
 Typical release flow:
 
@@ -309,19 +370,6 @@ RUN_ANDROID_COMPILE=0 ./android/scripts/release_preflight.sh
 ```
 
 ## iOS Beta Scaffold
-
-A SwiftUI iOS beta scaffold is available at:
-
-- `/Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta`
-
-Quick start:
-
-```bash
-cd /Users/yingxu/public-repos/pet-social-app/ios/BarkWiseBeta
-brew install xcodegen
-xcodegen generate
-open BarkWiseBeta.xcodeproj
-```
 
 ## Backend Live Deployment (Android Beta)
 

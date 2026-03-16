@@ -4,7 +4,9 @@ __pycache__/
 *.pyc
 
 # Android
+.gradle-local/
 android/.gradle/
+android/.gradle-local/
 android/.kotlin/
 android/local.properties
 android/**/build/
@@ -12,8 +14,13 @@ android/share/
 
 # macOS
 .DS_Store
+.ios-derived-data/
+.pytest_cache/
 
 # Local runtime data
 backend/data/*.sqlite3
 backend/data/*.sqlite3-shm
 backend/data/*.sqlite3-wal
+
+# Local worktrees and scratch space
+tmp/provider-os-worktree/

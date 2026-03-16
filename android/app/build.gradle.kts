@@ -33,6 +33,19 @@ fun readStringConfig(project: Project, key: String, default: String): String {
     return (fromGradleProperty ?: fromEnv ?: fromLocalProperties ?: default).trim()
 }
 
+fun readIntConfig(project: Project, key: String, default: Int): Int {
+    val raw = readStringConfig(project, key, default.toString())
+    return raw.toIntOrNull() ?: throw GradleException("Invalid $key value: '$raw'. Use an integer.")
+}
+
+fun readBooleanConfig(project: Project, key: String, default: Boolean): Boolean {
+    return when (readStringConfig(project, key, default.toString()).lowercase()) {
+        "1", "true", "yes", "on" -> true
+        "0", "false", "no", "off" -> false
+        else -> throw GradleException("Invalid $key value. Use true/false.")
+    }
+}
+
 fun readApiBaseUrlConfig(project: Project, key: String, default: String): String {
     val raw = readStringConfig(project, key, default).trim().trim('"')
     val normalized = if (raw.endsWith("/")) raw else "$raw/"
@@ -62,19 +75,30 @@ fun readInstallPageUrlConfig(project: Project): String {
         if (!installUrl.isNullOrBlank()) return installUrl
     }
 
-    return "https://api.barkwise.app/web/"
+    return "https://play.google.com/apps/testing/com.barkwise.app"
 }
+
+val releaseStoreFilePath = readStringConfig(project, "BARKWISE_RELEASE_STORE_FILE", "")
+val releaseStorePassword = readStringConfig(project, "BARKWISE_RELEASE_STORE_PASSWORD", "")
+val releaseKeyAlias = readStringConfig(project, "BARKWISE_RELEASE_KEY_ALIAS", "")
+val releaseKeyPassword = readStringConfig(project, "BARKWISE_RELEASE_KEY_PASSWORD", "")
+val hasReleaseSigningConfig = listOf(
+    releaseStoreFilePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { it.isNotBlank() }
 
 android {
     namespace = "com.petsocial.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.petsocial.app"
+        applicationId = "com.barkwise.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = readIntConfig(project, "BARKWISE_VERSION_CODE", 1)
+        versionName = readStringConfig(project, "BARKWISE_VERSION_NAME", "0.1.0")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -87,15 +111,36 @@ android {
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         val escapedMapsApiKey = mapsApiKey.replace("\"", "\\\"")
         buildConfigField("String", "MAPS_API_KEY", "\"$escapedMapsApiKey\"")
-        buildConfigField("String", "PRODUCTION_API_BASE_URL", "\"https://api.barkwise.app/\"")
+        buildConfigField("String", "PRODUCTION_API_BASE_URL", "\"https://api.barkwiseai.com/\"")
+        buildConfigField("Boolean", "ONBOARD_FAKE_SIGN_IN", "false")
+        buildConfigField("Boolean", "ONBOARD_SCRIPT_ENABLED", "false")
+        buildConfigField("String", "ONBOARD_GROUP_TITLE", "\"\"")
+        buildConfigField("String", "ONBOARD_EVENT_TITLE", "\"\"")
         val installPageUrl = readInstallPageUrlConfig(project)
         val escapedInstallPageUrl = installPageUrl.replace("\"", "\\\"")
         buildConfigField("String", "INSTALL_PAGE_URL", "\"$escapedInstallPageUrl\"")
+        buildConfigField("String", "APP_SURFACE", "\"owner\"")
+        manifestPlaceholders["usesCleartextTraffic"] = "true"
+        manifestPlaceholders["appDeepLinkScheme"] = "barkwise"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigningConfig) {
+            create("release") {
+                storeFile = file(releaseStoreFilePath)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigningConfig) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -105,36 +150,103 @@ android {
 
     flavorDimensions += "environment"
     productFlavors {
-        create("dev") {
-            dimension = "environment"
-            applicationIdSuffix = ".dev"
-            versionNameSuffix = "-dev"
-            resValue("string", "app_name", "BarkWise Dev")
-            val devApiUrl = readApiBaseUrlConfig(project, "BARKWISE_DEV_API_BASE_URL", "http://10.0.2.2:8000/")
-            val escapedUrl = devApiUrl.replace("\"", "\\\"")
-            buildConfigField("String", "API_BASE_URL", "\"$escapedUrl\"")
-            buildConfigField("Boolean", "USE_MOCK_DATA", "true")
-            buildConfigField("String", "ENVIRONMENT", "\"dev\"")
-        }
         create("staging") {
             dimension = "environment"
             applicationIdSuffix = ".staging"
             versionNameSuffix = "-staging"
-            resValue("string", "app_name", "BarkWise (test)")
+            resValue("string", "app_name", "BarkWise Test")
             val stagingApiUrl = readApiBaseUrlConfig(project, "BARKWISE_STAGING_API_BASE_URL", "http://10.0.2.2:8000/")
+            val stagingUseMockData = readBooleanConfig(project, "BARKWISE_TEST_USE_MOCK_DATA", false)
+            val stagingAllowDemoLogin = readBooleanConfig(
+                project,
+                "BARKWISE_TEST_ALLOW_DEMO_LOGIN",
+                stagingUseMockData,
+            )
+            val stagingRequireOtpAuth = readBooleanConfig(
+                project,
+                "BARKWISE_TEST_REQUIRE_INVITE_OTP_AUTH",
+                !stagingAllowDemoLogin,
+            )
+            val stagingFakeSignIn = readBooleanConfig(
+                project,
+                "BARKWISE_TEST_ONBOARD_FAKE_SIGN_IN",
+                stagingUseMockData || stagingAllowDemoLogin,
+            )
             val escapedUrl = stagingApiUrl.replace("\"", "\\\"")
             buildConfigField("String", "API_BASE_URL", "\"$escapedUrl\"")
-            buildConfigField("Boolean", "USE_MOCK_DATA", "false")
+            buildConfigField("Boolean", "USE_MOCK_DATA", stagingUseMockData.toString())
             buildConfigField("String", "ENVIRONMENT", "\"staging\"")
+            buildConfigField("Boolean", "ALLOW_DEMO_LOGIN", stagingAllowDemoLogin.toString())
+            buildConfigField("Boolean", "REQUIRE_INVITE_OTP_AUTH", stagingRequireOtpAuth.toString())
+            buildConfigField("Boolean", "ONBOARD_FAKE_SIGN_IN", stagingFakeSignIn.toString())
+            buildConfigField("Boolean", "ONBOARD_SCRIPT_ENABLED", "false")
+            buildConfigField("String", "ONBOARD_GROUP_TITLE", "\"Beach onboarding\"")
+            buildConfigField("String", "ONBOARD_EVENT_TITLE", "\"Beach Onboarding Party\"")
+            buildConfigField("String", "APP_SURFACE", "\"owner\"")
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            manifestPlaceholders["appDeepLinkScheme"] = "barkwise"
         }
         create("prod") {
             dimension = "environment"
             resValue("string", "app_name", "BarkWise")
-            val prodApiUrl = readApiBaseUrlConfig(project, "BARKWISE_PROD_API_BASE_URL", "https://api.barkwise.app/")
+            val prodApiUrl = readApiBaseUrlConfig(project, "BARKWISE_PROD_API_BASE_URL", "https://api.barkwiseai.com/")
             val escapedUrl = prodApiUrl.replace("\"", "\\\"")
             buildConfigField("String", "API_BASE_URL", "\"$escapedUrl\"")
             buildConfigField("Boolean", "USE_MOCK_DATA", "false")
             buildConfigField("String", "ENVIRONMENT", "\"prod\"")
+            buildConfigField("Boolean", "ALLOW_DEMO_LOGIN", "false")
+            buildConfigField("Boolean", "REQUIRE_INVITE_OTP_AUTH", "true")
+            buildConfigField("String", "APP_SURFACE", "\"owner\"")
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
+            manifestPlaceholders["appDeepLinkScheme"] = "barkwise"
+        }
+        create("providerStaging") {
+            dimension = "environment"
+            applicationIdSuffix = ".provider.staging"
+            versionNameSuffix = "-provider-staging"
+            resValue("string", "app_name", "BarkWise Provider Test")
+            val providerStagingDefault = readStringConfig(project, "BARKWISE_STAGING_API_BASE_URL", "http://10.0.2.2:8000/")
+            val providerStagingUseMockData = readBooleanConfig(project, "BARKWISE_PROVIDER_TEST_USE_MOCK_DATA", false)
+            val providerStagingFakeSignIn = readBooleanConfig(
+                project,
+                "BARKWISE_PROVIDER_TEST_ONBOARD_FAKE_SIGN_IN",
+                providerStagingUseMockData,
+            )
+            val providerStagingApiUrl = readApiBaseUrlConfig(
+                project,
+                "BARKWISE_PROVIDER_STAGING_API_BASE_URL",
+                providerStagingDefault,
+            )
+            val escapedUrl = providerStagingApiUrl.replace("\"", "\\\"")
+            buildConfigField("String", "API_BASE_URL", "\"$escapedUrl\"")
+            buildConfigField("Boolean", "USE_MOCK_DATA", providerStagingUseMockData.toString())
+            buildConfigField("String", "ENVIRONMENT", "\"staging\"")
+            buildConfigField("String", "APP_SURFACE", "\"provider\"")
+            buildConfigField("Boolean", "ALLOW_DEMO_LOGIN", "false")
+            buildConfigField("Boolean", "REQUIRE_INVITE_OTP_AUTH", "true")
+            buildConfigField("Boolean", "ONBOARD_FAKE_SIGN_IN", providerStagingFakeSignIn.toString())
+            buildConfigField("Boolean", "ONBOARD_SCRIPT_ENABLED", "false")
+            buildConfigField("String", "ONBOARD_GROUP_TITLE", "\"Beach onboarding\"")
+            buildConfigField("String", "ONBOARD_EVENT_TITLE", "\"Beach Onboarding Party\"")
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            manifestPlaceholders["appDeepLinkScheme"] = "barkwise-provider"
+        }
+        create("providerProd") {
+            dimension = "environment"
+            applicationIdSuffix = ".provider"
+            versionNameSuffix = "-provider"
+            resValue("string", "app_name", "BarkWise Provider")
+            val providerProdDefault = readStringConfig(project, "BARKWISE_PROD_API_BASE_URL", "https://api.barkwiseai.com/")
+            val providerProdApiUrl = readApiBaseUrlConfig(project, "BARKWISE_PROVIDER_PROD_API_BASE_URL", providerProdDefault)
+            val escapedUrl = providerProdApiUrl.replace("\"", "\\\"")
+            buildConfigField("String", "API_BASE_URL", "\"$escapedUrl\"")
+            buildConfigField("Boolean", "USE_MOCK_DATA", "false")
+            buildConfigField("String", "ENVIRONMENT", "\"prod\"")
+            buildConfigField("Boolean", "ALLOW_DEMO_LOGIN", "false")
+            buildConfigField("Boolean", "REQUIRE_INVITE_OTP_AUTH", "true")
+            buildConfigField("String", "APP_SURFACE", "\"provider\"")
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
+            manifestPlaceholders["appDeepLinkScheme"] = "barkwise-provider"
         }
     }
 
@@ -187,9 +299,16 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation(platform("com.google.firebase:firebase-bom:33.11.0"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.google.firebase:firebase-crashlytics-ktx")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.google.android.gms:play-services-maps:19.0.0")
     implementation("com.google.maps.android:maps-compose:6.4.0")
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("com.google.zxing:core:3.5.3")
     implementation("io.coil-kt:coil-compose:2.7.0")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
@@ -198,16 +317,37 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
-// Keep CLI/dev automation stable: map legacy debug task names to the dev flavor.
+// Keep CLI automation stable: map legacy debug task names to the Test flavor.
 tasks.register("installDebug") {
-    dependsOn("installDevDebug")
+    dependsOn("installStagingDebug")
 }
 
 tasks.register("compileDebugKotlin") {
-    dependsOn("compileDevDebugKotlin")
+    dependsOn("compileStagingDebugKotlin")
+}
+
+val prodReleaseTasksRequiringSigning = setOf(
+    "bundleProdRelease",
+    "assembleProdRelease",
+    "packageProdReleaseBundle",
+    "signProdReleaseBundle",
+)
+tasks.configureEach {
+    if (name in prodReleaseTasksRequiringSigning) {
+        doFirst {
+            if (!hasReleaseSigningConfig) {
+                throw GradleException(
+                    "Missing release signing config. Provide BARKWISE_RELEASE_STORE_FILE, " +
+                        "BARKWISE_RELEASE_STORE_PASSWORD, BARKWISE_RELEASE_KEY_ALIAS, and " +
+                        "BARKWISE_RELEASE_KEY_PASSWORD."
+                )
+            }
+        }
+    }
 }
 
 // Enable google-services plugin only when local Firebase config is present.
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
+    apply(plugin = "com.google.firebase.crashlytics")
 }
