@@ -9,10 +9,11 @@ from typing import Any, Dict, Generator, List, Optional, Pattern
 from uuid import uuid4
 
 from app.data import group_memberships, groups
-from app.models import ChatResponse, ChatTurn, CtaChip, Group, GroupJoinRecord, PetProfileSuggestion
+from app.models import BookingRequest, ChatCitation, ChatResponse, ChatTurn, CtaChip, Group, GroupJoinRecord, PetProfileSuggestion
+from app.services.faq_dog_qa import FaqMatchResult, match_faq_answer
 from app.services.memory_store import MemoryStore
 from app.services.rag_retriever import RagRetriever
-from app.services.service_store import service_store
+from app.services.service_store import ServiceStoreError, service_store
 
 try:
     from openai import OpenAI
@@ -32,6 +33,7 @@ ALLOWED_INTENTS = {
     "add_service_listing",
     "add_pet_owner_profile",
     "manage_community_group",
+    "manage_booking",
     "general_pet_question",
     "general_assistant_query",
     "out_of_scope_non_pet",
@@ -47,6 +49,7 @@ APP_ROUTE_INTENTS = {
     "add_service_listing",
     "add_pet_owner_profile",
     "manage_community_group",
+    "manage_booking",
 }
 
 TOOL_DEFS = [
@@ -99,7 +102,56 @@ TOOL_DEFS = [
         "description": "Add another pet owner to your own community group.",
         "args": {"group_name": "group name", "member_user_id": "member id", "requester_user_id": "owner user id"},
     },
+    {
+        "name": "search_availability",
+        "description": "Get availability slots for a provider on a date.",
+        "args": {"provider_id": "required provider id", "date": "required YYYY-MM-DD"},
+    },
+    {
+        "name": "create_booking_request",
+        "description": "Create a booking request after explicit confirmation.",
+        "args": {
+            "provider_id": "required provider id",
+            "date": "required YYYY-MM-DD",
+            "time_slot": "required HH:MM",
+            "pet_name": "optional pet name",
+            "note": "optional note",
+            "confirm": "required true to create booking",
+        },
+    },
+    {
+        "name": "get_booking_status",
+        "description": "Get booking status for a booking id or list latest user bookings.",
+        "args": {"booking_id": "optional booking id", "role": "optional all|owner|provider"},
+    },
 ]
+
+TOOL_ARG_ALLOWLIST: Dict[str, set[str]] = {
+    "search_services": {"category", "suburb", "limit"},
+    "search_groups": {"suburb", "limit"},
+    "draft_lost_found": {"suburb"},
+    "add_service_listing": {"service_name", "category", "suburb", "description", "price_from", "contact_name"},
+    "add_pet_owner_profile": {"pet_name", "pet_type", "breed", "age_years", "weight_kg", "suburb"},
+    "create_user_group": {"name", "suburb", "user_id"},
+    "add_group_member": {"group_name", "member_user_id", "requester_user_id"},
+    "search_availability": {"provider_id", "date"},
+    "create_booking_request": {"provider_id", "date", "time_slot", "pet_name", "note", "confirm"},
+    "get_booking_status": {"booking_id", "role"},
+}
+MAX_TOOL_CALLS_PER_TURN = 3
+MAX_TOOL_ARG_TEXT_LENGTH = 160
+PROMPT_EXFILTRATION_PATTERNS = (
+    r"\b(ignore|bypass|override)\b.{0,48}\b(previous|prior|system|developer|safety)\b.{0,24}\b(instruction|prompt|rule)s?\b",
+    r"\b(system|developer)\s+prompt\b",
+    r"\breveal\b.{0,48}\b(prompt|instruction|api\s*key|token|secret|environment|env(?:ironment)?\s*var)\b",
+    r"\b(print|dump|show|list)\b.{0,48}\b(api\s*key|token|secret|environment|env(?:ironment)?\s*var)\b",
+    r"\b(exfiltrate|leak)\b.{0,24}\b(prompt|key|token|secret)\b",
+)
+DEFAULT_ANSWER_INTENT_BUDGETS: Dict[str, int] = {
+    "general_pet_question": 80,
+    "general_assistant_query": 60,
+    "out_of_scope_non_pet": 40,
+}
 
 PROVIDER_FIELDS = [
     "service_name",
@@ -316,6 +368,85 @@ DEFAULT_RAG_TRIGGER_TERMS = (
     "tumor",
 )
 
+DEFAULT_HIGH_RISK_TERMS = (
+    "parvo",
+    "parvovirus",
+    "poison",
+    "poisoning",
+    "toxin",
+    "toxicity",
+    "xylitol",
+    "chocolate",
+    "grapes",
+    "raisins",
+    "antifreeze",
+    "heatstroke",
+    "overheat",
+    "panting",
+    "collapsed",
+    "collapse",
+    "seizure",
+    "seizures",
+    "bloat",
+    "bloated abdomen",
+    "not breathing",
+    "can't breathe",
+    "cannot breathe",
+    "bloody vomit",
+    "vomiting blood",
+    "bloody diarrhea",
+    "bloody diarrhoea",
+    "unconscious",
+    "snake bite",
+    "tick paralysis",
+    "rabies",
+    "leptospirosis",
+)
+
+WELFARE_POLICY_RESOURCE_PATH = Path(__file__).resolve().parents[1] / "resources" / "welfare_policy_countries.json"
+DEFAULT_WELFARE_POLICY_CONFIG: Dict[str, Any] = {
+    "default_country_code": "AU",
+    "country_names": {
+        "AU": "Australia",
+        "NZ": "New Zealand",
+        "US": "United States",
+        "GB": "United Kingdom",
+        "DEFAULT": "your region",
+    },
+    "ute_tray_policy_by_country": {
+        "AU": "au_working_dog_transition",
+        "NZ": "au_working_dog_transition",
+        "DEFAULT": "global_strict_transition",
+    },
+    "suburb_country_hints": {
+        "nsw": "AU",
+        "new south wales": "AU",
+        "vic": "AU",
+        "victoria": "AU",
+        "qld": "AU",
+        "queensland": "AU",
+        "wa": "AU",
+        "western australia": "AU",
+        "sa": "AU",
+        "south australia": "AU",
+        "tas": "AU",
+        "tasmania": "AU",
+        "act": "AU",
+        "nt": "AU",
+        "northern territory": "AU",
+        "sydney": "AU",
+        "melbourne": "AU",
+        "brisbane": "AU",
+        "perth": "AU",
+        "adelaide": "AU",
+        "canberra": "AU",
+        "hobart": "AU",
+        "darwin": "AU",
+        "sunshine west": "AU",
+        "surry hills": "AU",
+    },
+}
+
 
 # Fallback manifests used when no SKILL.md files are found on disk.
 DEFAULT_SKILL_MANIFESTS = [
@@ -366,7 +497,56 @@ class AIOrchestrator:
         self.rag_retriever = RagRetriever()
         self.rag_trigger_terms = self._load_rag_trigger_terms()
         self.rag_trigger_patterns = self._compile_rag_trigger_patterns(self.rag_trigger_terms)
+        self.high_risk_terms = self._load_high_risk_terms()
+        self.high_risk_patterns = self._compile_rag_trigger_patterns(self.high_risk_terms)
+        self.high_risk_safe_mode_enabled = self._read_bool_env("HIGH_RISK_SAFE_MODE_ENABLED", True)
+        self.welfare_country_policy = self._load_welfare_country_policy()
+        self.default_country_code = str(self.welfare_country_policy.get("default_country_code", "AU") or "AU").upper()
+        self.country_names = {
+            str(key).upper(): str(value)
+            for key, value in dict(self.welfare_country_policy.get("country_names", {})).items()
+            if str(key).strip() and str(value).strip()
+        }
+        self.ute_tray_policy_by_country = {
+            str(key).upper(): str(value).strip().lower()
+            for key, value in dict(self.welfare_country_policy.get("ute_tray_policy_by_country", {})).items()
+            if str(key).strip() and str(value).strip()
+        }
+        self.suburb_country_hints = {
+            str(key).strip().lower(): str(value).strip().upper()
+            for key, value in dict(self.welfare_country_policy.get("suburb_country_hints", {})).items()
+            if str(key).strip() and str(value).strip()
+        }
         self.rag_route_telemetry_enabled = self._read_bool_env("RAG_ROUTE_TELEMETRY_ENABLED", True)
+        self.model_usage_telemetry_enabled = self._read_bool_env("MODEL_USAGE_TELEMETRY_ENABLED", True)
+        self.model_budget_window_seconds = self._read_int_env("MODEL_BUDGET_WINDOW_SECONDS", default=3600, min_value=60, max_value=86400)
+        self.model_planner_budget_per_window = self._read_int_env(
+            "MODEL_PLANNER_BUDGET_PER_WINDOW",
+            default=240,
+            min_value=0,
+            max_value=5000,
+        )
+        self.model_answer_budget_per_window = self._read_int_env(
+            "MODEL_ANSWER_BUDGET_PER_WINDOW",
+            default=160,
+            min_value=0,
+            max_value=5000,
+        )
+        self.max_planner_output_tokens = self._read_int_env(
+            "MODEL_MAX_PLANNER_OUTPUT_TOKENS",
+            default=220,
+            min_value=32,
+            max_value=4000,
+        )
+        self.max_answer_output_tokens = self._read_int_env(
+            "MODEL_MAX_ANSWER_OUTPUT_TOKENS",
+            default=420,
+            min_value=64,
+            max_value=4000,
+        )
+        self.answer_intent_budgets = self._load_answer_intent_budgets()
+        self._model_budget_events: Dict[str, List[float]] = {}
+        self.prompt_exfiltration_patterns = [re.compile(pattern, re.I) for pattern in PROMPT_EXFILTRATION_PATTERNS]
 
     @staticmethod
     def _normalize_env_value(value: str) -> str:
@@ -409,6 +589,18 @@ class AIOrchestrator:
             self._persist_session_state(user_id, session)
             return self._attach_history_and_cards(safety_response, session)
 
+        crate_policy_response = self._crate_policy_guard(message, session)
+        if crate_policy_response:
+            self._append_turn(session, user_id, "assistant", crate_policy_response.answer)
+            self._persist_session_state(user_id, session)
+            return self._attach_history_and_cards(crate_policy_response, session)
+
+        welfare_policy_response = self._welfare_policy_guard(message, session, suburb=suburb)
+        if welfare_policy_response:
+            self._append_turn(session, user_id, "assistant", welfare_policy_response.answer)
+            self._persist_session_state(user_id, session)
+            return self._attach_history_and_cards(welfare_policy_response, session)
+
         if self._should_start_provider_onboarding(message, session):
             listing_result = self._tool_add_service_listing(
                 session=session,
@@ -442,7 +634,14 @@ class AIOrchestrator:
             self._persist_session_state(user_id, session)
             return self._attach_history_and_cards(response, session)
 
-        plan = self._build_plan(message=message, suburb=suburb, session=session)
+        plan = self._normalize_plan(
+            self._build_plan(message=message, suburb=suburb, session=session, user_id=user_id),
+            message=message,
+            suburb=suburb,
+        )
+        if self._is_high_risk_query(message):
+            plan["intent"] = "general_pet_question"
+            plan["tools"] = []
         route = self._route_query(message=message, plan=plan)
         tool_results = self._execute_tools(
             tool_calls=plan.get("tools", []),
@@ -459,6 +658,8 @@ class AIOrchestrator:
                 profile_memory=session.profile_memory,
                 intent=intent,
                 tool_results=tool_results,
+                high_risk_mode=bool(route.get("high_risk_mode", False)),
+                high_risk_terms=route.get("matched_high_risk_terms", []),
             )
         else:
             rag_context = {
@@ -467,6 +668,11 @@ class AIOrchestrator:
                 "suburb": suburb,
                 "profile_summary": {},
                 "documents": [],
+                "high_risk_mode": bool(route.get("high_risk_mode", False)),
+                "high_risk_terms": route.get("matched_high_risk_terms", []),
+                "source_policy": "trusted_knowledge_only_no_reddit"
+                if route.get("high_risk_mode", False)
+                else "default",
             }
         self._emit_route_telemetry(
             user_id=user_id,
@@ -476,15 +682,48 @@ class AIOrchestrator:
             rag_context=rag_context,
         )
 
-        answer = self._compose_answer(
-            message=message,
-            suburb=suburb,
-            plan=plan,
-            route=route,
-            tool_results=tool_results,
-            session=session,
-            rag_context=rag_context,
+        app_workflow_answer = (
+            self._compose_app_workflow_answer(intent=intent, tool_results=tool_results)
+            if route.get("lane") == "APP"
+            else None
         )
+        faq_match = None if app_workflow_answer else self._select_faq_match(message=message, route=route, intent=intent)
+        if app_workflow_answer:
+            answer = app_workflow_answer
+            answer_source = "app"
+            answer_badges = ["App Workflow"]
+            citations = []
+        elif faq_match:
+            answer = faq_match.answer
+            answer_source = "faq"
+            answer_badges = self._dedupe_badges(faq_match.badges + ["Barkwise QA"])
+            citations = faq_match.citations[:3]
+        else:
+            answer = self._compose_answer(
+                message=message,
+                suburb=suburb,
+                plan=plan,
+                route=route,
+                tool_results=tool_results,
+                session=session,
+                rag_context=rag_context,
+                user_id=user_id,
+            )
+            rag_citations = self._build_rag_citations(rag_context=rag_context, limit=3)
+            if route.get("lane") == "RAG" and rag_citations:
+                answer_source = "rag"
+                answer_badges = ["RAG Grounded", "Barkwise AI"]
+                citations = rag_citations
+            elif self.client:
+                answer_source = "gpt_fallback"
+                answer_badges = ["GPT Fallback", "Barkwise AI"]
+                citations = []
+            else:
+                answer_source = "fallback"
+                answer_badges = ["Heuristic Fallback"]
+                citations = []
+        if route.get("high_risk_mode"):
+            answer_badges = self._dedupe_badges(answer_badges + ["High Risk Safe Mode", "Trusted Sources Only"])
         profile = plan.get("suggested_profile")
         if not isinstance(profile, dict):
             profile = self._fallback_profile(message)
@@ -494,6 +733,9 @@ class AIOrchestrator:
             answer=answer,
             suggested_profile=profile,
             cta_chips=ctas,
+            answer_source=answer_source,
+            answer_badges=answer_badges,
+            citations=citations,
         )
 
         self._append_turn(session, user_id, "assistant", response.answer)
@@ -515,12 +757,135 @@ class AIOrchestrator:
             terms.append(term)
         return terms
 
+    def _load_high_risk_terms(self) -> List[str]:
+        raw_terms = os.getenv("HIGH_RISK_TRIGGER_TERMS", "")
+        if not raw_terms.strip():
+            parsed = [term.strip().lower() for term in DEFAULT_HIGH_RISK_TERMS]
+        else:
+            parsed = [term.strip().lower() for term in raw_terms.split(",")]
+        terms: List[str] = []
+        seen: set[str] = set()
+        for term in parsed:
+            if not term or term in seen:
+                continue
+            seen.add(term)
+            terms.append(term)
+        return terms
+
+    def _load_welfare_country_policy(self) -> Dict[str, Any]:
+        config_path = self._normalize_env_value(os.getenv("WELFARE_POLICY_COUNTRY_PATH", ""))
+        path = Path(config_path) if config_path else WELFARE_POLICY_RESOURCE_PATH
+        merged = json.loads(json.dumps(DEFAULT_WELFARE_POLICY_CONFIG))
+
+        if not path.exists():
+            logger.info("Welfare country policy config not found at %s; using defaults.", path)
+            return merged
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Failed to parse welfare country policy config %s: %s", path, exc)
+            return merged
+
+        if not isinstance(payload, dict):
+            logger.warning("Welfare country policy config must be a JSON object: %s", path)
+            return merged
+
+        for key in {"country_names", "ute_tray_policy_by_country", "suburb_country_hints"}:
+            value = payload.get(key)
+            if isinstance(value, dict):
+                merged[key].update(value)
+
+        default_country = payload.get("default_country_code")
+        if isinstance(default_country, str) and default_country.strip():
+            merged["default_country_code"] = default_country.strip().upper()
+
+        return merged
+
     @staticmethod
     def _read_bool_env(name: str, default: bool) -> bool:
         raw = os.getenv(name)
         if raw is None:
             return default
         return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+    @staticmethod
+    def _read_int_env(name: str, default: int, min_value: int, max_value: int) -> int:
+        raw = os.getenv(name)
+        if raw is None:
+            parsed = default
+        else:
+            try:
+                parsed = int(str(raw).strip())
+            except (TypeError, ValueError):
+                parsed = default
+        if parsed < min_value:
+            parsed = min_value
+        if parsed > max_value:
+            parsed = max_value
+        return parsed
+
+    def _load_answer_intent_budgets(self) -> Dict[str, int]:
+        budgets = dict(DEFAULT_ANSWER_INTENT_BUDGETS)
+        raw = os.getenv("MODEL_ANSWER_INTENT_BUDGETS", "")
+        if not raw.strip():
+            return budgets
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            logger.warning("MODEL_ANSWER_INTENT_BUDGETS is not valid JSON; using defaults.")
+            return budgets
+        if not isinstance(payload, dict):
+            logger.warning("MODEL_ANSWER_INTENT_BUDGETS must be a JSON object; using defaults.")
+            return budgets
+        for key, value in payload.items():
+            intent = self._safe_text(key, default="", max_len=64)
+            if intent not in ALLOWED_INTENTS:
+                continue
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+            budgets[intent] = max(0, min(parsed, 5000))
+        return budgets
+
+    def _answer_budget_for_intent(self, intent: str) -> int:
+        return int(self.answer_intent_budgets.get(intent, self.model_answer_budget_per_window))
+
+    def _allow_model_call(self, *, stage: str, user_id: str, intent: str) -> bool:
+        budget = self.model_planner_budget_per_window if stage == "planner" else self._answer_budget_for_intent(intent)
+        if budget <= 0:
+            self._emit_model_usage_telemetry(stage=stage, user_id=user_id, intent=intent, allowed=False, budget=budget)
+            return False
+
+        key = f"{stage}:{user_id}:{intent}"
+        now = time.monotonic()
+        window_start = now - float(self.model_budget_window_seconds)
+        prior = self._model_budget_events.get(key, [])
+        active = [ts for ts in prior if ts >= window_start]
+        if len(active) >= budget:
+            self._model_budget_events[key] = active
+            self._emit_model_usage_telemetry(stage=stage, user_id=user_id, intent=intent, allowed=False, budget=budget)
+            return False
+
+        active.append(now)
+        self._model_budget_events[key] = active
+        self._emit_model_usage_telemetry(stage=stage, user_id=user_id, intent=intent, allowed=True, budget=budget)
+        return True
+
+    def _emit_model_usage_telemetry(self, *, stage: str, user_id: str, intent: str, allowed: bool, budget: int) -> None:
+        if not self.model_usage_telemetry_enabled:
+            return
+        payload = {
+            "stage": stage,
+            "user_id": user_id,
+            "intent": intent,
+            "allowed": bool(allowed),
+            "budget": int(budget),
+            "window_seconds": int(self.model_budget_window_seconds),
+            "max_output_tokens": int(self.max_planner_output_tokens if stage == "planner" else self.max_answer_output_tokens),
+        }
+        logger.info("model_usage_telemetry=%s", json.dumps(payload, sort_keys=True))
 
     def _compile_rag_trigger_patterns(self, terms: List[str]) -> List[Pattern[str]]:
         patterns: List[Pattern[str]] = []
@@ -539,21 +904,68 @@ class AIOrchestrator:
                 matches.append(term)
         return matches
 
+    def _matched_high_risk_terms(self, message: str) -> List[str]:
+        if not self.high_risk_safe_mode_enabled:
+            return []
+        normalized = message.lower()
+        matches: List[str] = []
+        for term, pattern in zip(self.high_risk_terms, self.high_risk_patterns):
+            if pattern.search(normalized):
+                matches.append(term)
+        return matches
+
     def _should_apply_rag(self, message: str) -> bool:
         return bool(self._matched_rag_trigger_terms(message))
+
+    def _is_high_risk_query(self, message: str) -> bool:
+        return bool(self._matched_high_risk_terms(message))
 
     def _route_query(self, message: str, plan: Dict[str, Any]) -> Dict[str, Any]:
         intent = str(plan.get("intent", "general_pet_question"))
         tools = plan.get("tools", [])
         has_tools = isinstance(tools, list) and len(tools) > 0
         matched_terms = self._matched_rag_trigger_terms(message)
+        matched_high_risk_terms = self._matched_high_risk_terms(message)
+        high_risk_mode = bool(matched_high_risk_terms)
+        merged_terms = list(dict.fromkeys([*matched_high_risk_terms, *matched_terms]))
         rag_triggered = bool(matched_terms)
+        grounded_pet_knowledge = self._is_groundable_pet_knowledge_query(message, intent)
 
         if intent in APP_ROUTE_INTENTS or has_tools:
-            return {"lane": "APP", "reason": "intent_or_tools", "rag_triggered": rag_triggered, "matched_terms": []}
-        if rag_triggered:
-            return {"lane": "RAG", "reason": "trigger_terms", "rag_triggered": True, "matched_terms": matched_terms}
-        return {"lane": "GENERAL", "reason": "default_general_pet", "rag_triggered": False, "matched_terms": []}
+            if high_risk_mode:
+                return {
+                    "lane": "RAG",
+                    "reason": "high_risk_safe_mode",
+                    "rag_triggered": True,
+                    "matched_terms": merged_terms,
+                    "high_risk_mode": True,
+                    "matched_high_risk_terms": matched_high_risk_terms,
+                }
+            return {
+                "lane": "APP",
+                "reason": "intent_or_tools",
+                "rag_triggered": rag_triggered,
+                "matched_terms": [],
+                "high_risk_mode": False,
+                "matched_high_risk_terms": [],
+            }
+        if rag_triggered or high_risk_mode or grounded_pet_knowledge:
+            return {
+                "lane": "RAG",
+                "reason": "high_risk_safe_mode" if high_risk_mode else ("trigger_terms" if rag_triggered else "grounded_pet_knowledge"),
+                "rag_triggered": True,
+                "matched_terms": merged_terms if high_risk_mode else (matched_terms if rag_triggered else []),
+                "high_risk_mode": high_risk_mode,
+                "matched_high_risk_terms": matched_high_risk_terms,
+            }
+        return {
+            "lane": "GENERAL",
+            "reason": "default_general_pet",
+            "rag_triggered": False,
+            "matched_terms": [],
+            "high_risk_mode": False,
+            "matched_high_risk_terms": [],
+        }
 
     def _emit_route_telemetry(
         self,
@@ -577,9 +989,75 @@ class AIOrchestrator:
             "route_reason": route.get("reason", "unknown"),
             "rag_triggered": bool(route.get("rag_triggered", False)),
             "matched_terms": route.get("matched_terms", []),
+            "high_risk_mode": bool(route.get("high_risk_mode", False)),
+            "matched_high_risk_terms": route.get("matched_high_risk_terms", []),
             "rag_doc_count": rag_doc_count,
         }
         logger.info("route_telemetry=%s", json.dumps(payload, sort_keys=True))
+
+    def _select_faq_match(
+        self,
+        *,
+        message: str,
+        route: Dict[str, Any],
+        intent: str,
+    ) -> Optional[FaqMatchResult]:
+        if route.get("lane") == "APP":
+            return None
+        if intent in {"out_of_scope_non_pet", "general_assistant_query"}:
+            return None
+        return match_faq_answer(message)
+
+    def _build_rag_citations(self, *, rag_context: Dict[str, Any], limit: int = 3) -> List[ChatCitation]:
+        docs = rag_context.get("documents", [])
+        if not isinstance(docs, list):
+            return []
+        source_labels = {
+            "knowledge_base": "Knowledge Base",
+            "provider": "Provider",
+            "group": "Community Group",
+            "community_post": "Community Post",
+            "community_event": "Community Event",
+        }
+        citations: List[ChatCitation] = []
+        seen: set[str] = set()
+        for raw in docs:
+            if not isinstance(raw, dict):
+                continue
+            title = str(raw.get("title", "")).strip()
+            if not title:
+                continue
+            authority = str(raw.get("authority", "")).strip()
+            source = authority or source_labels.get(str(raw.get("source", "")).strip(), "Barkwise")
+            key = f"{title.lower()}::{source.lower()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            citations.append(
+                ChatCitation(
+                    title=title,
+                    source=source,
+                    url=str(raw.get("url", "")).strip() or None,
+                    snippet=str(raw.get("snippet", "")).strip() or None,
+                )
+            )
+            if len(citations) >= limit:
+                break
+        return citations
+
+    def _dedupe_badges(self, badges: List[str]) -> List[str]:
+        seen: set[str] = set()
+        compact: List[str] = []
+        for badge in badges:
+            normalized = badge.strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            compact.append(normalized)
+        return compact
 
     def accept_profile(self, user_id: str) -> ChatResponse:
         session = self._get_session(user_id)
@@ -721,9 +1199,22 @@ class AIOrchestrator:
 
     def _attach_history_and_cards(self, response: ChatResponse, session: SessionMemory) -> ChatResponse:
         history = session.history[-20:]
-        response.conversation = [
+        conversation = [
             ChatTurn(role=turn["role"], content=turn["content"]) for turn in history
         ]
+        last_assistant_index = next(
+            (index for index in range(len(conversation) - 1, -1, -1) if conversation[index].role == "assistant"),
+            None,
+        )
+        if last_assistant_index is not None:
+            conversation[last_assistant_index] = conversation[last_assistant_index].model_copy(
+                update={
+                    "answer_source": response.answer_source,
+                    "answer_badges": response.answer_badges,
+                    "citations": response.citations,
+                }
+            )
+        response.conversation = conversation
 
         suggestion = self._build_profile_suggestion(session)
         latest_user_message = next(
@@ -747,12 +1238,28 @@ class AIOrchestrator:
 
     def _safety_guard(self, message: str, session: SessionMemory) -> Optional[ChatResponse]:
         text = message.lower()
+        if self._is_prompt_exfiltration_attempt(message):
+            return ChatResponse(
+                answer=(
+                    "I cannot help with extracting hidden prompts, secrets, or keys. "
+                    "I can help with pet-care guidance, services, community, and bookings."
+                ),
+                suggested_profile=session.profile_memory,
+                cta_chips=[
+                    CtaChip(label="Open Community", action="open_community"),
+                    CtaChip(label="Open Services", action="open_services"),
+                ],
+                answer_source="security",
+                answer_badges=["Security Guardrail"],
+            )
+        # Keep this guard for immediate life-threatening phrasing only.
+        # Broader risk terms are handled by high-risk safe mode with trusted-source guidance.
         emergency_patterns = [
             r"can'?t\s+breathe",
-            r"seizure",
+            r"seizure\s+(?:won't\s+stop|wont\s+stop|for\s+\d+|lasting)",
+            r"continuous\s+seizure",
             r"collapsed|collapse",
             r"unconscious",
-            r"poison(ed|ing)?",
             r"bloody\s+vomit|vomiting\s+blood",
             r"not\s+breathing",
         ]
@@ -767,7 +1274,325 @@ class AIOrchestrator:
                     CtaChip(label="Open Community", action="open_community"),
                     CtaChip(label="Open Services", action="open_services"),
                 ],
+                answer_source="safety",
+                answer_badges=["Safety Alert"],
             )
+        return None
+
+    def _crate_policy_guard(self, message: str, session: SessionMemory) -> Optional[ChatResponse]:
+        text = message.lower()
+        if not self._is_crate_related_query(text):
+            return None
+
+        long_term_markers = [
+            "all day",
+            "all night",
+            "entire day",
+            "whole day",
+            "while i work",
+            "while at work",
+            "overnight and day",
+            "long term",
+            "long-term",
+            "every day crate",
+        ]
+        has_long_term_marker = any(marker in text for marker in long_term_markers)
+        duration_match = re.search(r"(\d+)\s*(hours|hrs|hr|h)\b", text)
+        if duration_match:
+            hours = int(duration_match.group(1))
+            if hours >= 4:
+                has_long_term_marker = True
+
+        urine_hold_patterns = [
+            r"(hold|stop|prevent).{0,24}(pee|urine|toilet|wee)",
+            r"(not|no).{0,12}(urinate|pee|wee)",
+            r"(train).{0,24}(not).{0,12}(urinate|pee|wee)",
+        ]
+        has_urine_hold_marker = any(re.search(pattern, text) for pattern in urine_hold_patterns)
+        young_puppy_marker = bool(
+            re.search(r"\b(8|9|10|11|12)\s*[- ]?\s*week", text)
+            or re.search(r"\b(2|3)\s*[- ]?\s*month", text)
+            or "young puppy" in text
+        )
+        high_risk_urination_question = has_urine_hold_marker and (young_puppy_marker or "puppy" in text)
+
+        alternatives_failed_markers = [
+            "tried everything",
+            "nothing works",
+            "nothing else works",
+            "safe room failed",
+            "gates failed",
+            "pen failed",
+            "crate is only option",
+        ]
+        alternatives_failed = any(marker in text for marker in alternatives_failed_markers)
+        already_crating_markers = [
+            "we crate",
+            "i crate",
+            "currently crate",
+            "already crate",
+            "already crating",
+            "in the crate now",
+        ]
+        already_crating = any(marker in text for marker in already_crating_markers)
+        short_term_medical_context = bool(
+            re.search(r"\b(post[- ]?op|post surgery|after surgery|vet advised|medical recovery|injury recovery)\b", text)
+        )
+
+        response_lines: List[str] = [
+            "BarkWise uses a least-restrictive, welfare-first policy, so we do not recommend crating as a default solution.",
+            "The explicit target is no routine crating if that is safely achievable for your dog and household.",
+            "Start with lower-restriction options first: safe room setup, baby gates, structured toilet schedule, enrichment before rest periods, and short supervised separation training.",
+        ]
+
+        if high_risk_urination_question:
+            response_lines.append(
+                "I cannot support plans to make a young puppy hold urine in confinement. That can increase stress and health risk (including urinary issues)."
+            )
+            response_lines.append(
+                "Use frequent toilet breaks, water access, and short predictable rest blocks instead, then review with your vet if accidents persist."
+            )
+        if has_long_term_marker:
+            response_lines.append(
+                "I cannot support long-duration or long-term daily crating plans. If confinement is being used this way, move to a transition plan now."
+            )
+
+        if already_crating or alternatives_failed or has_long_term_marker:
+            response_lines.append("Use this de-escalation ladder with a goal of no crating if possible:")
+            response_lines.append("1. Level 3 (temporary only): shortest possible crate blocks for immediate safety, with toilet and water breaks.")
+            response_lines.append("2. Level 2: move one block at a time to a gated room or x-pen with more space and comfort.")
+            response_lines.append("3. Level 1: progress to a dog-proofed room plus short check-ins and calm departure/return routines.")
+            response_lines.append("4. Level 0 (target): no routine crating, with stable home setup and separation training.")
+        elif "crate" in text or "crating" in text:
+            response_lines.append(
+                "If you choose any temporary confinement, keep it brief and keep stepping down toward a no-crating routine as soon as behavior is stable."
+            )
+
+        if short_term_medical_context:
+            response_lines.append(
+                "Temporary confinement can be used only for clear vet-directed medical safety, with minimum duration and a defined step-down plan."
+            )
+        else:
+            response_lines.append(
+                "Crate use should be a last-resort, short-term safety tool only, not a routine behavior-control method."
+            )
+
+        response_lines.append("If there is panic, self-injury risk, or persistent distress, contact your vet or a qualified behavior professional promptly.")
+
+        citations = [
+            ChatCitation(
+                title="What can I do if my dog is anxious when I'm not at home?",
+                source="RSPCA Australia",
+                url="https://kb.rspca.org.au/knowledge-base/what-can-i-do-if-my-dog-is-anxious-when-im-not-at-home/",
+            ),
+            ChatCitation(
+                title="Humane Dog Training Position Statement",
+                source="AVSAB",
+                url="https://avsab.org/wp-content/uploads/2021/08/AVSAB-Humane-Dog-Training-Position-Statement-2021.pdf",
+            ),
+            ChatCitation(
+                title="Canine Life Stage Care",
+                source="AAHA",
+                url="https://www.aaha.org/resources/life-stage-canine/",
+            ),
+        ]
+        return ChatResponse(
+            answer=self._format_answer_paragraphs("\n\n".join(response_lines)),
+            suggested_profile=session.profile_memory,
+            cta_chips=[
+                CtaChip(label="Open Community", action="open_community"),
+                CtaChip(label="Open Services", action="open_services"),
+            ],
+            answer_source="policy",
+            answer_badges=["Welfare First", "Crate Last", "Least Restrictive"],
+            citations=citations,
+        )
+
+    def _is_crate_related_query(self, text: str) -> bool:
+        if "kennel cough" in text:
+            return False
+        patterns = [
+            r"\bcrate\b",
+            r"\bcrating\b",
+            r"\bcrate train(?:ing)?\b",
+            r"\bkennel\b",
+            r"\bcage\b",
+            r"\bcaged\b",
+        ]
+        return any(re.search(pattern, text) for pattern in patterns)
+
+    def _welfare_policy_guard(
+        self,
+        message: str,
+        session: SessionMemory,
+        suburb: Optional[str] = None,
+    ) -> Optional[ChatResponse]:
+        text = message.lower()
+        policy_topic = self._detect_welfare_policy_topic(text)
+        if policy_topic is None:
+            return None
+
+        response_lines: List[str]
+        badges: List[str]
+        citations: List[ChatCitation]
+        if policy_topic == "corporal_punishment":
+            response_lines = [
+                "BarkWise does not support corporal punishment or pain/fear-based training.",
+                "Do not use hitting, smacking, alpha rolls, or punitive tool use to change behavior.",
+                "Use reward-based training, environment management, and structured behavior plans instead.",
+                "If there is growling, bite risk, or escalating fear, involve your vet and a qualified behavior professional.",
+            ]
+            badges = ["Welfare First", "No Corporal Punishment", "Reward-Based"]
+            citations = [
+                ChatCitation(
+                    title="Humane Dog Training Position Statement",
+                    source="AVSAB",
+                    url="https://avsab.org/wp-content/uploads/2021/08/AVSAB-Humane-Dog-Training-Position-Statement-2021.pdf",
+                ),
+                ChatCitation(
+                    title="Welfare Risks of Pronged Collars",
+                    source="RSPCA Australia",
+                    url="https://kb.rspca.org.au/knowledge-base/are-pronged-collars-harmful-to-my-dog/",
+                ),
+            ]
+        elif policy_topic == "ute_tray_transport":
+            country_code = self._resolve_country_code(message=message, session=session, suburb=suburb)
+            country_name = self.country_names.get(country_code, self.country_names.get("DEFAULT", "your region"))
+            policy_mode = self._ute_tray_policy_mode(country_code)
+
+            if policy_mode == "au_working_dog_transition":
+                response_lines = [
+                    f"BarkWise recognizes ute-tray transport is common in {country_name} working-dog settings, but we do not recommend routine open-tray short-lead restraint as a default approach.",
+                    "Safety order should be: inside-cabin restraint first, then secure enclosed transport (for example canopy/crate setup), and only then very short tray transfers if unavoidable.",
+                    "If a short tray transfer is unavoidable: use a well-fitted chest harness (not neck collar), two-point restraint that prevents edge access, non-slip surface, weather protection, and frequent water/check stops.",
+                    "Avoid high heat, high speed, and long duration, and set a transition plan toward enclosed or in-cabin transport as the standard.",
+                    "Check your local welfare and road rules because legal requirements vary by state/territory.",
+                ]
+            else:
+                response_lines = [
+                    "BarkWise does not recommend routine open-tray or truck-bed restraint for dogs.",
+                    "Safety order should be: inside-cabin restraint first, then secure enclosed transport, and only then very short emergency-only tray transfers if unavoidable.",
+                    "If any short transfer is unavoidable: use a chest harness, two-point restraint, non-slip surface, weather protection, and frequent safety checks.",
+                    "Avoid high heat, high speed, and long duration, and move to enclosed or in-cabin transport as the standard.",
+                    "Check your local welfare and transport laws because requirements vary by jurisdiction.",
+                ]
+            badges = ["Welfare First", "Transport Safety", "Least Restrictive"]
+            citations = [
+                ChatCitation(
+                    title="Heat and Pets",
+                    source="Agriculture Victoria",
+                    url="https://agriculture.vic.gov.au/livestock-and-animals/animal-welfare-victoria/dogs/health/heat-and-pets",
+                ),
+                ChatCitation(
+                    title="Prepare Pets and Livestock for Hot Weather",
+                    source="NSW Government",
+                    url="https://www.nsw.gov.au/emergency/prepare/pets-and-livestock",
+                ),
+            ]
+        else:
+            response_lines = [
+                "BarkWise does not support long-term outdoor tethering, chaining, or routine heavy restraint.",
+                "Use least-restrictive options first: secure fencing, supervised time, safe indoor areas, and gradual alone-time training.",
+                "If temporary restraint is required for immediate safety, keep it brief, supervised, and paired with water, shade, and a clear step-down plan.",
+                "For repeated escape, panic, or aggression concerns, involve your vet and a qualified behavior professional.",
+            ]
+            badges = ["Welfare First", "Least Restrictive", "No Long-Term Tethering"]
+            citations = [
+                ChatCitation(
+                    title="What can I do if my dog is anxious when I'm not at home?",
+                    source="RSPCA Australia",
+                    url="https://kb.rspca.org.au/knowledge-base/what-can-i-do-if-my-dog-is-anxious-when-im-not-at-home/",
+                ),
+                ChatCitation(
+                    title="Humane Dog Training Position Statement",
+                    source="AVSAB",
+                    url="https://avsab.org/wp-content/uploads/2021/08/AVSAB-Humane-Dog-Training-Position-Statement-2021.pdf",
+                ),
+            ]
+
+        return ChatResponse(
+            answer=self._format_answer_paragraphs("\n\n".join(response_lines)),
+            suggested_profile=session.profile_memory,
+            cta_chips=[
+                CtaChip(label="Open Community", action="open_community"),
+                CtaChip(label="Open Services", action="open_services"),
+            ],
+            answer_source="policy",
+            answer_badges=badges,
+            citations=citations,
+        )
+
+    def _detect_welfare_policy_topic(self, text: str) -> Optional[str]:
+        corporal_patterns = [
+            r"\bcorporal punishment\b",
+            r"\b(hit|hitting|smack|smacking|spank|beating)\b",
+            r"\balpha roll\b",
+            r"\b(shock|prong|choke|punish|punishment|aversive)\b.{0,24}\b(collar|training|method|correction)\b",
+            r"\bphysical correction\b",
+        ]
+        if any(re.search(pattern, text) for pattern in corporal_patterns):
+            return "corporal_punishment"
+
+        has_transport_terms = bool(
+            re.search(r"\b(ute|utility vehicle|truck bed|pickup bed|pick-up bed|open tray|back tray|car tray)\b", text)
+        )
+        has_dog_reference = bool(re.search(r"\b(dog|dogs|puppy|puppies)\b", text))
+        has_transport_context = bool(re.search(r"\b(transport|ride|riding|travel|carry|carrying)\b", text))
+        if has_transport_terms and (has_dog_reference or has_transport_context):
+            return "ute_tray_transport"
+
+        restraint_patterns = [
+            r"\b(outdoor restrain(?:ing|t)?|restrain(?:ing|t)|restraint)\b",
+            r"\b(tether|tethering|chain|chaining|chained|tie out|tied outside|tie outside)\b",
+            r"\b(keep|leave).{0,24}\b(outside|outdoors)\b.{0,24}\b(tied|chained|restrain(?:ed|ing)?)\b",
+        ]
+        if any(re.search(pattern, text) for pattern in restraint_patterns):
+            return "outdoor_restraining"
+
+        return None
+
+    def _resolve_country_code(self, *, message: str, session: SessionMemory, suburb: Optional[str]) -> str:
+        from_message = self._extract_country_code_from_text(message)
+        if from_message:
+            return from_message
+
+        profile_country = str(session.profile_memory.get("country_code", "")).strip().upper()
+        if profile_country:
+            return profile_country
+
+        suburb_text = (suburb or str(session.profile_memory.get("suburb", ""))).strip()
+        from_suburb = self._infer_country_code_from_suburb(suburb_text)
+        if from_suburb:
+            return from_suburb
+
+        return self.default_country_code or "DEFAULT"
+
+    def _ute_tray_policy_mode(self, country_code: str) -> str:
+        normalized = (country_code or "").strip().upper()
+        if normalized in self.ute_tray_policy_by_country:
+            return self.ute_tray_policy_by_country[normalized]
+        return self.ute_tray_policy_by_country.get("DEFAULT", "global_strict_transition")
+
+    def _extract_country_code_from_text(self, text: str) -> Optional[str]:
+        lowered = text.lower()
+        patterns = [
+            (r"\b(australia|australian|nsw|victoria|queensland|new south wales|western australia)\b", "AU"),
+            (r"\b(new zealand|nz|kiwi)\b", "NZ"),
+            (r"\b(united states|usa|u\.s\.a\.|u\.s\.)\b", "US"),
+            (r"\b(united kingdom|uk|england|scotland|wales)\b", "GB"),
+        ]
+        for pattern, code in patterns:
+            if re.search(pattern, lowered):
+                return code
+        return None
+
+    def _infer_country_code_from_suburb(self, suburb: str) -> Optional[str]:
+        lowered = suburb.strip().lower()
+        if not lowered:
+            return None
+        for hint, country_code in self.suburb_country_hints.items():
+            if hint and hint in lowered:
+                return country_code
         return None
 
     def _should_start_provider_onboarding(self, message: str, session: SessionMemory) -> bool:
@@ -834,25 +1659,38 @@ class AIOrchestrator:
             return self._safe_int(match.group(1) if match else None, default=30, min_value=1, max_value=5000)
         return text
 
-    def _build_plan(self, message: str, suburb: Optional[str], session: SessionMemory) -> Dict[str, Any]:
+    def _build_plan(
+        self,
+        message: str,
+        suburb: Optional[str],
+        session: SessionMemory,
+        user_id: str = "guest",
+    ) -> Dict[str, Any]:
         active_skills = self._select_active_skills(message=message, session=session)
         if self._is_general_assistant_query(message.lower()):
-            return {
-                "intent": "general_assistant_query",
-                "tools": [],
-                "suggested_profile": session.profile_memory or self._fallback_profile(message),
-            }
+            return self._normalize_plan(
+                {
+                    "intent": "general_assistant_query",
+                    "tools": [],
+                    "suggested_profile": session.profile_memory or self._fallback_profile(message),
+                },
+                message=message,
+                suburb=suburb,
+            )
         if not self.client:
-            return self._heuristic_plan(message, suburb)
+            return self._normalize_plan(self._heuristic_plan(message, suburb), message=message, suburb=suburb)
+        if not self._allow_model_call(stage="planner", user_id=user_id, intent="planner"):
+            return self._normalize_plan(self._heuristic_plan(message, suburb), message=message, suburb=suburb)
 
         system_prompt = (
             "You are the planner for a pet app assistant. "
             "Return strict JSON only with fields: intent, tools, suggested_profile. "
             "Allowed intents: find_dog_walker, find_groomer, lost_found, community_discovery, "
             "weight_concern, provider_onboarding, add_service_listing, add_pet_owner_profile, "
-            "manage_community_group, general_pet_question, general_assistant_query, out_of_scope_non_pet. "
+            "manage_community_group, manage_booking, general_pet_question, general_assistant_query, out_of_scope_non_pet. "
             "Allowed tools: search_services, search_groups, draft_lost_found, add_service_listing, "
-            "add_pet_owner_profile, create_user_group, add_group_member. "
+            "add_pet_owner_profile, create_user_group, add_group_member, "
+            "search_availability, create_booking_request, get_booking_status. "
             "If the user query is clearly unrelated to pets, pet services, pet health/safety, bookings, "
             "or local pet community, set intent=out_of_scope_non_pet and tools=[]. "
             "Treat active_skills as SKILL.md-style capabilities and prefer tool plans compatible with those skills."
@@ -877,18 +1715,12 @@ class AIOrchestrator:
                     {"role": "user", "content": json.dumps(user_payload)},
                 ],
                 temperature=0.1,
+                max_output_tokens=self.max_planner_output_tokens,
             )
             content = getattr(response, "output_text", "") or ""
             data = json.loads(content)
-            intent = data.get("intent", "general_pet_question")
-            if intent not in ALLOWED_INTENTS:
-                return self._heuristic_plan(message, suburb)
-            tools = data.get("tools", [])
-            if not isinstance(tools, list):
-                data["tools"] = []
-            profile = data.get("suggested_profile")
-            if not isinstance(profile, dict):
-                data["suggested_profile"] = self._fallback_profile(message)
+            if not isinstance(data, dict):
+                return self._normalize_plan(self._heuristic_plan(message, suburb), message=message, suburb=suburb)
             if (
                 data.get("intent") == "add_pet_owner_profile"
                 and not self._is_profile_capture_request(message.lower())
@@ -898,15 +1730,95 @@ class AIOrchestrator:
                 data["tools"] = []
             if data.get("intent") == "general_pet_question":
                 data["tools"] = []
-            return data
+            return self._normalize_plan(data, message=message, suburb=suburb)
         except Exception:
-            return self._heuristic_plan(message, suburb)
+            return self._normalize_plan(self._heuristic_plan(message, suburb), message=message, suburb=suburb)
+
+    def _normalize_plan(self, plan: Any, message: str, suburb: Optional[str]) -> Dict[str, Any]:
+        if not isinstance(plan, dict):
+            plan = self._heuristic_plan(message, suburb)
+
+        intent = self._safe_text(plan.get("intent"), default="general_pet_question", max_len=64)
+        if intent not in ALLOWED_INTENTS:
+            intent = "general_pet_question"
+
+        tools = self._sanitize_tool_calls(plan.get("tools", []))
+        if intent in {"general_pet_question", "general_assistant_query", "out_of_scope_non_pet"}:
+            tools = []
+
+        profile = plan.get("suggested_profile")
+        if not isinstance(profile, dict):
+            profile = self._fallback_profile(message)
+
+        return {
+            "intent": intent,
+            "tools": tools,
+            "suggested_profile": profile,
+        }
+
+    def _sanitize_tool_calls(self, tool_calls: Any) -> List[Dict[str, Any]]:
+        if not isinstance(tool_calls, list):
+            return []
+
+        sanitized: List[Dict[str, Any]] = []
+        for raw_call in tool_calls:
+            if len(sanitized) >= MAX_TOOL_CALLS_PER_TURN:
+                break
+
+            name = ""
+            args: Dict[str, Any] = {}
+            raw_args: Any = {}
+            if isinstance(raw_call, str):
+                name = self._safe_text(raw_call, default="", max_len=64)
+            elif isinstance(raw_call, dict):
+                name = self._safe_text(raw_call.get("name"), default="", max_len=64)
+                raw_args = raw_call.get("args", {})
+            else:
+                continue
+
+            allowed_args = TOOL_ARG_ALLOWLIST.get(name)
+            if allowed_args is None:
+                continue
+
+            if isinstance(raw_args, dict):
+                for arg_name in allowed_args:
+                    value = raw_args.get(arg_name)
+                    if value in (None, ""):
+                        continue
+                    if isinstance(value, bool):
+                        args[arg_name] = value
+                    elif isinstance(value, (int, float)):
+                        args[arg_name] = value
+                    else:
+                        cleaned = self._safe_text(value, default="", max_len=MAX_TOOL_ARG_TEXT_LENGTH)
+                        if cleaned:
+                            args[arg_name] = cleaned
+
+            sanitized.append({"name": name, "args": args})
+
+        return sanitized
+
+    def _is_prompt_exfiltration_attempt(self, message: str) -> bool:
+        compact = re.sub(r"\s+", " ", message.strip())
+        if not compact:
+            return False
+        return any(pattern.search(compact) for pattern in self.prompt_exfiltration_patterns)
 
     def _heuristic_plan(self, message: str, suburb: Optional[str]) -> Dict[str, Any]:
         text = message.lower()
+        provider_id = self._extract_provider_id_from_text(message)
+        booking_id = self._extract_booking_id_from_text(message)
+        date_hint = self._extract_iso_date_from_text(message)
+        time_hint = self._extract_time_slot_from_text(message)
         if self._is_general_assistant_query(text):
             return {
                 "intent": "general_assistant_query",
+                "tools": [],
+                "suggested_profile": self._fallback_profile(message),
+            }
+        if self._is_high_risk_query(message):
+            return {
+                "intent": "general_pet_question",
                 "tools": [],
                 "suggested_profile": self._fallback_profile(message),
             }
@@ -932,6 +1844,40 @@ class AIOrchestrator:
             return {
                 "intent": "add_pet_owner_profile",
                 "tools": [{"name": "add_pet_owner_profile", "args": {"suburb": suburb}}],
+                "suggested_profile": self._fallback_profile(message),
+            }
+        if booking_id or "booking status" in text or "my bookings" in text or "booking update" in text:
+            args: Dict[str, Any] = {}
+            if booking_id:
+                args["booking_id"] = booking_id
+            return {
+                "intent": "manage_booking",
+                "tools": [{"name": "get_booking_status", "args": args}],
+                "suggested_profile": self._fallback_profile(message),
+            }
+        if provider_id and ("availability" in text or "available slot" in text or "free slot" in text):
+            args = {"provider_id": provider_id}
+            if date_hint:
+                args["date"] = date_hint
+            return {
+                "intent": "manage_booking",
+                "tools": [{"name": "search_availability", "args": args}],
+                "suggested_profile": self._fallback_profile(message),
+            }
+        if provider_id and ("book" in text or "booking" in text or "reserve" in text):
+            args = {"provider_id": provider_id}
+            if date_hint:
+                args["date"] = date_hint
+            if time_hint:
+                args["time_slot"] = time_hint
+            pet_name_hint = self._extract_pet_name_for_booking(message)
+            if pet_name_hint:
+                args["pet_name"] = pet_name_hint
+            if self._is_booking_confirmation_text(text):
+                args["confirm"] = True
+            return {
+                "intent": "manage_booking",
+                "tools": [{"name": "create_booking_request", "args": args}],
                 "suggested_profile": self._fallback_profile(message),
             }
         if self._is_pet_health_question(text):
@@ -1163,6 +2109,103 @@ class AIOrchestrator:
         ]
         return any(token in text for token in health_tokens)
 
+    def _is_groundable_pet_knowledge_query(self, message: str, intent: str) -> bool:
+        normalized = re.sub(r"\s+", " ", message.strip().lower())
+        if not normalized or intent != "general_pet_question":
+            return False
+        if self._known_breed_summary(normalized):
+            return False
+        if self._is_general_assistant_query(normalized):
+            return False
+
+        pet_subject_tokens = {
+            "dog",
+            "dogs",
+            "puppy",
+            "puppies",
+            "cat",
+            "cats",
+            "kitten",
+            "pet",
+            "pets",
+        }
+        knowledge_tokens = {
+            "safe",
+            "safely",
+            "feed",
+            "food",
+            "diet",
+            "nutrition",
+            "treat",
+            "treats",
+            "exercise",
+            "walking",
+            "walk",
+            "grooming",
+            "groom",
+            "bathing",
+            "brush",
+            "brushing",
+            "vaccine",
+            "vaccines",
+            "vaccination",
+            "booster",
+            "prevention",
+            "preventive",
+            "poison",
+            "toxin",
+            "toxic",
+            "itch",
+            "itchy",
+            "skin",
+            "coat",
+            "allergy",
+            "training",
+            "reactive",
+            "anxiety",
+            "crate",
+            "heartworm",
+            "flea",
+            "tick",
+            "worm",
+            "worms",
+            "weight",
+            "obesity",
+            "overweight",
+            "underweight",
+            "vomiting",
+            "vomit",
+            "diarrhea",
+            "diarrhoea",
+            "limping",
+            "limp",
+            "panting",
+            "heat",
+            "heatstroke",
+        }
+        guidance_phrases = (
+            "what should",
+            "how often",
+            "how much",
+            "is it safe",
+            "can my",
+            "can dogs",
+            "can cats",
+            "should i",
+            "should my",
+            "when should",
+            "why is my",
+            "what does",
+            "what is",
+            "tell me about",
+            "help me with",
+        )
+        has_pet_subject = any(token in normalized for token in pet_subject_tokens)
+        has_knowledge_signal = any(token in normalized for token in knowledge_tokens) or any(
+            phrase in normalized for phrase in guidance_phrases
+        )
+        return has_pet_subject and has_knowledge_signal
+
     def _is_general_assistant_query(self, text: str) -> bool:
         normalized = re.sub(r"\s+", " ", text.strip().lower())
         if not normalized:
@@ -1254,7 +2297,9 @@ class AIOrchestrator:
         user_id: str,
     ) -> Dict[str, Any]:
         results: Dict[str, Any] = {}
-        for call in tool_calls:
+        if not isinstance(tool_calls, list):
+            return results
+        for call in tool_calls[:MAX_TOOL_CALLS_PER_TURN]:
             if isinstance(call, str):
                 name = call
                 args: Dict[str, Any] = {}
@@ -1283,6 +2328,34 @@ class AIOrchestrator:
                     results[name] = self._tool_search_groups(
                         suburb=args.get("suburb") or suburb,
                         limit=limit,
+                    )
+                elif name == "search_availability":
+                    provider_id = self._safe_text(
+                        args.get("provider_id") or self._extract_provider_id_from_text(message),
+                        default="",
+                        max_len=64,
+                    )
+                    slot_date = self._safe_text(
+                        args.get("date") or self._extract_iso_date_from_text(message),
+                        default="",
+                        max_len=16,
+                    )
+                    results[name] = self._tool_search_availability(
+                        provider_id=provider_id,
+                        slot_date=slot_date,
+                    )
+                elif name == "create_booking_request":
+                    results[name] = self._tool_create_booking_request(
+                        session=session,
+                        message=message,
+                        user_id=user_id,
+                        args=args,
+                    )
+                elif name == "get_booking_status":
+                    results[name] = self._tool_get_booking_status(
+                        message=message,
+                        user_id=user_id,
+                        args=args,
                     )
                 elif name == "draft_lost_found":
                     results[name] = self._tool_draft_lost_found(message, suburb=args.get("suburb") or suburb)
@@ -1330,6 +2403,121 @@ class AIOrchestrator:
         if suburb:
             matched = [g for g in matched if g.suburb.lower() == suburb.lower()]
         return [g.model_dump() for g in matched[:limit]]
+
+    def _tool_search_availability(self, provider_id: str, slot_date: str) -> Dict[str, Any]:
+        if not provider_id:
+            return {"status": "missing_info", "required": ["provider_id"]}
+        if not slot_date:
+            return {"status": "missing_info", "required": ["date"]}
+        try:
+            slots = service_store.get_available_slots(provider_id=provider_id, slot_date=slot_date)
+            available_slots = [slot.model_dump() for slot in slots if slot.available]
+            return {
+                "status": "ok",
+                "provider_id": provider_id,
+                "date": slot_date,
+                "available_slots": available_slots,
+                "available_count": len(available_slots),
+            }
+        except ServiceStoreError as exc:
+            return {
+                "status": "error",
+                "provider_id": provider_id,
+                "date": slot_date,
+                "message": str(exc),
+            }
+
+    def _tool_create_booking_request(
+        self,
+        session: SessionMemory,
+        message: str,
+        user_id: str,
+        args: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        provider_id = self._safe_text(
+            args.get("provider_id") or self._extract_provider_id_from_text(message),
+            default="",
+            max_len=64,
+        )
+        slot_date = self._safe_text(args.get("date") or self._extract_iso_date_from_text(message), default="", max_len=16)
+        time_slot = self._safe_text(args.get("time_slot") or self._extract_time_slot_from_text(message), default="", max_len=8)
+        pet_name = self._safe_text(
+            args.get("pet_name") or session.profile_memory.get("pet_name") or self._extract_pet_name_for_booking(message),
+            default="",
+            max_len=64,
+        )
+        note = self._safe_text(args.get("note"), default="", max_len=240)
+
+        missing: List[str] = []
+        if not provider_id:
+            missing.append("provider_id")
+        if not slot_date:
+            missing.append("date")
+        if not time_slot:
+            missing.append("time_slot")
+        if not pet_name:
+            missing.append("pet_name")
+        if missing:
+            return {"status": "missing_info", "required": missing}
+
+        confirmed = self._safe_bool(args.get("confirm"), default=False) or self._is_booking_confirmation_text(message.lower())
+        if not confirmed:
+            return {
+                "status": "requires_confirmation",
+                "draft": {
+                    "provider_id": provider_id,
+                    "date": slot_date,
+                    "time_slot": time_slot,
+                    "pet_name": pet_name,
+                    "note": note,
+                },
+            }
+
+        try:
+            booking = service_store.create_booking(
+                BookingRequest(
+                    user_id=user_id,
+                    provider_id=provider_id,
+                    pet_name=pet_name,
+                    date=slot_date,
+                    time_slot=time_slot,
+                    note=note,
+                )
+            )
+            return {"status": "created", "booking": booking.model_dump()}
+        except ServiceStoreError as exc:
+            return {
+                "status": "error",
+                "message": str(exc),
+                "draft": {
+                    "provider_id": provider_id,
+                    "date": slot_date,
+                    "time_slot": time_slot,
+                    "pet_name": pet_name,
+                },
+            }
+
+    def _tool_get_booking_status(self, message: str, user_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        booking_id = self._safe_text(
+            args.get("booking_id") or self._extract_booking_id_from_text(message),
+            default="",
+            max_len=64,
+        )
+        role = self._safe_text(args.get("role"), default="all", max_len=16).lower()
+        if role not in {"all", "owner", "provider"}:
+            role = "all"
+
+        try:
+            bookings = service_store.list_bookings(user_id=user_id, role=role)
+            if booking_id:
+                matched = next((booking for booking in bookings if booking.id == booking_id), None)
+                if not matched:
+                    return {"status": "not_found", "booking_id": booking_id}
+                return {"status": "found", "booking": matched.model_dump()}
+            compact = [booking.model_dump() for booking in bookings[:5]]
+            return {"status": "list", "bookings": compact}
+        except ServiceStoreError as exc:
+            return {"status": "error", "message": str(exc)}
 
     def _tool_draft_lost_found(self, message: str, suburb: Optional[str]) -> Dict[str, str]:
         title = "Found pet alert" if "found" in message.lower() else "Lost pet alert"
@@ -1547,112 +2735,50 @@ class AIOrchestrator:
             return match.group(1).strip()
         return None
 
-    def _compose_answer(
-        self,
-        message: str,
-        suburb: Optional[str],
-        plan: Dict[str, Any],
-        route: Dict[str, Any],
-        tool_results: Dict[str, Any],
-        session: SessionMemory,
-        rag_context: Dict[str, Any],
-    ) -> str:
-        intent = plan.get("intent", "general_pet_question")
-        breed_summary = self._known_breed_summary(message.lower())
-        if breed_summary:
-            return self._format_answer_paragraphs(breed_summary)
-        rag_related = route.get("lane") == "RAG"
-        tone_profile = self._tone_profile(message=message, suburb=suburb, intent=intent, rag_related=rag_related)
-        known_fields = self._known_profile_fields(session.profile_memory)
-        missing_fields = self._missing_profile_fields(session.profile_memory)
-        locked_fields = [key for key, locked in session.field_locks.items() if locked]
+    def _extract_provider_id_from_text(self, text: str) -> Optional[str]:
+        match = re.search(r"\b(svc_[A-Za-z0-9_-]+)\b", text, re.I)
+        if match:
+            return match.group(1)
+        return None
 
-        if self.client:
-            if intent == "out_of_scope_non_pet":
-                system_prompt = (
-                    "You are BarkAI in a pet app. "
-                    "If the query is out-of-scope for pets, respond with a short, kind refusal and redirect to pet help. "
-                    "Do not answer non-pet topics directly."
-                )
-            elif intent == "general_assistant_query":
-                system_prompt = (
-                    "You are BarkAI. "
-                    "Answer broad general queries directly with concise, practical guidance. "
-                    "Follow tone_profile: if support_mode is true, use warm, supportive, non-clinical language. "
-                    "Use short readable paragraphs and avoid unnecessary jargon."
-                )
-            elif self._is_pet_health_question(message.lower()):
-                system_prompt = (
-                    "You are BarkAI, a pet-care assistant. "
-                    "Give practical triage-style guidance for symptom questions in concise steps. "
-                    "Do not diagnose. Focus on immediate safe actions, red flags, and when to see a vet. "
-                    "Do not include unrelated provider/community snippets unless directly relevant to the symptom. "
-                    "If tone_profile.rag_support_mode is true, start with one reassuring sentence, then prioritize the most relevant points from rag_context."
-                )
-            else:
-                system_prompt = (
-                    "You are a pet assistant in a mobile app. "
-                    "Be concise and practical. Do not provide definitive medical diagnosis. "
-                    "Use short readable paragraphs. For answers longer than two sentences, split into 2-4 sentence paragraphs with a blank line between them. "
-                    "Use conversation memory context. "
-                    "Ground factual or local details in rag_context when relevant, and do not invent specific provider/group/post names not present there. "
-                    "Follow tone_profile: if support_mode is true, use warm, supportive, non-clinical language, open with empathy, and include local context only when natural. "
-                    "If tone_profile.rag_support_mode is true, start with one reassuring sentence, then prioritize the most relevant points from rag_context. "
-                    "Never ask again for any profile field already known. "
-                    "Only ask for at most one missing profile field if it is strictly needed for the user's current request. "
-                    "If profile_accepted is true, do not ask profile collection questions unless the user explicitly asks to edit profile. "
-                    "If a field is locked, it is forbidden to ask it again."
-                )
-            filtered_rag_context = (
-                {"summary": rag_context.get("summary", "")}
-                if self._is_pet_health_question(message.lower())
-                else rag_context
-            )
-            payload = {
-                "message": message,
-                "suburb": suburb,
-                "intent": plan.get("intent"),
-                "tool_results": tool_results,
-                "recent_conversation": session.history[-8:],
-                "profile_memory": session.profile_memory,
-                "profile_accepted": session.profile_accepted,
-                "known_profile_fields": known_fields,
-                "missing_profile_fields": missing_fields,
-                "locked_fields": locked_fields,
-                "tone_profile": tone_profile,
-                "route_lane": route.get("lane", "GENERAL"),
-                "route_reason": route.get("reason", "unknown"),
-                "rag_context": filtered_rag_context,
-            }
-            try:
-                response = self.client.responses.create(
-                    model=self.model,
-                    input=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": json.dumps(payload)},
-                    ],
-                    temperature=0.2,
-                )
-                text = (getattr(response, "output_text", "") or "").strip()
-                if text:
-                    if not self._is_profile_edit_request(message):
-                        text = self._strip_reask_questions(text, session.field_locks)
-                    return self._format_answer_paragraphs(text)
-            except Exception:
-                pass
+    def _extract_booking_id_from_text(self, text: str) -> Optional[str]:
+        match = re.search(r"\b((?:b|bk)_[A-Za-z0-9_-]+)\b", text, re.I)
+        if match:
+            return match.group(1)
+        return None
 
-        intent = plan.get("intent", "general_pet_question")
-        if intent == "out_of_scope_non_pet":
-            return self._non_pet_scope_message(message)
-        if intent == "general_assistant_query":
-            text = self._fallback_general_assistant_answer(message)
-            if tone_profile.get("support_mode"):
-                local_hint = tone_profile.get("local_context_hint", "")
-                prefix = "That sounds stressful. "
-                if local_hint:
-                    prefix = f"{prefix}{local_hint} "
-                return self._format_answer_paragraphs(f"{prefix}{text}")
-            return self._format_answer_paragraphs(text)
+    def _extract_iso_date_from_text(self, text: str) -> Optional[str]:
+        match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", text)
+        if match:
+            return match.group(1)
+        return None
+
+    def _extract_time_slot_from_text(self, text: str) -> Optional[str]:
+        match = re.search(r"\b([01]\d|2[0-3]):([0-5]\d)\b", text)
+        if match:
+            return f"{match.group(1)}:{match.group(2)}"
+        return None
+
+    def _extract_pet_name_for_booking(self, text: str) -> Optional[str]:
+        match = re.search(r"\bfor\s+([A-Za-z]{2,})\b", text, re.I)
+        if match:
+            token = match.group(1).strip()
+            if token.lower() not in {"booking", "tomorrow", "today", "next"}:
+                return token
+        return None
+
+    def _is_booking_confirmation_text(self, text: str) -> bool:
+        confirm_markers = [
+            "confirm booking",
+            "please book",
+            "book it",
+            "go ahead",
+            "yes book",
+            "confirm it",
+        ]
+        return any(marker in text for marker in confirm_markers)
+
+    def _compose_app_workflow_answer(self, *, intent: str, tool_results: Dict[str, Any]) -> Optional[str]:
         if intent == "find_dog_walker":
             return "I found nearby dog walkers. Open Services to compare and request a booking."
         if intent == "find_groomer":
@@ -1688,12 +2814,234 @@ class AIOrchestrator:
                 "I cannot diagnose in chat, but I can help with practical next steps: track body condition weekly, "
                 "maintain activity, and consult a vet if appetite or behavior changed."
             )
+        if intent == "manage_booking":
+            availability = tool_results.get("search_availability")
+            if isinstance(availability, dict):
+                if availability.get("status") == "ok":
+                    slots = availability.get("available_slots", [])
+                    if isinstance(slots, list) and slots:
+                        preview = ", ".join(str(slot.get("time_slot", "")) for slot in slots[:5] if isinstance(slot, dict))
+                        return f"Available slots for {availability.get('date', 'that date')}: {preview}."
+                    return "I checked availability and there are no open slots on that date."
+                if availability.get("status") == "error":
+                    return f"I could not check availability: {availability.get('message', 'unknown error')}."
+
+            booking_create = tool_results.get("create_booking_request")
+            if isinstance(booking_create, dict):
+                status = str(booking_create.get("status", ""))
+                if status == "created":
+                    booking = booking_create.get("booking", {})
+                    if isinstance(booking, dict):
+                        return (
+                            f"Booking requested: {booking.get('id', 'new booking')} for "
+                            f"{booking.get('date', '')} {booking.get('time_slot', '')}."
+                        )
+                    return "Booking request created."
+                if status == "requires_confirmation":
+                    return (
+                        "I have the booking details ready. Reply with 'confirm booking' to submit this request."
+                    )
+                if status == "missing_info":
+                    required = booking_create.get("required", [])
+                    if isinstance(required, list) and required:
+                        return f"I need a few details first: {', '.join(str(item) for item in required)}."
+                    return "I need more details to create this booking."
+                if status == "error":
+                    return f"I could not create the booking: {booking_create.get('message', 'unknown error')}."
+
+            booking_status = tool_results.get("get_booking_status")
+            if isinstance(booking_status, dict):
+                status = str(booking_status.get("status", ""))
+                if status == "found":
+                    booking = booking_status.get("booking", {})
+                    if isinstance(booking, dict):
+                        return (
+                            f"Booking {booking.get('id', '')} is {booking.get('status', 'unknown')} "
+                            f"for {booking.get('date', '')} {booking.get('time_slot', '')}."
+                        )
+                    return "I found your booking status."
+                if status == "list":
+                    bookings = booking_status.get("bookings", [])
+                    if isinstance(bookings, list) and bookings:
+                        latest = bookings[0] if isinstance(bookings[0], dict) else {}
+                        return (
+                            f"You have {len(bookings)} booking(s). Latest is {latest.get('id', '')}: "
+                            f"{latest.get('status', 'unknown')} on {latest.get('date', '')} {latest.get('time_slot', '')}."
+                        )
+                    return "You do not have any bookings yet."
+                if status == "not_found":
+                    return "I could not find that booking."
+                if status == "error":
+                    return f"I could not fetch booking status: {booking_status.get('message', 'unknown error')}."
+        return None
+
+    def _compact_rag_context_for_model(self, rag_context: Dict[str, Any], *, max_docs: int = 3) -> Dict[str, Any]:
+        compact_docs: List[Dict[str, str]] = []
+        docs = rag_context.get("documents", [])
+        if isinstance(docs, list):
+            for doc in docs[:max_docs]:
+                if not isinstance(doc, dict):
+                    continue
+                compact_doc = {
+                    "title": self._safe_text(doc.get("title"), default="", max_len=160),
+                    "authority": self._safe_text(doc.get("authority"), default="", max_len=120),
+                    "snippet": self._safe_text(doc.get("snippet"), default="", max_len=420),
+                    "url": self._safe_text(doc.get("url"), default="", max_len=240),
+                }
+                if compact_doc["title"] or compact_doc["snippet"]:
+                    compact_docs.append(compact_doc)
+
+        return {
+            "query": self._safe_text(rag_context.get("query"), default="", max_len=240),
+            "intent": self._safe_text(rag_context.get("intent"), default="", max_len=64),
+            "source_policy": self._safe_text(rag_context.get("source_policy"), default="default", max_len=64),
+            "high_risk_mode": bool(rag_context.get("high_risk_mode", False)),
+            "high_risk_terms": rag_context.get("high_risk_terms", []),
+            "documents": compact_docs,
+        }
+
+    def _compose_answer(
+        self,
+        message: str,
+        suburb: Optional[str],
+        plan: Dict[str, Any],
+        route: Dict[str, Any],
+        tool_results: Dict[str, Any],
+        session: SessionMemory,
+        rag_context: Dict[str, Any],
+        user_id: str = "guest",
+    ) -> str:
+        intent = plan.get("intent", "general_pet_question")
+        high_risk_mode = bool(route.get("high_risk_mode", False))
+        breed_summary = self._known_breed_summary(message.lower())
+        if breed_summary:
+            return self._format_answer_paragraphs(breed_summary)
+        rag_related = route.get("lane") == "RAG"
+        tone_profile = self._tone_profile(message=message, suburb=suburb, intent=intent, rag_related=rag_related)
+        known_fields = self._known_profile_fields(session.profile_memory)
+        missing_fields = self._missing_profile_fields(session.profile_memory)
+        locked_fields = [key for key, locked in session.field_locks.items() if locked]
+
+        if self.client and self._allow_model_call(stage="answer", user_id=user_id, intent=str(intent)):
+            if high_risk_mode:
+                system_prompt = (
+                    "You are BarkAI in HIGH-RISK SAFETY MODE for dog health concerns. "
+                    "Respond with ultra-safe guidance only. "
+                    "Do not diagnose. Do not use or cite community anecdotes, social posts, or Reddit-style content. "
+                    "Use only trusted medical/public-health references from rag_context documents. "
+                    "Provide concise immediate actions, critical red flags, and clear escalation to emergency vet care."
+                )
+            elif intent == "out_of_scope_non_pet":
+                system_prompt = (
+                    "You are BarkAI in a pet app. "
+                    "If the query is out-of-scope for pets, respond with a short, kind refusal and redirect to pet help. "
+                    "Do not answer non-pet topics directly."
+                )
+            elif intent == "general_assistant_query":
+                system_prompt = (
+                    "You are BarkAI. "
+                    "Answer broad general queries directly with concise, practical guidance. "
+                    "Follow tone_profile: if support_mode is true, use warm, supportive, non-clinical language. "
+                    "Use short readable paragraphs and avoid unnecessary jargon."
+                )
+            elif self._is_pet_health_question(message.lower()):
+                system_prompt = (
+                    "You are BarkAI, a pet-care assistant. "
+                    "Give practical triage-style guidance for symptom questions in concise steps. "
+                    "Do not diagnose. Focus on immediate safe actions, red flags, and when to see a vet. "
+                    "Do not include unrelated provider/community snippets unless directly relevant to the symptom. "
+                    "If rag_context.documents are present, use them as the primary evidence and avoid unsupported specifics. "
+                    "If evidence is limited, say that briefly and stay conservative. "
+                    "If tone_profile.rag_support_mode is true, start with one reassuring sentence, then prioritize the most relevant points from rag_context."
+                )
+            else:
+                system_prompt = (
+                    "You are a pet assistant in a mobile app. "
+                    "Be concise and practical. Do not provide definitive medical diagnosis. "
+                    "Use short readable paragraphs. For answers longer than two sentences, split into 2-4 sentence paragraphs with a blank line between them. "
+                    "Use conversation memory context. "
+                    "Ground factual or local details in rag_context when relevant, and do not invent specific provider/group/post names not present there. "
+                    "If rag_context.documents are present, treat them as the main evidence for factual claims and do not add unsupported details beyond them. "
+                    "If the retrieved evidence is thin or partial, say so briefly and give the safest practical next step. "
+                    "Follow tone_profile: if support_mode is true, use warm, supportive, non-clinical language, open with empathy, and include local context only when natural. "
+                    "If tone_profile.rag_support_mode is true, start with one reassuring sentence, then prioritize the most relevant points from rag_context. "
+                    "Never ask again for any profile field already known. "
+                    "Only ask for at most one missing profile field if it is strictly needed for the user's current request. "
+                    "If profile_accepted is true, do not ask profile collection questions unless the user explicitly asks to edit profile. "
+                    "If a field is locked, it is forbidden to ask it again."
+                )
+            if high_risk_mode:
+                filtered_rag_context = self._compact_rag_context_for_model(rag_context, max_docs=4)
+            else:
+                filtered_rag_context = self._compact_rag_context_for_model(
+                    rag_context,
+                    max_docs=3 if self._is_pet_health_question(message.lower()) else 4,
+                )
+            payload = {
+                "message": message,
+                "suburb": suburb,
+                "intent": plan.get("intent"),
+                "tool_results": tool_results,
+                "recent_conversation": session.history[-8:],
+                "profile_memory": session.profile_memory,
+                "profile_accepted": session.profile_accepted,
+                "known_profile_fields": known_fields,
+                "missing_profile_fields": missing_fields,
+                "locked_fields": locked_fields,
+                "tone_profile": tone_profile,
+                "route_lane": route.get("lane", "GENERAL"),
+                "route_reason": route.get("reason", "unknown"),
+                "high_risk_mode": high_risk_mode,
+                "matched_high_risk_terms": route.get("matched_high_risk_terms", []),
+                "rag_context": filtered_rag_context,
+            }
+            try:
+                response = self.client.responses.create(
+                    model=self.model,
+                    input=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": json.dumps(payload)},
+                    ],
+                    temperature=0.2,
+                    max_output_tokens=self.max_answer_output_tokens,
+                )
+                text = (getattr(response, "output_text", "") or "").strip()
+                if text:
+                    if not self._is_profile_edit_request(message):
+                        text = self._strip_reask_questions(text, session.field_locks)
+                    return self._format_answer_paragraphs(text)
+            except Exception:
+                pass
+
+        intent = plan.get("intent", "general_pet_question")
+        if intent == "out_of_scope_non_pet":
+            return self._non_pet_scope_message(message)
+        if intent == "general_assistant_query":
+            text = self._fallback_general_assistant_answer(message)
+            if tone_profile.get("support_mode"):
+                local_hint = tone_profile.get("local_context_hint", "")
+                prefix = "That sounds stressful. "
+                if local_hint:
+                    prefix = f"{prefix}{local_hint} "
+                return self._format_answer_paragraphs(f"{prefix}{text}")
+            return self._format_answer_paragraphs(text)
+        app_workflow_answer = self._compose_app_workflow_answer(intent=intent, tool_results=tool_results)
+        if app_workflow_answer:
+            return app_workflow_answer
         rag_fallback = self.rag_retriever.fallback_answer(
             rag_context=rag_context,
             support_mode=bool(tone_profile.get("support_mode")),
         )
+        if high_risk_mode and rag_fallback:
+            return rag_fallback
         if rag_related and rag_fallback:
             return rag_fallback
+        if high_risk_mode:
+            return (
+                "This may be high risk. I cannot diagnose in chat, but you should contact a veterinarian now for real-time triage. "
+                "Avoid home medications and do not induce vomiting unless a vet explicitly tells you to. "
+                "If collapse, breathing difficulty, seizures, repeated vomiting, or severe weakness are present, seek emergency care immediately."
+            )
         if self._is_pet_health_question(message.lower()):
             return (
                 "I cannot diagnose in chat, but limping after a walk should be managed carefully. "
@@ -1733,6 +3081,8 @@ class AIOrchestrator:
             ctas.append(CtaChip(label="Create Lost/Found Post", action="create_lost_found", payload=draft))
         if intent == "community_discovery":
             ctas.append(CtaChip(label="Open Community", action="open_community"))
+        if intent == "manage_booking":
+            ctas.append(CtaChip(label="Open Services", action="open_services"))
         if not ctas:
             ctas.append(CtaChip(label="Open Services", action="open_services"))
             ctas.append(CtaChip(label="Open Community", action="open_community"))
@@ -1741,6 +3091,11 @@ class AIOrchestrator:
     def _update_profile_memory(self, session: SessionMemory, message: str, suburb: Optional[str]) -> None:
         profile = session.profile_memory
         text = message.lower()
+        country_code = self._extract_country_code_from_text(message)
+        if country_code:
+            profile["country_code"] = country_code
+            session.field_locks["country_code"] = True
+
         if suburb:
             profile["suburb"] = suburb
             session.field_locks["suburb"] = True
@@ -2098,12 +3453,26 @@ class AIOrchestrator:
     def _safe_text(self, value: Any, default: str = "", max_len: int = 512) -> str:
         if value is None:
             return default
-        text = str(value).strip()
+        text = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", str(value)).strip()
         if not text:
             return default
         if len(text) > max_len:
             return text[:max_len]
         return text
+
+    def _safe_bool(self, value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        normalized = self._safe_text(value, default="", max_len=16).lower()
+        if not normalized:
+            return default
+        if normalized in {"1", "true", "yes", "y", "on", "confirm", "confirmed"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+        return default
 
     def _safe_int(
         self,

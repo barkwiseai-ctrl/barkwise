@@ -58,8 +58,16 @@ private val BarkWiseDarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun BarkWiseTheme(content: @Composable () -> Unit) {
-    val colorScheme = if (isSystemInDarkTheme()) {
+fun BarkWiseTheme(
+    themeMode: String = "system",
+    content: @Composable () -> Unit,
+) {
+    val useDarkTheme = when (themeMode.trim().lowercase()) {
+        "dark" -> true
+        "light" -> false
+        else -> isSystemInDarkTheme()
+    }
+    val colorScheme = if (useDarkTheme) {
         BarkWiseDarkColorScheme
     } else {
         BarkWiseLightColorScheme

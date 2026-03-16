@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.routers import auth, chat, community, community_activation, friend_qr, notifications, security, services
+from app.routers import auth, chat, community, community_activation, friend_qr, messages, notifications, security, services
 
 app = FastAPI(title="BarkWise API", version="0.1.0")
 
@@ -40,6 +40,7 @@ app.include_router(community.router)
 app.include_router(community_activation.router)
 app.include_router(auth.router)
 app.include_router(friend_qr.router)
+app.include_router(messages.router)
 app.include_router(notifications.router)
 app.include_router(security.router)
 

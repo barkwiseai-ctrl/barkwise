@@ -13,10 +13,22 @@ import retrofit2.http.GET
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.PUT
 import retrofit2.http.Query
 import java.io.IOException
 
 interface ApiService {
+    @GET("services/recommendations")
+    suspend fun getRecommendations(
+        @Query("user_id") userId: String? = null,
+        @Query("category") category: String? = null,
+        @Query("suburb") suburb: String? = null,
+        @Query("min_rating") minRating: Double? = null,
+        @Query("max_distance_km") maxDistanceKm: Double? = null,
+        @Query("user_lat") userLat: Double? = null,
+        @Query("user_lng") userLng: Double? = null,
+    ): ServiceRecommendationsResponse
+
     @GET("services/providers")
     suspend fun getProviders(
         @Query("category") category: String? = null,
@@ -64,6 +76,19 @@ interface ApiService {
         @Body payload: ServiceQuoteProviderResponseRequest,
     ): ServiceQuoteRequestView
 
+    @POST("services/quotes/{quoteRequestId}/offer")
+    suspend fun createQuoteOffer(
+        @Path("quoteRequestId") quoteRequestId: String,
+        @Body payload: ServiceQuoteOfferCreateRequest,
+    ): ServiceQuoteOffer
+
+    @GET("services/provider/inbox")
+    suspend fun getProviderInbox(
+        @Query("actor_user_id") actorUserId: String,
+        @Query("include_resolved") includeResolved: Boolean = false,
+        @Query("limit") limit: Int = 50,
+    ): ProviderInboxResponse
+
     @GET("services/vet-coach/profile")
     suspend fun getVetCoachProfile(@Query("user_id") userId: String): VetCoachProfile
 
@@ -102,6 +127,12 @@ interface ApiService {
         @Query("user_id") userId: String? = null,
         @Query("role") role: String? = null,
     ): List<BookingResponse>
+
+    @GET("services/bookings/{bookingId}/history")
+    suspend fun getBookingStatusHistory(
+        @Path("bookingId") bookingId: String,
+        @Query("requester_user_id") requesterUserId: String,
+    ): List<BookingStatusHistoryEntry>
 
     @GET("services/calendar/events")
     suspend fun getCalendarEvents(
@@ -193,6 +224,27 @@ interface ApiService {
     @POST("community/posts")
     suspend fun createPost(@Body payload: CommunityPostCreate): CommunityPost
 
+    @GET("community/posts/{postId}/comments")
+    suspend fun getPostComments(
+        @Path("postId") postId: String,
+        @Query("user_id") userId: String? = null,
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0,
+        @Query("include_removed") includeRemoved: Boolean = false,
+    ): List<CommunityComment>
+
+    @POST("community/posts/{postId}/comments")
+    suspend fun createPostComment(
+        @Path("postId") postId: String,
+        @Body payload: CommunityCommentCreateRequest,
+    ): CommunityComment
+
+    @POST("community/comments/{commentId}/moderate")
+    suspend fun moderatePostComment(
+        @Path("commentId") commentId: String,
+        @Body payload: CommunityCommentModerationRequest,
+    ): CommunityComment
+
     @POST("community/posts/{postId}/resolve")
     suspend fun resolvePost(
         @Path("postId") postId: String,
@@ -252,6 +304,12 @@ interface ApiService {
         @Query("window_hours") windowHours: Int = 168,
     ): CommunityFunnelMetrics
 
+    @GET("community/analytics/activation")
+    suspend fun getCommunityActivationFunnel(
+        @Query("requester_user_id") requesterUserId: String? = null,
+        @Query("window_hours") windowHours: Int = 72,
+    ): CommunityActivationFunnel
+
     @POST("community/diagnostics/events")
     suspend fun createCommunityDiagnosticEvent(@Body payload: CommunityDiagnosticEventCreateRequest): Map<String, String>
 
@@ -263,6 +321,12 @@ interface ApiService {
 
     @POST("community/events")
     suspend fun createEvent(@Body payload: CommunityEventCreateRequest): CommunityEvent
+
+    @PUT("community/events/{eventId}")
+    suspend fun updateEvent(
+        @Path("eventId") eventId: String,
+        @Body payload: CommunityEventUpdateRequest,
+    ): CommunityEvent
 
     @POST("community/events/{eventId}/rsvp")
     suspend fun rsvpEvent(
@@ -278,6 +342,58 @@ interface ApiService {
 
     @POST("auth/login")
     suspend fun login(@Body payload: AuthLoginRequest): AuthLoginResponse
+
+    @POST("auth/invite")
+    suspend fun createAuthInvite(@Body payload: AuthInviteCreateRequest): AuthInviteResponse
+
+    @POST("auth/otp/request")
+    suspend fun requestOtp(@Body payload: AuthOtpRequest): AuthOtpRequestResponse
+
+    @POST("auth/otp/verify")
+    suspend fun verifyOtp(@Body payload: AuthOtpVerifyRequest): AuthOtpVerifyResponse
+
+    @POST("auth/friend-qr")
+    suspend fun issueFriendQr(): AuthFriendQrIssueResponse
+
+    @POST("auth/friend-qr/verify")
+    suspend fun verifyFriendQr(@Body payload: AuthFriendQrVerifyRequest): AuthFriendQrVerifyResponse
+
+    @POST("auth/logout")
+    suspend fun logout(): AuthLogoutResponse
+
+    @DELETE("auth/me")
+    suspend fun deleteAccount(@Query("user_id") userId: String): AuthDeleteResponse
+
+    @GET("auth/profile")
+    suspend fun getUserProfile(@Query("user_id") userId: String): UserProfileResponse
+
+    @PUT("auth/profile")
+    suspend fun upsertUserProfile(@Body payload: UserProfileUpsertRequest): UserProfileResponse
+
+    @GET("messages/threads")
+    suspend fun getMessageThreads(
+        @Query("user_id") userId: String,
+        @Query("limit") limit: Int = 50,
+    ): List<ApiMessageThread>
+
+    @GET("messages/threads/{threadId}")
+    suspend fun getThreadMessages(
+        @Path("threadId") threadId: String,
+        @Query("user_id") userId: String,
+        @Query("limit") limit: Int = 100,
+    ): List<ApiDirectMessage>
+
+    @POST("messages/threads/{threadId}/messages")
+    suspend fun sendThreadMessage(
+        @Path("threadId") threadId: String,
+        @Body payload: MessageSendRequest,
+    ): ApiDirectMessage
+
+    @POST("messages/threads/{threadId}/read")
+    suspend fun markThreadRead(
+        @Path("threadId") threadId: String,
+        @Body payload: MessageMarkReadRequest,
+    ): Map<String, String>
 
     @GET("notifications")
     suspend fun getNotifications(
@@ -296,7 +412,7 @@ interface ApiService {
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
-        private const val DEFAULT_API_BASE_URL = "https://api.barkwise.app/"
+        private const val DEFAULT_API_BASE_URL = "https://api.barkwiseai.com/"
 
         private fun normalizeBaseUrl(candidate: String?): String? {
             val cleaned = candidate

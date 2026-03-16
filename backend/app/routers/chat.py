@@ -2,10 +2,12 @@ import asyncio
 import json
 import logging
 from datetime import timedelta
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
+from app.auth import assert_actor_authorized
 from app.models import ChatRequest, ProfileAcceptRequest, ProviderSubmitRequest
 from app.services.ai_orchestrator import AIOrchestrator
 from app.services.rate_limiting import SlidingWindowHitStore, read_positive_int_env
@@ -46,9 +48,25 @@ def _check_chat_rate_limit(*, user_id: str, bucket: str, max_requests: int) -> N
         )
 
 
+def _authorize_and_rate_limit(
+    *,
+    user_id: str,
+    authorization: Optional[str],
+    bucket: str,
+    max_requests: int,
+) -> None:
+    assert_actor_authorized(actor_user_id=user_id, authorization=authorization)
+    _check_chat_rate_limit(user_id=user_id, bucket=bucket, max_requests=max_requests)
+
+
 @router.post("")
-def chat(request: ChatRequest):
-    _check_chat_rate_limit(user_id=request.user_id, bucket="chat", max_requests=CHAT_RATE_LIMIT_MAX_REQUESTS)
+def chat(request: ChatRequest, authorization: Optional[str] = Header(default=None)):
+    _authorize_and_rate_limit(
+        user_id=request.user_id,
+        authorization=authorization,
+        bucket="chat",
+        max_requests=CHAT_RATE_LIMIT_MAX_REQUESTS,
+    )
     return orchestrator.handle_message(
         message=request.message,
         user_id=request.user_id,
@@ -57,9 +75,10 @@ def chat(request: ChatRequest):
 
 
 @router.post("/profile/accept")
-def accept_profile(request: ProfileAcceptRequest):
-    _check_chat_rate_limit(
+def accept_profile(request: ProfileAcceptRequest, authorization: Optional[str] = Header(default=None)):
+    _authorize_and_rate_limit(
         user_id=request.user_id,
+        authorization=authorization,
         bucket="profile_accept",
         max_requests=CHAT_ACTION_RATE_LIMIT_MAX_REQUESTS,
     )
@@ -67,9 +86,10 @@ def accept_profile(request: ProfileAcceptRequest):
 
 
 @router.post("/provider/submit")
-def submit_provider_listing(request: ProviderSubmitRequest):
-    _check_chat_rate_limit(
+def submit_provider_listing(request: ProviderSubmitRequest, authorization: Optional[str] = Header(default=None)):
+    _authorize_and_rate_limit(
         user_id=request.user_id,
+        authorization=authorization,
         bucket="provider_submit",
         max_requests=CHAT_ACTION_RATE_LIMIT_MAX_REQUESTS,
     )
@@ -77,9 +97,10 @@ def submit_provider_listing(request: ProviderSubmitRequest):
 
 
 @router.post("/stream")
-def chat_stream(request: ChatRequest):
-    _check_chat_rate_limit(
+def chat_stream(request: ChatRequest, authorization: Optional[str] = Header(default=None)):
+    _authorize_and_rate_limit(
         user_id=request.user_id,
+        authorization=authorization,
         bucket="chat_stream",
         max_requests=CHAT_STREAM_RATE_LIMIT_MAX_REQUESTS,
     )
@@ -107,6 +128,9 @@ def chat_stream(request: ChatRequest):
                     "conversation": [],
                     "profile_suggestion": None,
                     "a2ui_messages": [],
+                    "answer_source": "fallback",
+                    "answer_badges": ["Streaming Fallback"],
+                    "citations": [],
                 },
             }
             yield f"data: {json.dumps(fallback)}\n\n"

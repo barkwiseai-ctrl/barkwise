@@ -140,6 +140,58 @@ data class ServiceQuoteRequestView(
 )
 
 @Serializable
+data class ServiceQuoteOfferCreateRequest(
+    @SerialName("actor_user_id") val actorUserId: String,
+    @SerialName("provider_id") val providerId: String,
+    @SerialName("price_cents") val priceCents: Int,
+    val currency: String = "AUD",
+    @SerialName("proposed_date") val proposedDate: String,
+    @SerialName("proposed_time_slot") val proposedTimeSlot: String,
+    @SerialName("expires_at") val expiresAt: String,
+    val note: String = "",
+)
+
+@Serializable
+data class ServiceQuoteOffer(
+    val id: String,
+    @SerialName("quote_request_id") val quoteRequestId: String,
+    @SerialName("provider_id") val providerId: String,
+    @SerialName("actor_user_id") val actorUserId: String,
+    @SerialName("price_cents") val priceCents: Int,
+    val currency: String,
+    @SerialName("proposed_date") val proposedDate: String,
+    @SerialName("proposed_time_slot") val proposedTimeSlot: String,
+    @SerialName("expires_at") val expiresAt: String,
+    val note: String = "",
+    val status: String = "active",
+    @SerialName("created_at") val createdAt: String,
+)
+
+@Serializable
+data class ProviderInboxItem(
+    val id: String,
+    @SerialName("item_type") val itemType: String,
+    @SerialName("provider_id") val providerId: String,
+    @SerialName("provider_name") val providerName: String,
+    val status: String,
+    val title: String,
+    val subtitle: String,
+    val priority: String = "normal",
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("due_at") val dueAt: String? = null,
+    @SerialName("quote_request_id") val quoteRequestId: String? = null,
+    @SerialName("booking_id") val bookingId: String? = null,
+    @SerialName("customer_user_id") val customerUserId: String? = null,
+)
+
+@Serializable
+data class ProviderInboxResponse(
+    @SerialName("actor_user_id") val actorUserId: String,
+    val total: Int,
+    val items: List<ProviderInboxItem> = emptyList(),
+)
+
+@Serializable
 data class ServiceRecommendationsResponse(
     val providers: List<ServiceProvider>,
     @SerialName("inferred_suburb") val inferredSuburb: String? = null,
@@ -388,6 +440,8 @@ data class CommunityPost(
     @SerialName("last_seen_at") val lastSeenAt: String? = null,
     @SerialName("last_seen_location") val lastSeenLocation: String? = null,
     @SerialName("contact_pref") val contactPref: String? = null,
+    @SerialName("share_scope") val shareScope: String? = null,
+    @SerialName("share_precision") val sharePrecision: String? = null,
     @SerialName("photo_urls") val photoUrls: List<String> = emptyList(),
     val latitude: Double? = null,
     val longitude: Double? = null,
@@ -411,6 +465,8 @@ data class CommunityPostCreate(
     @SerialName("last_seen_at") val lastSeenAt: String? = null,
     @SerialName("last_seen_location") val lastSeenLocation: String? = null,
     @SerialName("contact_pref") val contactPref: String? = null,
+    @SerialName("share_scope") val shareScope: String? = null,
+    @SerialName("share_precision") val sharePrecision: String? = null,
     @SerialName("photo_urls") val photoUrls: List<String> = emptyList(),
     val latitude: Double? = null,
     val longitude: Double? = null,
@@ -433,6 +489,8 @@ data class CommunityPostUpdateRequest(
     @SerialName("last_seen_at") val lastSeenAt: String? = null,
     @SerialName("last_seen_location") val lastSeenLocation: String? = null,
     @SerialName("contact_pref") val contactPref: String? = null,
+    @SerialName("share_scope") val shareScope: String? = null,
+    @SerialName("share_precision") val sharePrecision: String? = null,
     @SerialName("photo_urls") val photoUrls: List<String>? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
@@ -557,6 +615,29 @@ data class CommunityFunnelMetrics(
 )
 
 @Serializable
+data class CommunityActivationFailure(
+    val event: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("user_id") val userId: String = "",
+    val error: String = "",
+)
+
+@Serializable
+data class CommunityActivationFunnel(
+    @SerialName("window_hours") val windowHours: Int = 72,
+    @SerialName("requester_user_id") val requesterUserId: String? = null,
+    @SerialName("activation_event_count") val activationEventCount: Int = 0,
+    @SerialName("activation_diagnostic_count") val activationDiagnosticCount: Int = 0,
+    @SerialName("unique_users") val uniqueUsers: List<String> = emptyList(),
+    @SerialName("unique_user_count") val uniqueUserCount: Int = 0,
+    @SerialName("last_event_at") val lastEventAt: String? = null,
+    @SerialName("by_event") val byEvent: Map<String, Int> = emptyMap(),
+    @SerialName("by_stage") val byStage: Map<String, Int> = emptyMap(),
+    @SerialName("by_status") val byStatus: Map<String, Int> = emptyMap(),
+    @SerialName("top_failures") val topFailures: List<CommunityActivationFailure> = emptyList(),
+)
+
+@Serializable
 data class CommunityEvent(
     val id: String,
     val title: String,
@@ -564,6 +645,11 @@ data class CommunityEvent(
     val suburb: String,
     val date: String,
     @SerialName("group_id") val groupId: String? = null,
+    @SerialName("location_name") val locationName: String? = null,
+    @SerialName("location_latitude") val locationLatitude: Double? = null,
+    @SerialName("location_longitude") val locationLongitude: Double? = null,
+    val recurrence: String = "none",
+    @SerialName("recurrence_interval") val recurrenceInterval: Int = 1,
     @SerialName("attendee_count") val attendeeCount: Int = 0,
     @SerialName("created_by") val createdBy: String,
     @SerialName("rsvp_status") val rsvpStatus: String = "none",
@@ -578,6 +664,26 @@ data class CommunityEventCreateRequest(
     val suburb: String,
     val date: String,
     @SerialName("group_id") val groupId: String? = null,
+    @SerialName("location_name") val locationName: String? = null,
+    @SerialName("location_latitude") val locationLatitude: Double? = null,
+    @SerialName("location_longitude") val locationLongitude: Double? = null,
+    val recurrence: String = "none",
+    @SerialName("recurrence_interval") val recurrenceInterval: Int = 1,
+)
+
+@Serializable
+data class CommunityEventUpdateRequest(
+    @SerialName("user_id") val userId: String,
+    val title: String? = null,
+    val description: String? = null,
+    val date: String? = null,
+    @SerialName("group_id") val groupId: String? = null,
+    @SerialName("location_name") val locationName: String? = null,
+    @SerialName("location_latitude") val locationLatitude: Double? = null,
+    @SerialName("location_longitude") val locationLongitude: Double? = null,
+    @SerialName("clear_location") val clearLocation: Boolean = false,
+    val recurrence: String? = null,
+    @SerialName("recurrence_interval") val recurrenceInterval: Int? = null,
 )
 
 @Serializable
@@ -788,6 +894,26 @@ data class AuthOtpVerifyResponse(
 )
 
 @Serializable
+data class AuthFriendQrIssueResponse(
+    @SerialName("friend_token") val friendToken: String,
+    @SerialName("friend_url") val friendUrl: String,
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class AuthFriendQrVerifyRequest(
+    @SerialName("friend_token") val friendToken: String,
+)
+
+@Serializable
+data class AuthFriendQrVerifyResponse(
+    @SerialName("user_id") val userId: String,
+    @SerialName("human_name") val humanName: String,
+    @SerialName("dog_name") val dogName: String,
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
 data class AuthLogoutResponse(
     val status: String = "ok",
 )
@@ -815,6 +941,8 @@ data class UserProfileResponse(
     @SerialName("secondary_dog_name") val secondaryDogName: String = "",
     @SerialName("secondary_dog_age_months") val secondaryDogAgeMonths: Int = 0,
     @SerialName("secondary_dog_photo_url") val secondaryDogPhotoUrl: String = "",
+    @SerialName("secondary_dog_gender") val secondaryDogGender: String = "",
+    @SerialName("secondary_dog_weight_kg") val secondaryDogWeightKg: String = "",
     val bio: String = "",
     val suburb: String = "",
     @SerialName("favorite_suburbs") val favoriteSuburbs: List<String> = emptyList(),
@@ -854,6 +982,8 @@ data class UserProfileUpsertRequest(
     @SerialName("secondary_dog_name") val secondaryDogName: String = "",
     @SerialName("secondary_dog_age_months") val secondaryDogAgeMonths: Int = 0,
     @SerialName("secondary_dog_photo_url") val secondaryDogPhotoUrl: String = "",
+    @SerialName("secondary_dog_gender") val secondaryDogGender: String = "",
+    @SerialName("secondary_dog_weight_kg") val secondaryDogWeightKg: String = "",
     val bio: String = "",
     val suburb: String = "",
     @SerialName("favorite_suburbs") val favoriteSuburbs: List<String> = emptyList(),

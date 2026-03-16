@@ -21,7 +21,6 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustNothing|stateHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -31,7 +30,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="barkwise" android:host="join" />
+                <data android:scheme="${appDeepLinkScheme}" android:host="join" />
             </intent-filter>
         </activity>
     </application>

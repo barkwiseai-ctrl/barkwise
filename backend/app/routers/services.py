@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -5,17 +6,22 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from app.auth import assert_actor_authorized
 from app.models import (
     Booking,
+    BookingStatusHistoryEntry,
     BookingHold,
     BookingHoldRequest,
     BookingRequest,
     BookingStatusUpdateRequest,
     CalendarEvent,
+    ProviderInboxResponse,
     ProviderBlackout,
     ProviderBlackoutRequest,
     ServiceAvailabilitySlot,
+    ServiceQuoteOffer,
+    ServiceQuoteOfferCreateRequest,
     ServiceQuoteProviderResponseRequest,
     ServiceQuoteRequestCreate,
     ServiceQuoteRequestView,
+    ServiceRecommendationsResponse,
     ServiceProviderCancelRequest,
     ServiceProvider,
     ServiceProviderCreateRequest,
@@ -42,6 +48,11 @@ from app.services.notification_store import notification_store
 router = APIRouter(tags=["listings"])
 
 
+def _provider_os_api_enabled() -> bool:
+    raw = os.getenv("PROVIDER_OS_API_ENABLED", "true").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _raise_service_http_error(exc: ServiceStoreError) -> None:
     if isinstance(exc, ServiceStoreNotFoundError):
         raise HTTPException(status_code=404, detail=str(exc))
@@ -50,6 +61,11 @@ def _raise_service_http_error(exc: ServiceStoreError) -> None:
     if isinstance(exc, ServiceStoreConflictError):
         raise HTTPException(status_code=409, detail=str(exc))
     raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _require_provider_os_api() -> None:
+    if not _provider_os_api_enabled():
+        raise HTTPException(status_code=404, detail="Provider OS API is disabled")
 
 
 def _dispatch_quote_reminders() -> None:
@@ -90,6 +106,36 @@ def list_providers(
             user_lng=user_lng,
             q=q,
             sort_by=sort_by,
+        )
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.get("/recommendations", response_model=ServiceRecommendationsResponse)
+def list_recommendations(
+    user_id: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
+    suburb: Optional[str] = Query(default=None),
+    min_rating: Optional[float] = Query(default=None),
+    max_distance_km: Optional[float] = Query(default=None),
+    user_lat: Optional[float] = Query(default=None),
+    user_lng: Optional[float] = Query(default=None),
+):
+    _dispatch_quote_reminders()
+    try:
+        providers, inferred_suburb, suburb_source = service_store.recommend_providers(
+            user_id=user_id,
+            category=category,
+            suburb=suburb,
+            min_rating=min_rating,
+            max_distance_km=max_distance_km,
+            user_lat=user_lat,
+            user_lng=user_lng,
+        )
+        return ServiceRecommendationsResponse(
+            providers=providers,
+            inferred_suburb=inferred_suburb,
+            suburb_source=suburb_source,
         )
     except ServiceStoreError as exc:
         _raise_service_http_error(exc)
@@ -146,6 +192,63 @@ def respond_quote_request(
             deep_link=f"quote:{updated_request.id}",
         )
         return ServiceQuoteRequestView(quote_request=updated_request, targets=targets)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.post("/quotes/{quote_request_id}/offer", response_model=ServiceQuoteOffer)
+def create_quote_offer(
+    quote_request_id: str,
+    request: ServiceQuoteOfferCreateRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    _require_provider_os_api()
+    assert_actor_authorized(actor_user_id=request.actor_user_id, authorization=authorization)
+    try:
+        offer = service_store.create_quote_offer(
+            quote_request_id=quote_request_id,
+            provider_id=request.provider_id,
+            actor_user_id=request.actor_user_id,
+            price_cents=request.price_cents,
+            currency=request.currency,
+            proposed_date=request.proposed_date,
+            proposed_time_slot=request.proposed_time_slot,
+            expires_at=request.expires_at,
+            note=request.note,
+        )
+        quote_request, _ = service_store.get_quote_request(quote_request_id)
+        notification_store.create(
+            user_id=quote_request.user_id,
+            title="New quote offer",
+            body=f"Provider offered {offer.currency} {offer.price_cents / 100:.2f} for {offer.proposed_date} {offer.proposed_time_slot}.",
+            category="booking",
+            deep_link=f"quote:{quote_request_id}",
+        )
+        return offer
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.get("/provider/inbox", response_model=ProviderInboxResponse)
+def provider_inbox(
+    actor_user_id: str = Query(...),
+    include_resolved: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    _require_provider_os_api()
+    assert_actor_authorized(actor_user_id=actor_user_id, authorization=authorization)
+    try:
+        items = service_store.list_provider_inbox(
+            actor_user_id=actor_user_id,
+            include_resolved=include_resolved,
+            limit=limit,
+        )
+        return ProviderInboxResponse(
+            actor_user_id=actor_user_id,
+            total=len(items),
+            items=items,
+        )
     except ServiceStoreError as exc:
         _raise_service_http_error(exc)
 
@@ -366,6 +469,22 @@ def list_bookings(
     _dispatch_quote_reminders()
     try:
         return service_store.list_bookings(user_id=user_id, role=role)
+    except ServiceStoreError as exc:
+        _raise_service_http_error(exc)
+
+
+@router.get("/bookings/{booking_id}/history", response_model=list[BookingStatusHistoryEntry])
+def list_booking_status_history(
+    booking_id: str,
+    requester_user_id: str = Query(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=requester_user_id, authorization=authorization)
+    try:
+        return service_store.list_booking_status_history(
+            booking_id=booking_id,
+            requester_user_id=requester_user_id,
+        )
     except ServiceStoreError as exc:
         _raise_service_http_error(exc)
 

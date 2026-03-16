@@ -6,21 +6,24 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 from uuid import uuid4
 
-from app.data import group_memberships
+from app.data import group_memberships, groups
 from app.models import (
     Booking,
+    BookingStatusHistoryEntry,
     BookingHold,
     BookingHoldRequest,
     BookingRequest,
     BookingStatusUpdateRequest,
     CalendarEvent,
+    ProviderInboxItem,
     ProviderBlackout,
     ProviderBlackoutRequest,
     Review,
     ServiceAvailabilitySlot,
+    ServiceQuoteOffer,
     ServiceQuoteRequest,
     ServiceQuoteTarget,
     ServiceProvider,
@@ -240,6 +243,24 @@ class ServiceStore:
                         responded_at TEXT,
                         reminder_15_sent INTEGER NOT NULL DEFAULT 0,
                         reminder_60_sent INTEGER NOT NULL DEFAULT 0
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS quote_target_offers (
+                        id TEXT PRIMARY KEY,
+                        quote_request_id TEXT NOT NULL,
+                        provider_id TEXT NOT NULL,
+                        actor_user_id TEXT NOT NULL,
+                        price_cents INTEGER NOT NULL,
+                        currency TEXT NOT NULL,
+                        proposed_date TEXT NOT NULL,
+                        proposed_time_slot TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        note TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'active',
+                        created_at TEXT NOT NULL
                     )
                     """
                 )
@@ -1477,6 +1498,34 @@ class ServiceStore:
 
         return {provider_id: len(owner_ids) for provider_id, owner_ids in shared_counts.items()}
 
+    def _infer_user_focus_suburb(
+        self,
+        user_id: Optional[str],
+    ) -> Tuple[Optional[str], Literal["explicit_suburb", "dog_park_membership", "group_membership", "none"]]:
+        normalized_user_id = (user_id or "").strip()
+        if not normalized_user_id:
+            return None, "none"
+
+        group_by_id = {group.id: group for group in groups}
+        scored_groups: List[Tuple[int, str, str]] = []
+        for membership in group_memberships:
+            if membership.user_id != normalized_user_id or membership.status != "member":
+                continue
+            group = group_by_id.get(membership.group_id)
+            if not group or not group.suburb.strip():
+                continue
+            group_name = group.name.lower()
+            is_dog_park = "dog park" in group_name or "dogpark" in group_name
+            score = (2000 if is_dog_park else 0) + (200 if group.official else 0) + int(group.member_count)
+            source = "dog_park_membership" if is_dog_park else "group_membership"
+            scored_groups.append((score, group.suburb, source))
+
+        if not scored_groups:
+            return None, "none"
+        scored_groups.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        _, suburb, source = scored_groups[0]
+        return suburb, source
+
     def list_providers(
         self,
         category: Optional[str] = None,
@@ -1498,6 +1547,8 @@ class ServiceStore:
                 "Invalid sort_by value. Allowed: relevance, distance, rating, price_low, price_high"
             )
 
+        effective_suburb = suburb.strip() if suburb and suburb.strip() else None
+
         with self._lock:
             with self._connect() as conn:
                 rows = conn.execute("SELECT * FROM providers").fetchall()
@@ -1510,7 +1561,7 @@ class ServiceStore:
                 vet_verification_map = self._compute_latest_vet_verifications(conn)
                 highlighted_vet_map = self._compute_highlighted_vets(conn)
 
-        origin = self._resolve_origin(suburb=suburb, user_lat=user_lat, user_lng=user_lng)
+        origin = self._resolve_origin(suburb=effective_suburb, user_lat=user_lat, user_lng=user_lng)
         query = (q or "").strip().lower()
 
         def collect(filter_suburb: bool) -> List[ServiceProvider]:
@@ -1524,7 +1575,7 @@ class ServiceStore:
                         continue
                 if category and row["category"] != category:
                     continue
-                if filter_suburb and suburb and row["suburb"].lower() != suburb.lower():
+                if filter_suburb and effective_suburb and row["suburb"].lower() != effective_suburb.lower():
                     continue
                 if min_rating is not None and float(row["rating"]) < min_rating:
                     continue
@@ -1578,8 +1629,8 @@ class ServiceStore:
             return result
 
         # If a specific suburb has no providers, fall back to broader results instead of blank state.
-        result = collect(filter_suburb=bool(suburb))
-        if suburb and not result:
+        result = collect(filter_suburb=bool(effective_suburb))
+        if effective_suburb and not result:
             result = collect(filter_suburb=False)
 
         if sort_key == "distance":
@@ -1601,6 +1652,42 @@ class ServiceStore:
                 )
             )
         return result[:limit]
+
+    def recommend_providers(
+        self,
+        *,
+        user_id: Optional[str] = None,
+        category: Optional[str] = None,
+        suburb: Optional[str] = None,
+        min_rating: Optional[float] = None,
+        max_distance_km: Optional[float] = None,
+        user_lat: Optional[float] = None,
+        user_lng: Optional[float] = None,
+        limit: int = 6,
+    ) -> Tuple[List[ServiceProvider], Optional[str], Literal["explicit_suburb", "dog_park_membership", "group_membership", "none"]]:
+        if category is not None and category not in {"dog_walking", "grooming"}:
+            raise ServiceStoreValidationError("Invalid category. Allowed: dog_walking, grooming")
+
+        cleaned_suburb = suburb.strip() if suburb and suburb.strip() else None
+        suburb_source = "explicit_suburb" if cleaned_suburb else "none"
+        if not cleaned_suburb:
+            inferred_suburb, inferred_source = self._infer_user_focus_suburb(user_id=user_id)
+            cleaned_suburb = inferred_suburb
+            suburb_source = inferred_source
+
+        providers = self.list_providers(
+            category=category,
+            suburb=cleaned_suburb,
+            user_id=user_id,
+            include_inactive=False,
+            min_rating=min_rating,
+            max_distance_km=max_distance_km,
+            user_lat=user_lat,
+            user_lng=user_lng,
+            sort_by="relevance",
+            limit=limit,
+        )
+        return providers, cleaned_suburb, suburb_source
 
     def list_provider_owner_user_ids(self, provider_id: str) -> List[str]:
         with self._lock:
@@ -1651,6 +1738,23 @@ class ServiceStore:
             for row in rows
         ]
 
+    def _parse_iso_datetime(self, value: str, *, field: str) -> datetime:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ServiceStoreValidationError(f"Invalid {field}; expected ISO datetime") from exc
+
+    def _format_offer_summary(
+        self,
+        *,
+        currency: str,
+        price_cents: int,
+        proposed_date: str,
+        proposed_time_slot: str,
+    ) -> str:
+        amount = price_cents / 100.0
+        return f"Offer {currency} {amount:.2f} for {proposed_date} {proposed_time_slot}"
+
     def _refresh_quote_request_status(self, conn: sqlite3.Connection, quote_request_id: str) -> None:
         targets = conn.execute(
             """
@@ -1685,13 +1789,16 @@ class ServiceStore:
         *,
         user_id: str,
         category: str,
-        suburb: str,
+        suburb: Optional[str] = None,
         preferred_window: str,
         pet_details: str,
         note: str = "",
         max_targets: int = 3,
     ) -> Tuple[ServiceQuoteRequest, List[ServiceQuoteTarget]]:
-        cleaned_suburb = suburb.strip()
+        cleaned_suburb = suburb.strip() if suburb else ""
+        if not cleaned_suburb:
+            inferred_suburb, _ = self._infer_user_focus_suburb(user_id=user_id)
+            cleaned_suburb = inferred_suburb or ""
         cleaned_window = preferred_window.strip()
         cleaned_pet_details = pet_details.strip()
         if category not in {"dog_walking", "grooming"}:
@@ -1840,6 +1947,112 @@ class ServiceStore:
             raise ServiceStoreNotFoundError("Quote request not found after response")
         return self._quote_request_from_row(updated_request_row), targets
 
+    def create_quote_offer(
+        self,
+        *,
+        quote_request_id: str,
+        provider_id: str,
+        actor_user_id: str,
+        price_cents: int,
+        currency: str,
+        proposed_date: str,
+        proposed_time_slot: str,
+        expires_at: str,
+        note: str = "",
+    ) -> ServiceQuoteOffer:
+        normalized_currency = currency.strip().upper()
+        if len(normalized_currency) != 3 or not normalized_currency.isalpha():
+            raise ServiceStoreValidationError("Invalid currency. Use a 3-letter code like AUD")
+        if int(price_cents) <= 0:
+            raise ServiceStoreValidationError("price_cents must be greater than 0")
+
+        normalized_date = self._parse_iso_date(proposed_date, field="proposed_date").isoformat()
+        normalized_time_slot = self._parse_time_slot(proposed_time_slot, field="proposed_time_slot").strftime("%H:%M")
+        expires_at_dt = self._parse_iso_datetime(expires_at.strip(), field="expires_at")
+        if expires_at_dt <= datetime.utcnow():
+            raise ServiceStoreValidationError("Offer expiry must be in the future")
+
+        with self._lock:
+            with self._connect() as conn:
+                request_row = conn.execute(
+                    "SELECT * FROM quote_requests WHERE id = ?",
+                    (quote_request_id,),
+                ).fetchone()
+                if not request_row:
+                    raise ServiceStoreNotFoundError("Quote request not found")
+
+                target_row = conn.execute(
+                    """
+                    SELECT *
+                    FROM quote_request_targets
+                    WHERE quote_request_id = ? AND provider_id = ?
+                    """,
+                    (quote_request_id, provider_id),
+                ).fetchone()
+                if not target_row:
+                    raise ServiceStoreNotFoundError("Quote target not found")
+                if str(target_row["owner_user_id"]) != actor_user_id:
+                    raise ServiceStorePermissionError("Only listing owner can submit quote offers")
+                if str(target_row["status"]) in {"accepted", "declined"}:
+                    raise ServiceStoreConflictError("Quote target already responded")
+
+                now_iso = datetime.utcnow().isoformat()
+                offer_id = f"qof_{uuid4().hex[:10]}"
+                conn.execute(
+                    """
+                    INSERT INTO quote_target_offers (
+                        id, quote_request_id, provider_id, actor_user_id, price_cents, currency,
+                        proposed_date, proposed_time_slot, expires_at, note, status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                    """,
+                    (
+                        offer_id,
+                        quote_request_id,
+                        provider_id,
+                        actor_user_id,
+                        int(price_cents),
+                        normalized_currency,
+                        normalized_date,
+                        normalized_time_slot,
+                        expires_at_dt.isoformat(),
+                        note.strip(),
+                        now_iso,
+                    ),
+                )
+
+                summary = self._format_offer_summary(
+                    currency=normalized_currency,
+                    price_cents=int(price_cents),
+                    proposed_date=normalized_date,
+                    proposed_time_slot=normalized_time_slot,
+                )
+                response_message = note.strip() if note.strip() else summary
+                conn.execute(
+                    """
+                    UPDATE quote_request_targets
+                    SET status = 'accepted', response_message = ?, responded_at = ?
+                    WHERE quote_request_id = ? AND provider_id = ?
+                    """,
+                    (response_message, now_iso, quote_request_id, provider_id),
+                )
+                self._refresh_quote_request_status(conn, quote_request_id)
+                conn.commit()
+
+        return ServiceQuoteOffer(
+            id=offer_id,
+            quote_request_id=quote_request_id,
+            provider_id=provider_id,
+            actor_user_id=actor_user_id,
+            price_cents=int(price_cents),
+            currency=normalized_currency,
+            proposed_date=normalized_date,
+            proposed_time_slot=normalized_time_slot,
+            expires_at=expires_at_dt.isoformat(),
+            note=note.strip(),
+            status="active",
+            created_at=now_iso,
+        )
+
     def dispatch_quote_reminders(self) -> List[Dict[str, Any]]:
         reminders: List[Dict[str, Any]] = []
         now = datetime.utcnow()
@@ -1907,6 +2120,118 @@ class ServiceStore:
                     raise ServiceStoreNotFoundError("Quote request not found")
                 targets = self._quote_targets_for_request(conn, quote_request_id=quote_request_id)
         return self._quote_request_from_row(request_row), targets
+
+    def list_provider_inbox(
+        self,
+        *,
+        actor_user_id: str,
+        include_resolved: bool = False,
+        limit: int = 50,
+    ) -> List[ProviderInboxItem]:
+        clean_actor = actor_user_id.strip()
+        if not clean_actor:
+            raise ServiceStoreValidationError("actor_user_id is required")
+        if limit <= 0:
+            raise ServiceStoreValidationError("limit must be greater than 0")
+
+        booking_status_filter = "" if include_resolved else (
+            "AND b.status IN ('requested', 'provider_confirmed', 'in_progress', 'reschedule_requested', 'rescheduled')"
+        )
+        quote_status_filter = "" if include_resolved else "AND t.status = 'pending'"
+
+        items: List[ProviderInboxItem] = []
+        with self._lock:
+            with self._connect() as conn:
+                quote_rows = conn.execute(
+                    f"""
+                    SELECT
+                        t.id AS target_id,
+                        t.quote_request_id,
+                        t.provider_id,
+                        t.status,
+                        t.created_at,
+                        qr.user_id AS customer_user_id,
+                        qr.category,
+                        qr.suburb,
+                        qr.preferred_window,
+                        p.name AS provider_name
+                    FROM quote_request_targets t
+                    JOIN quote_requests qr ON qr.id = t.quote_request_id
+                    JOIN providers p ON p.id = t.provider_id
+                    WHERE t.owner_user_id = ?
+                    {quote_status_filter}
+                    ORDER BY t.created_at DESC
+                    """,
+                    (clean_actor,),
+                ).fetchall()
+
+                booking_rows = conn.execute(
+                    f"""
+                    SELECT
+                        b.id AS booking_id,
+                        b.provider_id,
+                        p.name AS provider_name,
+                        b.owner_user_id AS customer_user_id,
+                        b.pet_name,
+                        b.booking_date,
+                        b.time_slot,
+                        b.status,
+                        b.created_at
+                    FROM bookings b
+                    JOIN provider_owners po ON po.provider_id = b.provider_id
+                    JOIN providers p ON p.id = b.provider_id
+                    WHERE po.user_id = ?
+                    {booking_status_filter}
+                    ORDER BY b.created_at DESC
+                    """,
+                    (clean_actor,),
+                ).fetchall()
+
+        for row in quote_rows:
+            created_at = str(row["created_at"])
+            due_at: Optional[str] = None
+            try:
+                due_at = (datetime.fromisoformat(created_at) + timedelta(minutes=15)).isoformat()
+            except ValueError:
+                due_at = None
+
+            items.append(
+                ProviderInboxItem(
+                    id=f"quote:{row['quote_request_id']}:{row['provider_id']}",
+                    item_type="quote_request",
+                    provider_id=str(row["provider_id"]),
+                    provider_name=str(row["provider_name"]),
+                    status=str(row["status"]),
+                    title=f"Quote request • {str(row['category']).replace('_', ' ')}",
+                    subtitle=f"{row['preferred_window']} • {row['suburb']}",
+                    priority="high" if str(row["status"]) == "pending" else "normal",
+                    created_at=created_at,
+                    due_at=due_at,
+                    quote_request_id=str(row["quote_request_id"]),
+                    customer_user_id=str(row["customer_user_id"]),
+                )
+            )
+
+        for row in booking_rows:
+            status = str(row["status"])
+            items.append(
+                ProviderInboxItem(
+                    id=f"booking:{row['booking_id']}",
+                    item_type="booking",
+                    provider_id=str(row["provider_id"]),
+                    provider_name=str(row["provider_name"]),
+                    status=status,
+                    title=f"Booking • {row['pet_name']}",
+                    subtitle=f"{row['booking_date']} {row['time_slot']}",
+                    priority="high" if status in {"requested", "reschedule_requested"} else "normal",
+                    created_at=str(row["created_at"]),
+                    booking_id=str(row["booking_id"]),
+                    customer_user_id=str(row["customer_user_id"]),
+                )
+            )
+
+        items.sort(key=lambda item: item.created_at, reverse=True)
+        return items[:limit]
 
     def get_vet_coach_profile(self, *, actor_user_id: str) -> VetCoachProfile:
         if not self._is_vet_user(actor_user_id):
@@ -2247,22 +2572,36 @@ class ServiceStore:
         ]
         return {"provider": provider, "reviews": reviews}
 
-    def ensure_availability(self, provider_id: str, start_date: date, days: int = 7) -> None:
+    def _ensure_availability_with_conn(
+        self,
+        conn: sqlite3.Connection,
+        provider_id: str,
+        start_date: date,
+        days: int = 7,
+    ) -> None:
         slots = ["09:00", "11:00", "14:00", "16:00", "18:00"]
+        for d in range(days):
+            current = (start_date + timedelta(days=d)).isoformat()
+            for slot in slots:
+                exists = conn.execute(
+                    "SELECT 1 FROM availability_slots WHERE provider_id = ? AND slot_date = ? AND time_slot = ?",
+                    (provider_id, current, slot),
+                ).fetchone()
+                if not exists:
+                    conn.execute(
+                        "INSERT INTO availability_slots (id, provider_id, slot_date, time_slot, is_booked) VALUES (?, ?, ?, ?, 0)",
+                        (f"av_{uuid4().hex[:10]}", provider_id, current, slot),
+                    )
+
+    def ensure_availability(self, provider_id: str, start_date: date, days: int = 7) -> None:
         with self._lock:
             with self._connect() as conn:
-                for d in range(days):
-                    current = (start_date + timedelta(days=d)).isoformat()
-                    for slot in slots:
-                        exists = conn.execute(
-                            "SELECT 1 FROM availability_slots WHERE provider_id = ? AND slot_date = ? AND time_slot = ?",
-                            (provider_id, current, slot),
-                        ).fetchone()
-                        if not exists:
-                            conn.execute(
-                                "INSERT INTO availability_slots (id, provider_id, slot_date, time_slot, is_booked) VALUES (?, ?, ?, ?, 0)",
-                                (f"av_{uuid4().hex[:10]}", provider_id, current, slot),
-                            )
+                self._ensure_availability_with_conn(
+                    conn=conn,
+                    provider_id=provider_id,
+                    start_date=start_date,
+                    days=days,
+                )
                 conn.commit()
 
     def _cleanup_expired_holds(self, conn: sqlite3.Connection) -> None:
@@ -2313,6 +2652,46 @@ class ServiceStore:
         if hold:
             return True, "held"
         return False, None
+
+    def _suggest_available_slots(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        provider_id: str,
+        start_date: date,
+        max_days: int = 3,
+        limit: int = 5,
+    ) -> List[Tuple[str, str]]:
+        suggestions: List[Tuple[str, str]] = []
+        now_utc = datetime.utcnow()
+        for day_offset in range(max_days):
+            slot_date = (start_date + timedelta(days=day_offset)).isoformat()
+            rows = conn.execute(
+                """
+                SELECT slot_date, time_slot
+                FROM availability_slots
+                WHERE provider_id = ? AND slot_date = ?
+                ORDER BY time_slot
+                """,
+                (provider_id, slot_date),
+            ).fetchall()
+            for row in rows:
+                blocked, _ = self._slot_is_blocked(conn, provider_id, row["slot_date"], row["time_slot"])
+                slot_dt = self._parse_slot_datetime(row["slot_date"], row["time_slot"])
+                if slot_dt - now_utc < timedelta(hours=2):
+                    blocked = True
+                if blocked:
+                    continue
+                suggestions.append((row["slot_date"], row["time_slot"]))
+                if len(suggestions) >= limit:
+                    return suggestions
+        return suggestions
+
+    def _format_alternative_slots(self, slots: List[Tuple[str, str]]) -> str:
+        if not slots:
+            return ""
+        compact = ", ".join(f"{slot_date} {time_slot}" for slot_date, time_slot in slots[:5])
+        return f" Next available: {compact}"
 
     def _parse_iso_date(self, value: str, *, field: str = "date") -> date:
         try:
@@ -2379,7 +2758,7 @@ class ServiceStore:
     def create_booking(self, request: BookingRequest) -> Booking:
         requested_slot = self._parse_slot_datetime(request.date, request.time_slot)
         self._assert_provider_exists(request.provider_id)
-        self.ensure_availability(provider_id=request.provider_id, start_date=requested_slot.date(), days=1)
+        self.ensure_availability(provider_id=request.provider_id, start_date=requested_slot.date(), days=3)
 
         with self._lock:
             with self._connect() as conn:
@@ -2392,9 +2771,23 @@ class ServiceStore:
                     (request.provider_id, request.date, request.time_slot),
                 ).fetchone()
                 if not slot:
-                    raise ServiceStoreValidationError("Time slot not available")
+                    alternatives = self._suggest_available_slots(
+                        conn,
+                        provider_id=request.provider_id,
+                        start_date=requested_slot.date(),
+                    )
+                    raise ServiceStoreValidationError(
+                        f"Time slot not available.{self._format_alternative_slots(alternatives)}"
+                    )
                 if requested_slot - datetime.utcnow() < timedelta(hours=2):
-                    raise ServiceStoreValidationError("Booking cutoff applies for this slot")
+                    alternatives = self._suggest_available_slots(
+                        conn,
+                        provider_id=request.provider_id,
+                        start_date=requested_slot.date(),
+                    )
+                    raise ServiceStoreValidationError(
+                        f"Booking cutoff applies for this slot.{self._format_alternative_slots(alternatives)}"
+                    )
 
                 conn.execute(
                     """
@@ -2405,7 +2798,14 @@ class ServiceStore:
                 )
                 blocked, reason = self._slot_is_blocked(conn, request.provider_id, request.date, request.time_slot)
                 if blocked:
-                    raise ServiceStoreConflictError(f"Time slot unavailable ({reason})")
+                    alternatives = self._suggest_available_slots(
+                        conn,
+                        provider_id=request.provider_id,
+                        start_date=requested_slot.date(),
+                    )
+                    raise ServiceStoreConflictError(
+                        f"Time slot unavailable ({reason}).{self._format_alternative_slots(alternatives)}"
+                    )
 
                 booking = Booking(
                     id=f"b_{uuid4().hex[:8]}",
@@ -2492,6 +2892,57 @@ class ServiceStore:
                 time_slot=row["time_slot"],
                 note=row["note"],
                 status=row["status"],
+            )
+            for row in rows
+        ]
+
+    def list_booking_status_history(
+        self,
+        *,
+        booking_id: str,
+        requester_user_id: str,
+    ) -> List[BookingStatusHistoryEntry]:
+        normalized_requester = requester_user_id.strip()
+        if not normalized_requester:
+            raise ServiceStoreValidationError("requester_user_id is required")
+
+        with self._lock:
+            with self._connect() as conn:
+                booking_row = conn.execute(
+                    "SELECT * FROM bookings WHERE id = ?",
+                    (booking_id,),
+                ).fetchone()
+                if not booking_row:
+                    raise ServiceStoreNotFoundError("Booking not found")
+
+                provider_owner = conn.execute(
+                    "SELECT user_id FROM provider_owners WHERE provider_id = ?",
+                    (booking_row["provider_id"],),
+                ).fetchone()
+                owner_user_id = str(booking_row["owner_user_id"])
+                provider_user_id = str(provider_owner["user_id"]) if provider_owner else ""
+                if normalized_requester not in {owner_user_id, provider_user_id}:
+                    raise ServiceStorePermissionError("Only booking owner or provider can view booking history")
+
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM booking_status_history
+                    WHERE booking_id = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (booking_id,),
+                ).fetchall()
+
+        return [
+            BookingStatusHistoryEntry(
+                id=row["id"],
+                booking_id=row["booking_id"],
+                actor_user_id=row["actor_user_id"],
+                from_status=row["from_status"],
+                to_status=row["to_status"],
+                note=row["note"],
+                created_at=row["created_at"],
             )
             for row in rows
         ]
@@ -2586,8 +3037,64 @@ class ServiceStore:
                         raise ServiceStorePermissionError("Only owner can apply this status")
                 if next_status == "rescheduled" and update.actor_user_id != provider_user_id:
                     raise ServiceStorePermissionError("Only provider can finalize reschedule")
+                if next_status != "rescheduled" and ((update.date or "").strip() or (update.time_slot or "").strip()):
+                    raise ServiceStoreValidationError("date/time_slot can only be provided when status is rescheduled")
 
-                conn.execute("UPDATE bookings SET status = ?, note = ? WHERE id = ?", (next_status, update.note or row["note"], booking_id))
+                updated_note = update.note or row["note"]
+                history_note = update.note
+                if next_status == "rescheduled":
+                    target_date = (update.date or "").strip()
+                    target_time_slot = (update.time_slot or "").strip()
+                    if not target_date or not target_time_slot:
+                        raise ServiceStoreValidationError("Rescheduled status requires date and time_slot")
+
+                    target_slot = self._parse_slot_datetime(target_date, target_time_slot)
+                    if target_slot - datetime.utcnow() < timedelta(hours=2):
+                        raise ServiceStoreValidationError("Booking cutoff applies for this slot")
+
+                    self._ensure_availability_with_conn(
+                        conn=conn,
+                        provider_id=row["provider_id"],
+                        start_date=target_slot.date(),
+                        days=3,
+                    )
+                    slot = conn.execute(
+                        """
+                        SELECT id FROM availability_slots
+                        WHERE provider_id = ? AND slot_date = ? AND time_slot = ?
+                        """,
+                        (row["provider_id"], target_date, target_time_slot),
+                    ).fetchone()
+                    if not slot:
+                        raise ServiceStoreValidationError("Reschedule target slot not available")
+
+                    blocked, reason = self._slot_is_blocked(
+                        conn,
+                        row["provider_id"],
+                        target_date,
+                        target_time_slot,
+                        ignore_booking_id=booking_id,
+                    )
+                    if blocked:
+                        raise ServiceStoreConflictError(f"Reschedule target unavailable ({reason})")
+
+                    if not update.note.strip():
+                        updated_note = f"Rescheduled to {target_date} {target_time_slot}"
+                    history_note = updated_note
+                    conn.execute(
+                        """
+                        UPDATE bookings
+                        SET status = ?, note = ?, booking_date = ?, time_slot = ?
+                        WHERE id = ?
+                        """,
+                        (next_status, updated_note, target_date, target_time_slot, booking_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE bookings SET status = ?, note = ? WHERE id = ?",
+                        (next_status, updated_note, booking_id),
+                    )
+
                 conn.execute(
                     """
                     INSERT INTO booking_status_history (id, booking_id, actor_user_id, from_status, to_status, note, created_at)
@@ -2599,7 +3106,7 @@ class ServiceStore:
                         update.actor_user_id,
                         current_status,
                         next_status,
-                        update.note,
+                        history_note,
                         datetime.utcnow().isoformat(),
                     ),
                 )
@@ -3016,6 +3523,64 @@ class ServiceStore:
                 conn.commit()
                 updated = conn.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
         return self._row_to_provider(updated, owner_user_id=owner_user_id)
+
+    def delete_user_data(self, *, user_id: str) -> None:
+        clean_user = user_id.strip()
+        if not clean_user:
+            return
+        with self._lock:
+            with self._connect() as conn:
+                owned_rows = conn.execute(
+                    "SELECT provider_id FROM provider_owners WHERE user_id = ?",
+                    (clean_user,),
+                ).fetchall()
+                owned_provider_ids = [str(row["provider_id"]) for row in owned_rows]
+                if owned_provider_ids:
+                    conn.executemany(
+                        "DELETE FROM reviews WHERE provider_id = ?",
+                        [(provider_id,) for provider_id in owned_provider_ids],
+                    )
+                    conn.executemany(
+                        "DELETE FROM availability_slots WHERE provider_id = ?",
+                        [(provider_id,) for provider_id in owned_provider_ids],
+                    )
+                    conn.executemany(
+                        "DELETE FROM provider_blackout_slots WHERE provider_id = ?",
+                        [(provider_id,) for provider_id in owned_provider_ids],
+                    )
+                    conn.executemany(
+                        "DELETE FROM bookings WHERE provider_id = ?",
+                        [(provider_id,) for provider_id in owned_provider_ids],
+                    )
+                    conn.executemany(
+                        "DELETE FROM booking_holds WHERE provider_id = ?",
+                        [(provider_id,) for provider_id in owned_provider_ids],
+                    )
+                    conn.executemany(
+                        "DELETE FROM quote_request_targets WHERE provider_id = ?",
+                        [(provider_id,) for provider_id in owned_provider_ids],
+                    )
+                    conn.executemany(
+                        "DELETE FROM quote_target_offers WHERE provider_id = ?",
+                        [(provider_id,) for provider_id in owned_provider_ids],
+                    )
+                    conn.executemany(
+                        "DELETE FROM vet_groomer_verifications WHERE provider_id = ?",
+                        [(provider_id,) for provider_id in owned_provider_ids],
+                    )
+                    conn.executemany(
+                        "DELETE FROM providers WHERE id = ?",
+                        [(provider_id,) for provider_id in owned_provider_ids],
+                    )
+                conn.execute("DELETE FROM provider_owners WHERE user_id = ?", (clean_user,))
+                conn.execute("DELETE FROM bookings WHERE owner_user_id = ?", (clean_user,))
+                conn.execute("DELETE FROM booking_holds WHERE owner_user_id = ?", (clean_user,))
+                conn.execute("DELETE FROM booking_status_history WHERE actor_user_id = ?", (clean_user,))
+                conn.execute("DELETE FROM quote_requests WHERE user_id = ?", (clean_user,))
+                conn.execute("DELETE FROM quote_request_targets WHERE owner_user_id = ?", (clean_user,))
+                conn.execute("DELETE FROM quote_target_offers WHERE actor_user_id = ?", (clean_user,))
+                conn.execute("DELETE FROM vet_profiles WHERE user_id = ?", (clean_user,))
+                conn.commit()
 
     def _resolve_origin(
         self,

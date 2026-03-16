@@ -136,6 +136,8 @@ def upsert_profile(payload: UserProfileUpsertRequest, authorization: Optional[st
             secondary_dog_name=payload.secondary_dog_name,
             secondary_dog_age_months=payload.secondary_dog_age_months,
             secondary_dog_photo_url=payload.secondary_dog_photo_url,
+            secondary_dog_gender=payload.secondary_dog_gender,
+            secondary_dog_weight_kg=payload.secondary_dog_weight_kg,
             bio=payload.bio,
             suburb=payload.suburb,
             favorite_suburbs=payload.favorite_suburbs,

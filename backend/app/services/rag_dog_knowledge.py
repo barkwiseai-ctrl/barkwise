@@ -1,7 +1,12 @@
+import json
+import logging
+from pathlib import Path
 from typing import Any, Dict, List
 
+logger = logging.getLogger(__name__)
 
-TRUSTED_DOG_KNOWLEDGE: List[Dict[str, Any]] = [
+
+BASE_TRUSTED_DOG_KNOWLEDGE: List[Dict[str, Any]] = [
     {
         "id": "kb_aaha_vax_2022",
         "title": "Canine Vaccination Principles",
@@ -114,3 +119,61 @@ TRUSTED_DOG_KNOWLEDGE: List[Dict[str, Any]] = [
         ),
     },
 ]
+
+RESOURCE_PATH = Path(__file__).resolve().parents[1] / "resources" / "trusted_dog_knowledge_phase1.json"
+MIN_REQUIRED_KEYS = {"id", "title", "source", "url", "topics", "content"}
+
+
+def _load_external_trusted_knowledge() -> List[Dict[str, Any]]:
+    if not RESOURCE_PATH.exists():
+        logger.info("Trusted dog knowledge resource not found at %s; using base knowledge only.", RESOURCE_PATH)
+        return []
+
+    try:
+        payload = json.loads(RESOURCE_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to parse trusted dog knowledge resource: %s", exc)
+        return []
+
+    if not isinstance(payload, list):
+        logger.warning("Trusted dog knowledge resource must be a JSON array: %s", RESOURCE_PATH)
+        return []
+
+    valid: List[Dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        if not MIN_REQUIRED_KEYS.issubset(set(item.keys())):
+            continue
+        normalized = {
+            "id": str(item["id"]).strip(),
+            "title": str(item["title"]).strip(),
+            "source": str(item["source"]).strip(),
+            "url": str(item["url"]).strip(),
+            "topics": [str(topic).strip() for topic in item.get("topics", []) if str(topic).strip()],
+            "content": str(item["content"]).strip(),
+        }
+        if not normalized["id"] or not normalized["title"] or not normalized["content"]:
+            continue
+        valid.append(normalized)
+    return valid
+
+
+def _merge_knowledge(*batches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for batch in batches:
+        for item in batch:
+            item_id = str(item.get("id", "")).strip()
+            if not item_id or item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+            merged.append(item)
+    return merged
+
+
+TRUSTED_DOG_KNOWLEDGE: List[Dict[str, Any]] = _merge_knowledge(
+    BASE_TRUSTED_DOG_KNOWLEDGE,
+    _load_external_trusted_knowledge(),
+)
+

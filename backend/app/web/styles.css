@@ -168,6 +168,21 @@ button {
   color: var(--muted);
 }
 
+.footer-note {
+  text-align: right;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.footer-note a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.footer-note a:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 720px) {
   .grid2 {
     grid-template-columns: 1fr;

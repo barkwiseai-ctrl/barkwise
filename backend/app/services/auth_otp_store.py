@@ -122,6 +122,8 @@ class AuthOtpStore:
                         secondary_dog_name TEXT NOT NULL,
                         secondary_dog_age_months INTEGER NOT NULL DEFAULT 0,
                         secondary_dog_photo_url TEXT NOT NULL,
+                        secondary_dog_gender TEXT NOT NULL,
+                        secondary_dog_weight_kg TEXT NOT NULL,
                         bio TEXT NOT NULL,
                         suburb TEXT NOT NULL,
                         favorite_suburbs TEXT NOT NULL,
@@ -167,6 +169,8 @@ class AuthOtpStore:
             "secondary_dog_name": "TEXT NOT NULL DEFAULT ''",
             "secondary_dog_age_months": "INTEGER NOT NULL DEFAULT 0",
             "secondary_dog_photo_url": "TEXT NOT NULL DEFAULT ''",
+            "secondary_dog_gender": "TEXT NOT NULL DEFAULT ''",
+            "secondary_dog_weight_kg": "TEXT NOT NULL DEFAULT ''",
             "bio": "TEXT NOT NULL DEFAULT ''",
             "suburb": "TEXT NOT NULL DEFAULT ''",
             "favorite_suburbs": "TEXT NOT NULL DEFAULT '[]'",
@@ -273,6 +277,8 @@ class AuthOtpStore:
             secondary_dog_name="",
             secondary_dog_age_months=0,
             secondary_dog_photo_url="",
+            secondary_dog_gender="",
+            secondary_dog_weight_kg="",
             bio="",
             suburb="",
             favorite_suburbs=[],
@@ -345,6 +351,8 @@ class AuthOtpStore:
             secondary_dog_name=str(row["secondary_dog_name"]),
             secondary_dog_age_months=_to_int(row["secondary_dog_age_months"]),
             secondary_dog_photo_url=str(row["secondary_dog_photo_url"]),
+            secondary_dog_gender=str(row["secondary_dog_gender"]),
+            secondary_dog_weight_kg=str(row["secondary_dog_weight_kg"]),
             bio=str(row["bio"]),
             suburb=str(row["suburb"]),
             favorite_suburbs=favorite_suburbs,
@@ -389,7 +397,7 @@ class AuthOtpStore:
                     SELECT
                         user_id, display_name, email, phone, human_pronouns, human_role_label,
                         dog_name, dog_age_months, dog_breed_mix, dog_sex_neuter, dog_weight_class, dog_photo_urls,
-                        secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url,
+                        secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url, secondary_dog_gender, secondary_dog_weight_kg,
                         bio, suburb, favorite_suburbs,
                         play_energy_level, play_style, social_confidence, trigger_notes, ideal_match,
                         walk_preferences, training_style, feeding_rules, consent_boundaries,
@@ -415,14 +423,14 @@ class AuthOtpStore:
                     INSERT INTO user_profiles (
                         user_id, display_name, email, phone, human_pronouns, human_role_label,
                         dog_name, dog_age_months, dog_breed_mix, dog_sex_neuter, dog_weight_class, dog_photo_urls,
-                        secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url,
+                        secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url, secondary_dog_gender, secondary_dog_weight_kg,
                         bio, suburb, favorite_suburbs,
                         play_energy_level, play_style, social_confidence, trigger_notes, ideal_match,
                         walk_preferences, training_style, feeding_rules, consent_boundaries,
                         vaccination_status, microchipped, recall_trained, leash_reliability,
                         emergency_contact_name, emergency_contact_phone, field_visibility, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         profile.user_id,
@@ -440,6 +448,8 @@ class AuthOtpStore:
                         profile.secondary_dog_name,
                         profile.secondary_dog_age_months,
                         profile.secondary_dog_photo_url,
+                        profile.secondary_dog_gender,
+                        profile.secondary_dog_weight_kg,
                         profile.bio,
                         profile.suburb,
                         json.dumps(profile.favorite_suburbs),
@@ -492,6 +502,8 @@ class AuthOtpStore:
         secondary_dog_name: str,
         secondary_dog_age_months: int,
         secondary_dog_photo_url: str,
+        secondary_dog_gender: str,
+        secondary_dog_weight_kg: str,
         bio: str,
         suburb: str,
         favorite_suburbs: list[str],
@@ -533,6 +545,8 @@ class AuthOtpStore:
             secondary_dog_name=secondary_dog_name.strip(),
             secondary_dog_age_months=max(0, int(secondary_dog_age_months)),
             secondary_dog_photo_url=secondary_dog_photo_url.strip(),
+            secondary_dog_gender=secondary_dog_gender.strip().lower(),
+            secondary_dog_weight_kg=secondary_dog_weight_kg.strip(),
             bio=bio.strip(),
             suburb=suburb.strip(),
             favorite_suburbs=[value.strip() for value in favorite_suburbs if value.strip()][:8],
@@ -561,14 +575,14 @@ class AuthOtpStore:
                     INSERT INTO user_profiles (
                         user_id, display_name, email, phone, human_pronouns, human_role_label,
                         dog_name, dog_age_months, dog_breed_mix, dog_sex_neuter, dog_weight_class, dog_photo_urls,
-                        secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url,
+                        secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url, secondary_dog_gender, secondary_dog_weight_kg,
                         bio, suburb, favorite_suburbs,
                         play_energy_level, play_style, social_confidence, trigger_notes, ideal_match,
                         walk_preferences, training_style, feeding_rules, consent_boundaries,
                         vaccination_status, microchipped, recall_trained, leash_reliability,
                         emergency_contact_name, emergency_contact_phone, field_visibility, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET
                         display_name = excluded.display_name,
                         email = excluded.email,
@@ -584,6 +598,8 @@ class AuthOtpStore:
                         secondary_dog_name = excluded.secondary_dog_name,
                         secondary_dog_age_months = excluded.secondary_dog_age_months,
                         secondary_dog_photo_url = excluded.secondary_dog_photo_url,
+                        secondary_dog_gender = excluded.secondary_dog_gender,
+                        secondary_dog_weight_kg = excluded.secondary_dog_weight_kg,
                         bio = excluded.bio,
                         suburb = excluded.suburb,
                         favorite_suburbs = excluded.favorite_suburbs,
@@ -621,6 +637,8 @@ class AuthOtpStore:
                         normalized_profile.secondary_dog_name,
                         normalized_profile.secondary_dog_age_months,
                         normalized_profile.secondary_dog_photo_url,
+                        normalized_profile.secondary_dog_gender,
+                        normalized_profile.secondary_dog_weight_kg,
                         normalized_profile.bio,
                         normalized_profile.suburb,
                         json.dumps(normalized_profile.favorite_suburbs),

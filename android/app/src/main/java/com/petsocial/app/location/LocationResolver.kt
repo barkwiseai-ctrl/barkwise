@@ -11,6 +11,9 @@ import androidx.core.content.ContextCompat
 import com.google.android.gms.location.CurrentLocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.tasks.CancellationTokenSource
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -22,9 +25,8 @@ data class LocationSnapshot(
 
 object LocationResolver {
     fun hasLocationPermission(context: Context): Boolean {
-        val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)
-        return fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
+        return coarse == PackageManager.PERMISSION_GRANTED
     }
 
     @SuppressLint("MissingPermission")
@@ -85,5 +87,20 @@ object LocationResolver {
 
     suspend fun detectSuburb(context: Context): String? {
         return detectLocation(context)?.suburb
+    }
+
+    fun observeLocation(
+        context: Context,
+        pollIntervalMs: Long = 30_000L,
+    ): Flow<LocationSnapshot> = flow {
+        var lastSnapshot: LocationSnapshot? = null
+        while (true) {
+            val next = detectLocation(context)
+            if (next != null && next != lastSnapshot) {
+                emit(next)
+                lastSnapshot = next
+            }
+            delay(pollIntervalMs.coerceAtLeast(10_000L))
+        }
     }
 }

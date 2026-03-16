@@ -588,6 +588,38 @@ class PetSocialRepository(
         ),
     )
 
+    suspend fun createServiceQuoteOffer(
+        quoteRequestId: String,
+        providerId: String,
+        priceCents: Int,
+        proposedDate: String,
+        proposedTimeSlot: String,
+        expiresAt: String,
+        currency: String = "AUD",
+        note: String = "",
+    ): ServiceQuoteOffer = api.createQuoteOffer(
+        quoteRequestId = quoteRequestId,
+        payload = ServiceQuoteOfferCreateRequest(
+            actorUserId = userId,
+            providerId = providerId,
+            priceCents = priceCents,
+            currency = currency,
+            proposedDate = proposedDate,
+            proposedTimeSlot = proposedTimeSlot,
+            expiresAt = expiresAt,
+            note = note,
+        ),
+    )
+
+    suspend fun loadProviderInbox(
+        includeResolved: Boolean = false,
+        limit: Int = 50,
+    ): ProviderInboxResponse = api.getProviderInbox(
+        actorUserId = userId,
+        includeResolved = includeResolved,
+        limit = limit,
+    )
+
     suspend fun loadVetCoachProfile(): VetCoachProfile = api.getVetCoachProfile(userId = userId)
 
     suspend fun submitVetCoachSession(
@@ -747,6 +779,9 @@ class PetSocialRepository(
     suspend fun createLostFoundPost(payload: CommunityPostCreate): CommunityPost =
         createCommunityPostWithFallback(payload.copy(type = "lost_found", userId = payload.userId ?: userId))
 
+    suspend fun createCommunityPost(payload: CommunityPostCreate): CommunityPost =
+        createCommunityPostWithFallback(payload.copy(userId = payload.userId ?: userId))
+
     suspend fun createCommunityGroupPost(title: String, body: String, suburb: String): CommunityPost =
         createCommunityPostWithFallback(
             CommunityPostCreate(
@@ -766,6 +801,12 @@ class PetSocialRepository(
                 status = status,
                 note = note,
             ),
+        )
+
+    suspend fun deleteCommunityPost(postId: String): Map<String, String> =
+        api.deletePost(
+            postId = postId,
+            requesterUserId = userId,
         )
 
     suspend fun reportCommunityTarget(
@@ -879,6 +920,12 @@ class PetSocialRepository(
             windowHours = windowHours,
         )
 
+    suspend fun loadCommunityActivationFunnel(windowHours: Int = 72): CommunityActivationFunnel =
+        api.getCommunityActivationFunnel(
+            requesterUserId = userId,
+            windowHours = windowHours,
+        )
+
     suspend fun trackCommunityDiagnostic(
         kind: String,
         message: String,
@@ -981,6 +1028,11 @@ class PetSocialRepository(
         suburb: String,
         date: String,
         groupId: String? = null,
+        locationName: String? = null,
+        locationLatitude: Double? = null,
+        locationLongitude: Double? = null,
+        recurrence: String = "none",
+        recurrenceInterval: Int = 1,
     ): CommunityEvent = createCommunityEventWithFallback(
         CommunityEventCreateRequest(
             userId = userId,
@@ -989,6 +1041,40 @@ class PetSocialRepository(
             suburb = suburb,
             date = date,
             groupId = groupId,
+            locationName = locationName,
+            locationLatitude = locationLatitude,
+            locationLongitude = locationLongitude,
+            recurrence = recurrence.lowercase().ifBlank { "none" },
+            recurrenceInterval = recurrenceInterval.coerceIn(1, 30),
+        ),
+    )
+
+    suspend fun updateCommunityEvent(
+        eventId: String,
+        title: String,
+        description: String,
+        date: String,
+        groupId: String? = null,
+        locationName: String? = null,
+        locationLatitude: Double? = null,
+        locationLongitude: Double? = null,
+        clearLocation: Boolean = false,
+        recurrence: String = "none",
+        recurrenceInterval: Int = 1,
+    ): CommunityEvent = api.updateEvent(
+        eventId = eventId,
+        payload = CommunityEventUpdateRequest(
+            userId = userId,
+            title = title,
+            description = description,
+            date = date,
+            groupId = groupId,
+            locationName = locationName,
+            locationLatitude = locationLatitude,
+            locationLongitude = locationLongitude,
+            clearLocation = clearLocation,
+            recurrence = recurrence.lowercase().ifBlank { "none" },
+            recurrenceInterval = recurrenceInterval.coerceIn(1, 30),
         ),
     )
 
@@ -1123,6 +1209,12 @@ class PetSocialRepository(
         return response
     }
 
+    suspend fun issueFriendQr(): AuthFriendQrIssueResponse = api.issueFriendQr()
+
+    suspend fun verifyFriendQr(friendToken: String): AuthFriendQrVerifyResponse = api.verifyFriendQr(
+        AuthFriendQrVerifyRequest(friendToken = friendToken),
+    )
+
     suspend fun logout(): Boolean = runCatching {
         api.logout()
         authToken = ""
@@ -1156,6 +1248,8 @@ class PetSocialRepository(
         secondaryDogName: String,
         secondaryDogAgeMonths: Int,
         secondaryDogPhotoUrl: String,
+        secondaryDogGender: String,
+        secondaryDogWeightKg: String,
         bio: String,
         suburb: String,
         favoriteSuburbs: List<String>,
@@ -1192,6 +1286,8 @@ class PetSocialRepository(
             secondaryDogName = secondaryDogName,
             secondaryDogAgeMonths = secondaryDogAgeMonths,
             secondaryDogPhotoUrl = secondaryDogPhotoUrl,
+            secondaryDogGender = secondaryDogGender,
+            secondaryDogWeightKg = secondaryDogWeightKg,
             bio = bio,
             suburb = suburb,
             favoriteSuburbs = favoriteSuburbs,

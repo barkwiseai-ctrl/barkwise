@@ -1,22 +1,28 @@
 import base64
 from datetime import datetime, timedelta, timezone
 from math import asin, cos, radians, sin, sqrt
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
+import app.auth as auth_module
 from app.auth import assert_actor_authorized, resolve_request_user
 from app.data import KNOWN_SUBURBS, community_events, community_posts, event_rsvps, group_invites, group_memberships, groups
 from app.models import (
     CommunityAnalyticsEventCreateRequest,
     CommunityBlockUserRequest,
     CommunityBlockUserResponse,
+    CommunityComment,
+    CommunityCommentCreateRequest,
+    CommunityCommentModerationRequest,
     CommunityDiagnosticEventCreateRequest,
     CommunityEvent,
     CommunityEventCreateRequest,
     CommunityEventRsvpRequest,
+    CommunityEventUpdateRequest,
     CommunityEventView,
     CommunityFunnelMetrics,
     CommunityPostPhotoUploadResponse,
@@ -48,6 +54,9 @@ from app.models import (
     GroupView,
 )
 from app.services.notification_store import notification_store
+from app.services.community_store import community_store, decode_state_payload, encode_state_payload
+from app.services.rate_limiting import SlidingWindowHitStore, read_positive_int_env
+from app.services.security_audit import record_rate_limit_hit
 
 router = APIRouter(prefix="/community", tags=["community"])
 INVITE_TTL_HOURS = 48
@@ -58,7 +67,24 @@ GROUP_MEMBER_REWARD_POINTS: Dict[Tuple[str, str], Dict[str, int]] = {}
 POST_RATE_LIMIT_WINDOW = timedelta(minutes=10)
 POST_RATE_LIMIT_MAX_POSTS = 4
 POST_RATE_LIMIT_HISTORY: Dict[str, list[datetime]] = {}
+SHARE_POINT_DEFAULT_SCOPE = "friends"
+SHARE_POINT_DEFAULT_PRECISION = "approximate"
+SHARE_POINT_MAX_SCHEDULE_HOURS = 24
+SHARE_POINT_NOW_DURATION = timedelta(hours=1)
+SHARE_POINT_RETENTION_DAYS = 7
+INVITE_CREATE_RATE_LIMIT_MAX = read_positive_int_env("COMMUNITY_INVITE_CREATE_RATE_LIMIT_MAX", 8)
+INVITE_CREATE_RATE_LIMIT_WINDOW = timedelta(
+    seconds=read_positive_int_env("COMMUNITY_INVITE_CREATE_RATE_LIMIT_WINDOW_SECONDS", 600)
+)
+ONBOARDING_COMPLETE_RATE_LIMIT_MAX = read_positive_int_env("COMMUNITY_ONBOARDING_COMPLETE_RATE_LIMIT_MAX", 8)
+ONBOARDING_COMPLETE_RATE_LIMIT_WINDOW = timedelta(
+    seconds=read_positive_int_env("COMMUNITY_ONBOARDING_COMPLETE_RATE_LIMIT_WINDOW_SECONDS", 600)
+)
+_COMMUNITY_ACTION_RATE_LIMIT_STORE = SlidingWindowHitStore()
+# Test compatibility: mutable history reference.
+COMMUNITY_ACTION_RATE_LIMIT_HISTORY = _COMMUNITY_ACTION_RATE_LIMIT_STORE.history
 BLOCKED_USERS_BY_USER: Dict[str, set[str]] = {}
+COMMUNITY_COMMENTS_BY_POST: Dict[str, list[CommunityComment]] = {}
 COMMUNITY_REPORTS: list[CommunityReport] = []
 COMMUNITY_ANALYTICS_EVENTS: list[Dict[str, Any]] = []
 COMMUNITY_DIAGNOSTIC_EVENTS: list[Dict[str, Any]] = []
@@ -69,7 +95,123 @@ SUBURB_COORDINATES: Dict[str, Tuple[float, float]] = {
     "redfern": (-33.8928, 151.2040),
 }
 ADMIN_USER_IDS = {"admin", "user_1", "user_3"}
-UPLOAD_ROOT = Path(__file__).resolve().parent.parent / "web" / "uploads" / "lost_found"
+UPLOAD_ROOT = Path(
+    os.getenv(
+        "COMMUNITY_UPLOAD_ROOT",
+        str(Path(__file__).resolve().parent.parent / "web" / "uploads" / "lost_found"),
+    )
+)
+
+
+def _persist_community_state() -> None:
+    payload = encode_state_payload(
+        groups=groups,
+        group_memberships=group_memberships,
+        community_posts=community_posts,
+        community_events=community_events,
+        event_rsvps=event_rsvps,
+        group_invites=group_invites,
+        community_comments_by_post=COMMUNITY_COMMENTS_BY_POST,
+        community_reports=COMMUNITY_REPORTS,
+        blocked_users_by_user=BLOCKED_USERS_BY_USER,
+        community_analytics_events=COMMUNITY_ANALYTICS_EVENTS,
+        community_diagnostic_events=COMMUNITY_DIAGNOSTIC_EVENTS,
+        group_badges=GROUP_BADGES,
+        group_challenges=GROUP_CHALLENGES,
+        group_challenge_contributions=GROUP_CHALLENGE_CONTRIBUTIONS,
+        group_member_reward_points=GROUP_MEMBER_REWARD_POINTS,
+        lost_found_followups_sent=LOST_FOUND_FOLLOWUPS_SENT,
+    )
+    community_store.save_state(payload)
+
+
+def _bootstrap_community_state() -> None:
+    payload = community_store.load_state()
+    if not payload:
+        _persist_community_state()
+        return
+    decoded = decode_state_payload(payload)
+    groups[:] = decoded["groups"]
+    group_memberships[:] = decoded["group_memberships"]
+    community_posts[:] = decoded["community_posts"]
+    community_events[:] = decoded["community_events"]
+    event_rsvps[:] = decoded["event_rsvps"]
+    group_invites.clear()
+    group_invites.update(decoded["group_invites"])
+    COMMUNITY_COMMENTS_BY_POST.clear()
+    COMMUNITY_COMMENTS_BY_POST.update(decoded["community_comments_by_post"])
+    COMMUNITY_REPORTS[:] = decoded["community_reports"]
+    BLOCKED_USERS_BY_USER.clear()
+    BLOCKED_USERS_BY_USER.update(decoded["blocked_users_by_user"])
+    COMMUNITY_ANALYTICS_EVENTS[:] = decoded["community_analytics_events"]
+    COMMUNITY_DIAGNOSTIC_EVENTS[:] = decoded["community_diagnostic_events"]
+    GROUP_BADGES.clear()
+    GROUP_BADGES.update(decoded["group_badges"])
+    GROUP_CHALLENGES.clear()
+    GROUP_CHALLENGES.update(decoded["group_challenges"])
+    GROUP_CHALLENGE_CONTRIBUTIONS.clear()
+    GROUP_CHALLENGE_CONTRIBUTIONS.update(decoded["group_challenge_contributions"])
+    GROUP_MEMBER_REWARD_POINTS.clear()
+    GROUP_MEMBER_REWARD_POINTS.update(decoded["group_member_reward_points"])
+    LOST_FOUND_FOLLOWUPS_SENT.clear()
+    LOST_FOUND_FOLLOWUPS_SENT.update(decoded["lost_found_followups_sent"])
+
+
+_bootstrap_community_state()
+
+
+def remove_user_data(user_id: str) -> None:
+    clean_user = user_id.strip()
+    if not clean_user:
+        return
+    original_post_ids = {post.id for post in community_posts if (post.created_by or "").strip() == clean_user}
+    community_posts[:] = [post for post in community_posts if (post.created_by or "").strip() != clean_user]
+    for post_id in list(COMMUNITY_COMMENTS_BY_POST.keys()):
+        if post_id in original_post_ids:
+            COMMUNITY_COMMENTS_BY_POST.pop(post_id, None)
+            continue
+        comments = COMMUNITY_COMMENTS_BY_POST.get(post_id, [])
+        COMMUNITY_COMMENTS_BY_POST[post_id] = [comment for comment in comments if comment.user_id != clean_user]
+        if not COMMUNITY_COMMENTS_BY_POST[post_id]:
+            COMMUNITY_COMMENTS_BY_POST.pop(post_id, None)
+    COMMUNITY_REPORTS[:] = [
+        report
+        for report in COMMUNITY_REPORTS
+        if report.reporter_user_id != clean_user and report.target_id != clean_user
+    ]
+    community_events[:] = [event for event in community_events if event.created_by != clean_user]
+    event_rsvps[:] = [rsvp for rsvp in event_rsvps if rsvp.user_id != clean_user]
+    group_memberships[:] = [membership for membership in group_memberships if membership.user_id != clean_user]
+    group_invites_keys = [token for token, invite in group_invites.items() if invite.get("inviter_user_id") == clean_user]
+    for token in group_invites_keys:
+        group_invites.pop(token, None)
+    BLOCKED_USERS_BY_USER.pop(clean_user, None)
+    for blocked in BLOCKED_USERS_BY_USER.values():
+        blocked.discard(clean_user)
+    COMMUNITY_ANALYTICS_EVENTS[:] = [item for item in COMMUNITY_ANALYTICS_EVENTS if item.get("user_id") != clean_user]
+    COMMUNITY_DIAGNOSTIC_EVENTS[:] = [item for item in COMMUNITY_DIAGNOSTIC_EVENTS if item.get("user_id") != clean_user]
+    for key in list(GROUP_CHALLENGE_CONTRIBUTIONS.keys()):
+        if key[1] == clean_user:
+            GROUP_CHALLENGE_CONTRIBUTIONS.pop(key, None)
+    for key in list(GROUP_MEMBER_REWARD_POINTS.keys()):
+        if key[1] == clean_user:
+            GROUP_MEMBER_REWARD_POINTS.pop(key, None)
+    for key in list(LOST_FOUND_FOLLOWUPS_SENT.keys()):
+        if key[0] in original_post_ids:
+            LOST_FOUND_FOLLOWUPS_SENT.pop(key, None)
+    for group in groups:
+        group.member_count = sum(
+            1
+            for membership in group_memberships
+            if membership.group_id == group.id and membership.status == "member"
+        )
+    for event in community_events:
+        event.attendee_count = sum(
+            1
+            for rsvp in event_rsvps
+            if rsvp.event_id == event.id and rsvp.status == "attending"
+        )
+    _persist_community_state()
 
 
 def _utc_now() -> datetime:
@@ -228,6 +370,44 @@ def _normalize_suburb(suburb: str) -> str:
     return " ".join(suburb.strip().split()).title()
 
 
+def _normalize_event_location(
+    *,
+    location_name: Optional[str],
+    location_latitude: Optional[float],
+    location_longitude: Optional[float],
+) -> tuple[Optional[str], Optional[float], Optional[float]]:
+    clean_location_name = location_name.strip() if location_name else ""
+    if location_latitude is not None and location_longitude is None:
+        raise HTTPException(status_code=400, detail="location_longitude is required when location_latitude is provided")
+    if location_longitude is not None and location_latitude is None:
+        raise HTTPException(status_code=400, detail="location_latitude is required when location_longitude is provided")
+    return clean_location_name or None, location_latitude, location_longitude
+
+
+def _normalize_event_recurrence(
+    recurrence: Optional[str],
+    recurrence_interval: Optional[int],
+) -> tuple[str, int]:
+    clean_recurrence = (recurrence or "none").strip().lower() or "none"
+    if clean_recurrence not in {"none", "daily", "weekly", "monthly"}:
+        raise HTTPException(status_code=400, detail="recurrence must be one of none,daily,weekly,monthly")
+    clean_interval = recurrence_interval if recurrence_interval is not None else 1
+    if clean_interval < 1 or clean_interval > 30:
+        raise HTTPException(status_code=400, detail="recurrence_interval must be between 1 and 30")
+    if clean_recurrence == "none":
+        clean_interval = 1
+    return clean_recurrence, clean_interval
+
+
+def _normalize_event_group_id(group_id: Optional[str]) -> Optional[str]:
+    clean_group_id = group_id.strip() if group_id else ""
+    if not clean_group_id:
+        return None
+    if not next((g for g in groups if g.id == clean_group_id), None):
+        raise HTTPException(status_code=404, detail="Group not found")
+    return clean_group_id
+
+
 def _parse_created_at(value: Optional[str]) -> datetime:
     if not value:
         return datetime.min.replace(tzinfo=timezone.utc)
@@ -235,6 +415,77 @@ def _parse_created_at(value: Optional[str]) -> datetime:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _parse_iso_datetime_or_400(value: str, field_name: str) -> datetime:
+    clean = value.strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail=f"{field_name} is required")
+    try:
+        parsed = datetime.fromisoformat(clean.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be ISO datetime with timezone") from exc
+    if parsed.tzinfo is None:
+        raise HTTPException(status_code=400, detail=f"{field_name} must include timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_share_scope(value: Optional[str]) -> str:
+    clean = (value or "").strip().lower()
+    return "community" if clean == "community" else SHARE_POINT_DEFAULT_SCOPE
+
+
+def _normalize_share_precision(value: Optional[str]) -> str:
+    clean = (value or "").strip().lower()
+    return "exact" if clean == "exact" else SHARE_POINT_DEFAULT_PRECISION
+
+
+def _apply_share_precision(latitude: float, longitude: float, precision: str) -> tuple[float, float]:
+    if precision != "approximate":
+        return latitude, longitude
+    # 3 decimal places is roughly ~100m and avoids exposing exact home addresses.
+    return round(latitude, 3), round(longitude, 3)
+
+
+def _member_group_ids(user_id: str) -> set[str]:
+    clean = user_id.strip()
+    if not clean:
+        return set()
+    return {
+        membership.group_id
+        for membership in group_memberships
+        if membership.user_id == clean and membership.status == "member"
+    }
+
+
+def _users_share_member_group(user_a: str, user_b: str) -> bool:
+    clean_a = user_a.strip()
+    clean_b = user_b.strip()
+    if not clean_a or not clean_b:
+        return False
+    if clean_a == clean_b:
+        return True
+    return bool(_member_group_ids(clean_a) & _member_group_ids(clean_b))
+
+
+def _prune_expired_share_points() -> None:
+    prune_before = _utc_now() - timedelta(days=SHARE_POINT_RETENTION_DAYS)
+    removable_post_ids: set[str] = set()
+    for post in community_posts:
+        if post.type != "share_point" or not post.expires_at:
+            continue
+        if _parse_created_at(post.expires_at) <= prune_before:
+            removable_post_ids.add(post.id)
+    if not removable_post_ids:
+        return
+    community_posts[:] = [post for post in community_posts if post.id not in removable_post_ids]
+    for post_id in removable_post_ids:
+        COMMUNITY_COMMENTS_BY_POST.pop(post_id, None)
+    for followup_key in list(LOST_FOUND_FOLLOWUPS_SENT.keys()):
+        post_id, _ = followup_key
+        if post_id in removable_post_ids:
+            LOST_FOUND_FOLLOWUPS_SENT.pop(followup_key, None)
+    _persist_community_state()
 
 
 def _infer_alert_type(title: str, body: str) -> str:
@@ -260,6 +511,27 @@ def _resolve_actor_user(
     return actor_user_id
 
 
+def _check_community_action_rate_limit(
+    *,
+    bucket: str,
+    key: str,
+    window: timedelta,
+    limit: int,
+) -> None:
+    if _COMMUNITY_ACTION_RATE_LIMIT_STORE.allow_and_add_hit(key=key, window=window, limit=limit):
+        return
+    record_rate_limit_hit(
+        surface=f"community_{bucket}",
+        key=key,
+        detail="community_action_rate_limit_exceeded",
+    )
+    window_minutes = max(1, int(window.total_seconds() // 60))
+    raise HTTPException(
+        status_code=429,
+        detail=f"Too many community {bucket} requests. Limit {limit} per {window_minutes} minutes.",
+    )
+
+
 def _ensure_post_owner(post: CommunityPost, actor_user_id: str) -> None:
     owner = (post.created_by or "").strip()
     if not owner:
@@ -274,6 +546,25 @@ def _derived_post_owner(post: CommunityPost) -> str:
         return owner
     seed = abs(hash(post.id)) % 4
     return f"user_{seed + 1}"
+
+
+def _find_post_or_404(post_id: str) -> CommunityPost:
+    post = next((row for row in community_posts if row.id == post_id), None)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return post
+
+
+def _comments_for_post(post_id: str) -> list[CommunityComment]:
+    return COMMUNITY_COMMENTS_BY_POST.setdefault(post_id, [])
+
+
+def _find_comment_or_404(comment_id: str) -> Tuple[str, int, CommunityComment]:
+    for post_id, comments in COMMUNITY_COMMENTS_BY_POST.items():
+        for idx, comment in enumerate(comments):
+            if comment.id == comment_id:
+                return post_id, idx, comment
+    raise HTTPException(status_code=404, detail="Comment not found")
 
 
 def _record_analytics_event(
@@ -292,7 +583,7 @@ def _record_analytics_event(
             "category": category,
             "metadata": metadata or {},
             "duration_ms": duration_ms,
-            "created_at": _utc_now(),
+            "created_at": _utc_now().isoformat(),
         }
     )
     if len(COMMUNITY_ANALYTICS_EVENTS) > 4000:
@@ -315,7 +606,7 @@ def _record_diagnostic_event(
             "message": message.strip(),
             "context": context or {},
             "duration_ms": duration_ms,
-            "created_at": _utc_now(),
+            "created_at": _utc_now().isoformat(),
         }
     )
     if len(COMMUNITY_DIAGNOSTIC_EVENTS) > 4000:
@@ -415,6 +706,7 @@ def _send_nearby_lost_found_notifications(*, post: CommunityPost) -> None:
 
 def _dispatch_lost_found_followups() -> None:
     now = _utc_now()
+    changed = False
     for idx, post in enumerate(community_posts):
         if post.type != "lost_found":
             continue
@@ -435,6 +727,7 @@ def _dispatch_lost_found_followups() -> None:
                 deep_link=f"post:{post.id}",
             )
             LOST_FOUND_FOLLOWUPS_SENT[followup_key] = now.isoformat()
+            changed = True
 
         auto_expire_key = (post.id, "auto_expired")
         if age_hours >= 72 and auto_expire_key not in LOST_FOUND_FOLLOWUPS_SENT:
@@ -447,6 +740,7 @@ def _dispatch_lost_found_followups() -> None:
             )
             community_posts[idx] = updated
             LOST_FOUND_FOLLOWUPS_SENT[auto_expire_key] = now.isoformat()
+            changed = True
             if updated.created_by:
                 notification_store.create(
                     user_id=updated.created_by,
@@ -455,6 +749,8 @@ def _dispatch_lost_found_followups() -> None:
                     category="community",
                     deep_link=f"post:{updated.id}",
                 )
+    if changed:
+        _persist_community_state()
 
 
 def ensure_official_group(suburb: str) -> Group:
@@ -537,6 +833,7 @@ for seeded_group in groups:
     _active_group_challenges(seeded_group)
 
 _seed_group_rewards()
+_persist_community_state()
 
 
 def _membership_status(group_id: str, user_id: Optional[str]) -> str:
@@ -603,8 +900,17 @@ def list_groups(
 @router.post("/invites", response_model=GroupInviteCreateResponse)
 def create_group_invite(
     payload: GroupInviteCreateRequest,
+    request: Request,
     authorization: Optional[str] = Header(default=None),
 ):
+    requester_ip = request.client.host if request.client else "unknown"
+    limiter_key = f"invite_create:{requester_ip}:{payload.inviter_user_id.strip().lower()}"
+    _check_community_action_rate_limit(
+        bucket="invite_create",
+        key=limiter_key,
+        window=INVITE_CREATE_RATE_LIMIT_WINDOW,
+        limit=INVITE_CREATE_RATE_LIMIT_MAX,
+    )
     assert_actor_authorized(actor_user_id=payload.inviter_user_id, authorization=authorization)
     group = next((g for g in groups if g.id == payload.group_id), None)
     if not group:
@@ -624,6 +930,7 @@ def create_group_invite(
         "inviter_user_id": payload.inviter_user_id,
         "expires_at": expires_at,
     }
+    _persist_community_state()
     return GroupInviteCreateResponse(
         token=token,
         group_id=group.id,
@@ -658,7 +965,19 @@ def resolve_group_invite(token: str):
 
 
 @router.post("/onboarding/complete", response_model=GroupOnboardingCompleteResponse)
-def complete_group_onboarding(payload: GroupOnboardingCompleteRequest):
+def complete_group_onboarding(
+    payload: GroupOnboardingCompleteRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+):
+    requester_ip = request.client.host if request.client else "unknown"
+    limiter_key = f"onboarding_complete:{requester_ip}:{payload.invite_token.strip().lower()}"
+    _check_community_action_rate_limit(
+        bucket="onboarding_complete",
+        key=limiter_key,
+        window=ONBOARDING_COMPLETE_RATE_LIMIT_WINDOW,
+        limit=ONBOARDING_COMPLETE_RATE_LIMIT_MAX,
+    )
     invite = group_invites.get(payload.invite_token)
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found")
@@ -672,15 +991,35 @@ def complete_group_onboarding(payload: GroupOnboardingCompleteRequest):
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    new_user_id = f"user_join_{uuid4().hex[:8]}"
-    membership_status = "member"
-    group_memberships.append(GroupJoinRecord(group_id=group_id, user_id=new_user_id, status=membership_status))
-    if membership_status == "member":
+    token_user_id = resolve_request_user(authorization)
+    if auth_module.AUTH_REQUIRED and not token_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    onboarding_user_id = token_user_id or f"user_join_{uuid4().hex[:8]}"
+    existing_membership = next(
+        (record for record in group_memberships if record.group_id == group_id and record.user_id == onboarding_user_id),
+        None,
+    )
+    did_new_membership_unlock = False
+    if existing_membership is None:
+        membership_status = "member"
+        group_memberships.append(
+            GroupJoinRecord(group_id=group_id, user_id=onboarding_user_id, status=membership_status)
+        )
+        did_new_membership_unlock = True
+    elif existing_membership.status != "member":
+        existing_membership.status = "member"
+        membership_status = "member"
+        did_new_membership_unlock = True
+    else:
+        membership_status = "member"
+
+    if did_new_membership_unlock:
         group.member_count += 1
         _apply_group_growth_reward(
             group=group,
             contributor_user_id=invite.get("inviter_user_id"),
-            member_added_user_id=new_user_id,
+            member_added_user_id=onboarding_user_id,
             contribution_count=1,
         )
 
@@ -692,7 +1031,7 @@ def complete_group_onboarding(payload: GroupOnboardingCompleteRequest):
         post = CommunityPost(
             id=created_post_id,
             type="group_post",
-            created_by=new_user_id,
+            created_by=onboarding_user_id,
             title=f"Dog park check-in: {payload.dog_name.strip() or 'New pup'}",
             body=(
                 f"{payload.owner_name.strip() or 'New member'} joined via invite and added "
@@ -706,7 +1045,7 @@ def complete_group_onboarding(payload: GroupOnboardingCompleteRequest):
         community_posts.insert(0, _enrich_post_coordinates(post))
 
     inviter_user_id = invite.get("inviter_user_id")
-    if inviter_user_id:
+    if inviter_user_id and did_new_membership_unlock and inviter_user_id != onboarding_user_id:
         notification_store.create(
             user_id=inviter_user_id,
             title="Pack Builder progress",
@@ -714,16 +1053,18 @@ def complete_group_onboarding(payload: GroupOnboardingCompleteRequest):
             category="community",
             deep_link=f"group:{group.id}",
         )
-    notification_store.create(
-        user_id=new_user_id,
-        title="Welcome reward unlocked",
-        body=f"You earned Pack Builder points by joining {group.name}.",
-        category="community",
-        deep_link=f"group:{group.id}",
-    )
+    if did_new_membership_unlock:
+        notification_store.create(
+            user_id=onboarding_user_id,
+            title="Welcome reward unlocked",
+            body=f"You earned Pack Builder points by joining {group.name}.",
+            category="community",
+            deep_link=f"group:{group.id}",
+        )
+    _persist_community_state()
 
     return GroupOnboardingCompleteResponse(
-        user_id=new_user_id,
+        user_id=onboarding_user_id,
         group_id=group_id,
         membership_status=membership_status,
         created_post_id=created_post_id,
@@ -759,6 +1100,7 @@ def create_group(payload: GroupCreateRequest, authorization: Optional[str] = Hea
     group_memberships.append(GroupJoinRecord(group_id=group.id, user_id=payload.user_id, status="member"))
     _active_group_challenges(group)
     _reward_points(group.id, payload.user_id)
+    _persist_community_state()
     return _build_group_view(group, user_id=payload.user_id)
 
 
@@ -803,6 +1145,8 @@ def apply_join_group(group_id: str, payload: GroupJoinRequest, authorization: Op
             category="community",
             deep_link=f"group:{group.id}",
         )
+    if created_membership:
+        _persist_community_state()
     return view
 
 
@@ -826,6 +1170,7 @@ def add_member(group_id: str, payload: GroupAddMemberRequest, authorization: Opt
             member_added_user_id=payload.member_user_id,
             contribution_count=1,
         )
+        _persist_community_state()
 
     return _build_group_view(group, user_id=payload.requester_user_id)
 
@@ -890,6 +1235,7 @@ def moderate_join_request(
         category="community",
         deep_link=f"group:{group.id}",
     )
+    _persist_community_state()
     return view
 
 
@@ -977,6 +1323,7 @@ def participate_group_challenge(
             category="community",
             deep_link=f"group:{group.id}",
         )
+    _persist_community_state()
     return GroupChallengeParticipationResult(
         challenge=challenge,
         my_contribution_count=my_contribution_count,
@@ -1001,8 +1348,30 @@ def list_posts(
     center_lng: Optional[float] = Query(default=None, ge=-180, le=180),
     max_distance_km: Optional[float] = Query(default=None, ge=0.1, le=200.0),
 ):
+    _prune_expired_share_points()
     _dispatch_lost_found_followups()
-    result = [_enrich_post_coordinates(post) for post in community_posts]
+    now = _utc_now()
+    viewer_user_id = (user_id or "").strip()
+    result: list[CommunityPost] = []
+    for post in community_posts:
+        enriched = _enrich_post_coordinates(post)
+        if enriched.type == "share_point":
+            if enriched.expires_at and _parse_created_at(enriched.expires_at) <= now:
+                continue
+            if (
+                enriched.last_seen_at and
+                _parse_created_at(enriched.last_seen_at) > now and
+                (enriched.created_by or "").strip() != viewer_user_id
+            ):
+                continue
+            share_scope = _normalize_share_scope(enriched.share_scope)
+            if share_scope == "friends":
+                owner_user_id = (enriched.created_by or "").strip()
+                if not viewer_user_id:
+                    continue
+                if owner_user_id and not _users_share_member_group(viewer_user_id, owner_user_id):
+                    continue
+        result.append(enriched)
     if post_type:
         result = [p for p in result if p.type == post_type]
     if alert_type:
@@ -1066,9 +1435,23 @@ def list_posts(
 
     indexed_posts.sort(key=_score, reverse=True)
     ranked = [post for _, post in indexed_posts]
-    if sort_by == "newest":
+    normalized_sort = (sort_by or "relevance").lower()
+    if normalized_sort in {"newest", "latest"}:
         ranked = sorted(ranked, key=lambda post: _parse_created_at(post.created_at), reverse=True)
-    elif sort_by == "lost_found":
+    elif normalized_sort == "trending":
+        def _active_comment_count(post_id: str) -> int:
+            comments = COMMUNITY_COMMENTS_BY_POST.get(post_id, [])
+            return sum(1 for comment in comments if comment.status == "active")
+
+        ranked = sorted(
+            ranked,
+            key=lambda post: (
+                _active_comment_count(post.id),
+                _parse_created_at(post.created_at),
+            ),
+            reverse=True,
+        )
+    elif normalized_sort == "lost_found":
         ranked = [post for post in ranked if post.type == "lost_found"]
         ranked = sorted(
             ranked,
@@ -1085,13 +1468,13 @@ def list_posts(
         other_posts = [p for p in ranked if p.suburb.lower() != suburb.lower()]
         ranked = suburb_posts + other_posts
     if user_id:
-        event = "lost_found_feed_viewed" if sort_by == "lost_found" or post_type == "lost_found" else "community_feed_viewed"
+        event = "lost_found_feed_viewed" if normalized_sort == "lost_found" or post_type == "lost_found" else "community_feed_viewed"
         _record_analytics_event(
             user_id=user_id,
             event=event,
             category="lost_found" if "lost_found" in event else "community",
             metadata={
-                "sort_by": sort_by,
+                "sort_by": normalized_sort,
                 "post_type": post_type or "",
                 "result_count": len(ranked),
             },
@@ -1156,6 +1539,65 @@ def create_post(payload: CommunityPostCreate, authorization: Optional[str] = Hea
             category="lost_found",
             metadata={"post_id": inserted.id, "alert_type": inserted.alert_type or "lost"},
         )
+        _persist_community_state()
+        return inserted
+
+    if payload.type == "share_point":
+        if payload.latitude is None or payload.longitude is None:
+            raise HTTPException(status_code=400, detail="share_point requires latitude and longitude")
+        share_mode_raw = (payload.contact_pref or "").strip().lower()
+        share_mode = "share_at" if share_mode_raw == "share_at" else "share_now"
+        share_scope = _normalize_share_scope(payload.share_scope)
+        share_precision = _normalize_share_precision(payload.share_precision)
+        create_now = _utc_now()
+        if share_mode == "share_now":
+            share_at = create_now
+        else:
+            share_at_value = payload.last_seen_at or ""
+            share_at = _parse_iso_datetime_or_400(share_at_value, "last_seen_at")
+            if share_at > create_now + timedelta(hours=SHARE_POINT_MAX_SCHEDULE_HOURS):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"last_seen_at must be within {SHARE_POINT_MAX_SCHEDULE_HOURS} hours",
+                )
+        latitude, longitude = _apply_share_precision(payload.latitude, payload.longitude, share_precision)
+        expires_at_dt = min(share_at + SHARE_POINT_NOW_DURATION, create_now + timedelta(hours=SHARE_POINT_MAX_SCHEDULE_HOURS))
+        expires_at = expires_at_dt.isoformat().replace("+00:00", "Z")
+
+        post = CommunityPost(
+            id=f"p_{uuid4().hex[:8]}",
+            type=payload.type,
+            created_by=actor_user_id,
+            title=payload.title.strip(),
+            body=payload.body.strip(),
+            suburb=normalized_suburb,
+            created_at=now,
+            alert_type=None,
+            alert_status=None,
+            pet_name=None,
+            pet_traits=None,
+            last_seen_at=share_at.isoformat().replace("+00:00", "Z"),
+            last_seen_location=payload.last_seen_location.strip() if payload.last_seen_location else None,
+            contact_pref=share_mode,
+            share_scope=share_scope,  # type: ignore[arg-type]
+            share_precision=share_precision,  # type: ignore[arg-type]
+            photo_urls=normalized_photo_urls,
+            latitude=latitude,
+            longitude=longitude,
+            resolved_at=None,
+            resolved_note=None,
+            follow_up_due_at=None,
+            expires_at=expires_at,
+        )
+        inserted = _enrich_post_coordinates(post)
+        community_posts.insert(0, inserted)
+        _record_analytics_event(
+            user_id=actor_user_id,
+            event="community_post_create_succeeded",
+            category="community",
+            metadata={"post_id": inserted.id, "post_type": "share_point", "share_mode": share_mode},
+        )
+        _persist_community_state()
         return inserted
 
     post = CommunityPost(
@@ -1173,6 +1615,8 @@ def create_post(payload: CommunityPostCreate, authorization: Optional[str] = Hea
         last_seen_at=None,
         last_seen_location=None,
         contact_pref=None,
+        share_scope=None,
+        share_precision=None,
         photo_urls=normalized_photo_urls,
         latitude=payload.latitude,
         longitude=payload.longitude,
@@ -1189,7 +1633,132 @@ def create_post(payload: CommunityPostCreate, authorization: Optional[str] = Hea
         category="community",
         metadata={"post_id": inserted.id},
     )
+    _persist_community_state()
     return inserted
+
+
+@router.get("/posts/{post_id}/comments", response_model=list[CommunityComment])
+def list_post_comments(
+    post_id: str,
+    user_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    include_removed: bool = Query(default=False),
+    authorization: Optional[str] = Header(default=None),
+):
+    actor_user_id = _resolve_actor_user(
+        authorization=authorization,
+        explicit_user_id=user_id,
+        require_user=False,
+    )
+    if actor_user_id:
+        assert_actor_authorized(actor_user_id=actor_user_id, authorization=authorization)
+    _find_post_or_404(post_id)
+    comments = sorted(_comments_for_post(post_id), key=lambda comment: comment.created_at)
+    blocked_user_ids = BLOCKED_USERS_BY_USER.get(actor_user_id, set()) if actor_user_id else set()
+    is_admin = actor_user_id in ADMIN_USER_IDS if actor_user_id else False
+
+    visible_comments: list[CommunityComment] = []
+    for comment in comments:
+        if comment.user_id in blocked_user_ids:
+            continue
+        is_author = bool(actor_user_id and comment.user_id == actor_user_id)
+        if comment.status != "active":
+            if not include_removed and not is_author and not is_admin:
+                continue
+            if include_removed and not is_author and not is_admin:
+                continue
+        visible_comments.append(comment)
+    return visible_comments[offset : offset + limit]
+
+
+@router.post("/posts/{post_id}/comments", response_model=CommunityComment)
+def create_post_comment(
+    post_id: str,
+    payload: CommunityCommentCreateRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=payload.user_id, authorization=authorization)
+    post = _find_post_or_404(post_id)
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Comment body is required")
+    if len(body) > 500:
+        raise HTTPException(status_code=400, detail="Comment body exceeds 500 characters")
+
+    comments = _comments_for_post(post_id)
+    parent_comment = None
+    parent_comment_id = payload.parent_comment_id.strip() if payload.parent_comment_id and payload.parent_comment_id.strip() else None
+    if parent_comment_id:
+        parent_comment = next((comment for comment in comments if comment.id == parent_comment_id), None)
+        if not parent_comment:
+            raise HTTPException(status_code=400, detail="Parent comment not found")
+        if parent_comment.status != "active":
+            raise HTTPException(status_code=400, detail="Cannot reply to removed comment")
+
+    created = CommunityComment(
+        id=f"cmt_{uuid4().hex[:10]}",
+        post_id=post_id,
+        user_id=payload.user_id,
+        body=body,
+        parent_comment_id=parent_comment_id,
+        created_at=_utc_now().isoformat().replace("+00:00", "Z"),
+    )
+    comments.append(created)
+
+    post_owner_id = (post.created_by or "").strip()
+    if post_owner_id and post_owner_id != payload.user_id:
+        notification_store.create(
+            user_id=post_owner_id,
+            title="New comment on your post",
+            body=f"{payload.user_id} commented on \"{post.title}\"",
+            category="community",
+            deep_link=f"post:{post_id}",
+        )
+    if parent_comment and parent_comment.user_id != payload.user_id and parent_comment.user_id != post_owner_id:
+        notification_store.create(
+            user_id=parent_comment.user_id,
+            title="New reply to your comment",
+            body=f"{payload.user_id} replied in {post.suburb}",
+            category="community",
+            deep_link=f"post:{post_id}",
+        )
+    _persist_community_state()
+    return created
+
+
+@router.post("/comments/{comment_id}/moderate", response_model=CommunityComment)
+def moderate_comment(
+    comment_id: str,
+    payload: CommunityCommentModerationRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    assert_actor_authorized(actor_user_id=payload.requester_user_id, authorization=authorization)
+    if payload.requester_user_id not in ADMIN_USER_IDS:
+        raise HTTPException(status_code=403, detail="Only moderators can moderate comments")
+
+    post_id, index, comment = _find_comment_or_404(comment_id)
+    next_status = "removed_by_moderator" if payload.action == "remove" else "active"
+    updated = comment.model_copy(
+        update={
+            "status": next_status,
+            "moderated_at": _utc_now().isoformat().replace("+00:00", "Z"),
+            "moderated_by": payload.requester_user_id,
+            "moderation_note": payload.note.strip() or None,
+        }
+    )
+    COMMUNITY_COMMENTS_BY_POST[post_id][index] = updated
+
+    if updated.user_id != payload.requester_user_id:
+        notification_store.create(
+            user_id=updated.user_id,
+            title="Comment moderation update",
+            body=f"Your comment is now {updated.status.replace('_', ' ')}.",
+            category="community",
+            deep_link=f"comment:{updated.id}",
+        )
+    _persist_community_state()
+    return updated
 
 
 @router.post("/posts/{post_id}/resolve", response_model=CommunityPost)
@@ -1239,6 +1808,7 @@ def resolve_post(post_id: str, payload: CommunityPostResolveRequest, authorizati
             category="community",
             deep_link=f"post:{post.id}",
         )
+    _persist_community_state()
     return updated
 
 
@@ -1276,6 +1846,10 @@ def update_post(post_id: str, payload: CommunityPostUpdateRequest, authorization
         update["last_seen_location"] = payload.last_seen_location.strip() or None
     if payload.contact_pref is not None:
         update["contact_pref"] = payload.contact_pref.strip() or None
+    if payload.share_scope is not None:
+        update["share_scope"] = _normalize_share_scope(payload.share_scope)
+    if payload.share_precision is not None:
+        update["share_precision"] = _normalize_share_precision(payload.share_precision)
     if payload.clear_last_seen_at:
         update["last_seen_at"] = None
     elif payload.last_seen_at is not None:
@@ -1299,8 +1873,20 @@ def update_post(post_id: str, payload: CommunityPostUpdateRequest, authorization
             raise HTTPException(status_code=400, detail="last_seen_location is required for lost/found alerts")
         if not (updated.contact_pref or "").strip():
             raise HTTPException(status_code=400, detail="contact_pref is required for lost/found alerts")
+    elif updated.type == "share_point":
+        if updated.latitude is None or updated.longitude is None:
+            raise HTTPException(status_code=400, detail="share_point requires latitude and longitude")
+        normalized_precision = _normalize_share_precision(updated.share_precision)
+        normalized_scope = _normalize_share_scope(updated.share_scope)
+        precise_lat, precise_lng = _apply_share_precision(updated.latitude, updated.longitude, normalized_precision)
+        update["share_scope"] = normalized_scope
+        update["share_precision"] = normalized_precision
+        update["latitude"] = precise_lat
+        update["longitude"] = precise_lng
+        updated = updated.model_copy(update=update)
     enriched = _enrich_post_coordinates(updated)
     community_posts[index] = enriched
+    _persist_community_state()
     return enriched
 
 
@@ -1323,6 +1909,8 @@ def delete_post(
     current = community_posts[index]
     _ensure_post_owner(current, actor_user_id)
     community_posts.pop(index)
+    COMMUNITY_COMMENTS_BY_POST.pop(post_id, None)
+    _persist_community_state()
     return {"status": "deleted", "post_id": post_id}
 
 
@@ -1390,6 +1978,7 @@ def create_moderation_report(payload: CommunityReportCreateRequest, authorizatio
         category="community",
         metadata={"target_type": payload.target_type, "target_id": payload.target_id},
     )
+    _persist_community_state()
     return report
 
 
@@ -1429,6 +2018,7 @@ def resolve_moderation_report(
         }
     )
     COMMUNITY_REPORTS[index] = resolved
+    _persist_community_state()
     return resolved
 
 
@@ -1445,6 +2035,7 @@ def block_user(payload: CommunityBlockUserRequest, authorization: Optional[str] 
         category="community",
         metadata={"target_user_id": payload.target_user_id},
     )
+    _persist_community_state()
     return CommunityBlockUserResponse(
         requester_user_id=payload.requester_user_id,
         blocked_user_ids=sorted(blocked),
@@ -1460,6 +2051,7 @@ def unblock_user(
     assert_actor_authorized(actor_user_id=requester_user_id, authorization=authorization)
     blocked = BLOCKED_USERS_BY_USER.setdefault(requester_user_id, set())
     blocked.discard(target_user_id)
+    _persist_community_state()
     return CommunityBlockUserResponse(
         requester_user_id=requester_user_id,
         blocked_user_ids=sorted(blocked),
@@ -1489,6 +2081,7 @@ def create_analytics_event(payload: CommunityAnalyticsEventCreateRequest, author
         metadata=payload.metadata,
         duration_ms=payload.duration_ms,
     )
+    _persist_community_state()
     return {"status": "ok"}
 
 
@@ -1498,7 +2091,11 @@ def get_analytics_funnel(
     window_hours: int = Query(default=168, ge=1, le=720),
 ):
     cutoff = _utc_now() - timedelta(hours=window_hours)
-    recent = [row for row in COMMUNITY_ANALYTICS_EVENTS if row["created_at"] >= cutoff]
+    recent = [
+        row
+        for row in COMMUNITY_ANALYTICS_EVENTS
+        if _parse_created_at(str(row.get("created_at"))) >= cutoff
+    ]
 
     def _count(event_name: str) -> int:
         return sum(1 for row in recent if row.get("event") == event_name)
@@ -1519,6 +2116,79 @@ def get_analytics_funnel(
     )
 
 
+@router.get("/analytics/activation", response_model=dict)
+def get_activation_funnel(
+    requester_user_id: Optional[str] = Query(default=None),
+    window_hours: int = Query(default=168, ge=1, le=720),
+):
+    cutoff = _utc_now() - timedelta(hours=window_hours)
+    recent = [
+        row
+        for row in COMMUNITY_ANALYTICS_EVENTS
+        if _parse_created_at(str(row.get("created_at"))) >= cutoff
+        and str(row.get("event", "")).startswith("activation_")
+        and (requester_user_id is None or str(row.get("user_id")) == requester_user_id)
+    ]
+    diagnostics = [
+        row
+        for row in COMMUNITY_DIAGNOSTIC_EVENTS
+        if _parse_created_at(str(row.get("created_at"))) >= cutoff
+        and str(row.get("message", "")).startswith("activation_")
+        and (requester_user_id is None or str(row.get("user_id")) == requester_user_id)
+    ]
+
+    by_event: Dict[str, int] = {}
+    by_stage: Dict[str, int] = {}
+    by_status: Dict[str, int] = {}
+
+    for row in recent:
+        event_name = str(row.get("event", "")).strip()
+        if not event_name:
+            continue
+        by_event[event_name] = by_event.get(event_name, 0) + 1
+
+        suffix = event_name.removeprefix("activation_")
+        if "_" not in suffix:
+            by_stage[suffix or "unknown"] = by_stage.get(suffix or "unknown", 0) + 1
+            continue
+        stage, status = suffix.rsplit("_", 1)
+        clean_stage = stage.strip() or "unknown"
+        clean_status = status.strip() or "unknown"
+        by_stage[clean_stage] = by_stage.get(clean_stage, 0) + 1
+        by_status[clean_status] = by_status.get(clean_status, 0) + 1
+
+    unique_users = sorted({str(row.get("user_id", "")).strip() for row in recent if str(row.get("user_id", "")).strip()})
+    last_event_at = max((str(row.get("created_at", "")) for row in recent), default=None)
+    top_failures = sorted(
+        (
+            {
+                "event": str(row.get("event", "")).strip(),
+                "created_at": str(row.get("created_at", "")).strip(),
+                "user_id": str(row.get("user_id", "")).strip(),
+                "error": str((row.get("metadata") or {}).get("error", "")).strip(),
+            }
+            for row in recent
+            if str(row.get("event", "")).endswith("_failed")
+        ),
+        key=lambda item: item.get("created_at", ""),
+        reverse=True,
+    )[:25]
+
+    return {
+        "window_hours": window_hours,
+        "requester_user_id": requester_user_id,
+        "activation_event_count": len(recent),
+        "activation_diagnostic_count": len(diagnostics),
+        "unique_users": unique_users,
+        "unique_user_count": len(unique_users),
+        "last_event_at": last_event_at,
+        "by_event": dict(sorted(by_event.items())),
+        "by_stage": dict(sorted(by_stage.items())),
+        "by_status": dict(sorted(by_status.items())),
+        "top_failures": top_failures,
+    }
+
+
 @router.post("/diagnostics/events", response_model=dict)
 def create_diagnostic_event(payload: CommunityDiagnosticEventCreateRequest, authorization: Optional[str] = Header(default=None)):
     assert_actor_authorized(actor_user_id=payload.user_id, authorization=authorization)
@@ -1529,6 +2199,7 @@ def create_diagnostic_event(payload: CommunityDiagnosticEventCreateRequest, auth
         context=payload.context,
         duration_ms=payload.duration_ms,
     )
+    _persist_community_state()
     return {"status": "ok"}
 
 
@@ -1569,11 +2240,17 @@ def list_events(
 def create_event(payload: CommunityEventCreateRequest, authorization: Optional[str] = Header(default=None)):
     assert_actor_authorized(actor_user_id=payload.user_id, authorization=authorization)
     suburb = _normalize_suburb(payload.suburb)
-    group = None
-    if payload.group_id and not next((g for g in groups if g.id == payload.group_id), None):
-        raise HTTPException(status_code=404, detail="Group not found")
-    if payload.group_id:
-        group = next((g for g in groups if g.id == payload.group_id), None)
+    group_id = _normalize_event_group_id(payload.group_id)
+    group = next((g for g in groups if g.id == group_id), None) if group_id else None
+    location_name, location_latitude, location_longitude = _normalize_event_location(
+        location_name=payload.location_name,
+        location_latitude=payload.location_latitude,
+        location_longitude=payload.location_longitude,
+    )
+    recurrence, recurrence_interval = _normalize_event_recurrence(
+        recurrence=payload.recurrence,
+        recurrence_interval=payload.recurrence_interval,
+    )
 
     status = "approved"
     if group and not _is_group_admin(group, payload.user_id):
@@ -1584,7 +2261,12 @@ def create_event(payload: CommunityEventCreateRequest, authorization: Optional[s
         description=payload.description.strip(),
         suburb=suburb,
         date=payload.date.strip(),
-        group_id=payload.group_id,
+        group_id=group_id,
+        location_name=location_name,
+        location_latitude=location_latitude,
+        location_longitude=location_longitude,
+        recurrence=recurrence,
+        recurrence_interval=recurrence_interval,
         attendee_count=1,
         created_by=payload.user_id,
         status=status,
@@ -1606,6 +2288,94 @@ def create_event(payload: CommunityEventCreateRequest, authorization: Optional[s
                 category="community",
                 deep_link=f"event:{event.id}",
             )
+    _persist_community_state()
+    return view
+
+
+@router.put("/events/{event_id}", response_model=CommunityEventView)
+def update_event(event_id: str, payload: CommunityEventUpdateRequest, authorization: Optional[str] = Header(default=None)):
+    assert_actor_authorized(actor_user_id=payload.user_id, authorization=authorization)
+    index = next((i for i, row in enumerate(community_events) if row.id == event_id), None)
+    if index is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    current = community_events[index]
+    if current.created_by != payload.user_id:
+        raise HTTPException(status_code=403, detail="Only event owner can modify this event")
+
+    fields_set = getattr(payload, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(payload, "__fields_set__", set())
+    update: Dict[str, Any] = {}
+
+    if "title" in fields_set and payload.title is not None:
+        clean_title = payload.title.strip()
+        if not clean_title:
+            raise HTTPException(status_code=400, detail="title cannot be blank")
+        update["title"] = clean_title
+    if "description" in fields_set and payload.description is not None:
+        clean_description = payload.description.strip()
+        if not clean_description:
+            raise HTTPException(status_code=400, detail="description cannot be blank")
+        update["description"] = clean_description
+    if "date" in fields_set and payload.date is not None:
+        clean_date = payload.date.strip()
+        if not clean_date:
+            raise HTTPException(status_code=400, detail="date cannot be blank")
+        update["date"] = clean_date
+    if "group_id" in fields_set:
+        update["group_id"] = _normalize_event_group_id(payload.group_id)
+
+    if payload.clear_location:
+        update["location_name"] = None
+        update["location_latitude"] = None
+        update["location_longitude"] = None
+    else:
+        lat_provided = "location_latitude" in fields_set
+        lng_provided = "location_longitude" in fields_set
+        if lat_provided != lng_provided:
+            raise HTTPException(status_code=400, detail="location_latitude and location_longitude must be provided together")
+        if lat_provided and lng_provided:
+            _, lat_value, lng_value = _normalize_event_location(
+                location_name=None,
+                location_latitude=payload.location_latitude,
+                location_longitude=payload.location_longitude,
+            )
+            update["location_latitude"] = lat_value
+            update["location_longitude"] = lng_value
+        if "location_name" in fields_set:
+            update["location_name"] = (payload.location_name or "").strip() or None
+
+    recurrence_value = update.get("recurrence", current.recurrence)
+    recurrence_interval_value = update.get("recurrence_interval", current.recurrence_interval)
+    if "recurrence" in fields_set:
+        recurrence_value = payload.recurrence
+    if "recurrence_interval" in fields_set:
+        recurrence_interval_value = payload.recurrence_interval
+    recurrence, recurrence_interval = _normalize_event_recurrence(
+        recurrence=recurrence_value,
+        recurrence_interval=recurrence_interval_value,
+    )
+    update["recurrence"] = recurrence
+    update["recurrence_interval"] = recurrence_interval
+
+    updated = current.model_copy(update=update)
+    if (updated.location_latitude is None) != (updated.location_longitude is None):
+        raise HTTPException(status_code=400, detail="location_latitude and location_longitude must be set together")
+
+    if updated.group_id:
+        updated_group = next((g for g in groups if g.id == updated.group_id), None)
+        if not updated_group:
+            raise HTTPException(status_code=404, detail="Group not found")
+        updated.status = "approved" if _is_group_admin(updated_group, payload.user_id) else "pending_approval"
+    else:
+        updated.status = "approved"
+
+    community_events[index] = updated
+    view = CommunityEventView(
+        **updated.model_dump(),
+        rsvp_status=_event_rsvp_status(updated.id, payload.user_id),
+    )
+    _persist_community_state()
     return view
 
 
@@ -1639,6 +2409,7 @@ def rsvp_event(event_id: str, payload: CommunityEventRsvpRequest, authorization:
             category="community",
             deep_link=f"event:{event.id}",
         )
+    _persist_community_state()
     return view
 
 
@@ -1675,6 +2446,5 @@ def approve_event(
             category="community",
             deep_link=f"event:{event.id}",
         )
+    _persist_community_state()
     return view
-    if event.status != "approved":
-        raise HTTPException(status_code=400, detail="Event is pending approval")

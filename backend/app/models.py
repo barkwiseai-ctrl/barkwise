@@ -130,6 +130,54 @@ class ServiceQuoteRequestView(BaseModel):
     targets: list[ServiceQuoteTarget]
 
 
+class ServiceQuoteOfferCreateRequest(BaseModel):
+    actor_user_id: str
+    provider_id: str
+    price_cents: int = Field(ge=1)
+    currency: str = "AUD"
+    proposed_date: str
+    proposed_time_slot: str
+    expires_at: str
+    note: str = ""
+
+
+class ServiceQuoteOffer(BaseModel):
+    id: str
+    quote_request_id: str
+    provider_id: str
+    actor_user_id: str
+    price_cents: int
+    currency: str
+    proposed_date: str
+    proposed_time_slot: str
+    expires_at: str
+    note: str = ""
+    status: Literal["active", "withdrawn"] = "active"
+    created_at: str
+
+
+class ProviderInboxItem(BaseModel):
+    id: str
+    item_type: Literal["quote_request", "booking"]
+    provider_id: str
+    provider_name: str
+    status: str
+    title: str
+    subtitle: str
+    priority: Literal["high", "normal"] = "normal"
+    created_at: str
+    due_at: Optional[str] = None
+    quote_request_id: Optional[str] = None
+    booking_id: Optional[str] = None
+    customer_user_id: Optional[str] = None
+
+
+class ProviderInboxResponse(BaseModel):
+    actor_user_id: str
+    total: int
+    items: list[ProviderInboxItem]
+
+
 class ServiceRecommendationsResponse(BaseModel):
     providers: list[ServiceProvider]
     inferred_suburb: Optional[str] = None
@@ -370,7 +418,7 @@ class ProviderSubmitRequest(BaseModel):
 
 
 class CommunityPostCreate(BaseModel):
-    type: Literal["lost_found", "group_post"]
+    type: Literal["lost_found", "group_post", "share_point"]
     user_id: Optional[str] = None
     title: str
     body: str
@@ -382,6 +430,8 @@ class CommunityPostCreate(BaseModel):
     last_seen_at: Optional[str] = None
     last_seen_location: Optional[str] = None
     contact_pref: Optional[str] = None
+    share_scope: Optional[Literal["friends", "community"]] = None
+    share_precision: Optional[Literal["approximate", "exact"]] = None
     photo_urls: list[str] = Field(default_factory=list)
     latitude: Optional[float] = Field(default=None, ge=-90, le=90)
     longitude: Optional[float] = Field(default=None, ge=-180, le=180)
@@ -389,7 +439,7 @@ class CommunityPostCreate(BaseModel):
 
 class CommunityPost(BaseModel):
     id: str
-    type: Literal["lost_found", "group_post"]
+    type: Literal["lost_found", "group_post", "share_point"]
     created_by: Optional[str] = None
     title: str
     body: str
@@ -402,6 +452,8 @@ class CommunityPost(BaseModel):
     last_seen_at: Optional[str] = None
     last_seen_location: Optional[str] = None
     contact_pref: Optional[str] = None
+    share_scope: Optional[Literal["friends", "community"]] = None
+    share_precision: Optional[Literal["approximate", "exact"]] = None
     photo_urls: list[str] = Field(default_factory=list)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -426,6 +478,8 @@ class CommunityPostUpdateRequest(BaseModel):
     last_seen_at: Optional[str] = None
     last_seen_location: Optional[str] = None
     contact_pref: Optional[str] = None
+    share_scope: Optional[Literal["friends", "community"]] = None
+    share_precision: Optional[Literal["approximate", "exact"]] = None
     photo_urls: Optional[list[str]] = None
     latitude: Optional[float] = Field(default=None, ge=-90, le=90)
     longitude: Optional[float] = Field(default=None, ge=-180, le=180)
@@ -635,6 +689,11 @@ class CommunityEvent(BaseModel):
     suburb: str
     date: str
     group_id: Optional[str] = None
+    location_name: Optional[str] = None
+    location_latitude: Optional[float] = None
+    location_longitude: Optional[float] = None
+    recurrence: Literal["none", "daily", "weekly", "monthly"] = "none"
+    recurrence_interval: int = Field(default=1, ge=1, le=30)
     attendee_count: int = 0
     created_by: str
     status: Literal["approved", "pending_approval"] = "approved"
@@ -647,6 +706,11 @@ class CommunityEventView(BaseModel):
     suburb: str
     date: str
     group_id: Optional[str] = None
+    location_name: Optional[str] = None
+    location_latitude: Optional[float] = None
+    location_longitude: Optional[float] = None
+    recurrence: Literal["none", "daily", "weekly", "monthly"] = "none"
+    recurrence_interval: int = Field(default=1, ge=1, le=30)
     attendee_count: int = 0
     created_by: str
     rsvp_status: Literal["none", "attending"] = "none"
@@ -660,6 +724,25 @@ class CommunityEventCreateRequest(BaseModel):
     suburb: str
     date: str
     group_id: Optional[str] = None
+    location_name: Optional[str] = None
+    location_latitude: Optional[float] = None
+    location_longitude: Optional[float] = None
+    recurrence: Literal["none", "daily", "weekly", "monthly"] = "none"
+    recurrence_interval: int = Field(default=1, ge=1, le=30)
+
+
+class CommunityEventUpdateRequest(BaseModel):
+    user_id: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    date: Optional[str] = None
+    group_id: Optional[str] = None
+    location_name: Optional[str] = None
+    location_latitude: Optional[float] = None
+    location_longitude: Optional[float] = None
+    clear_location: bool = False
+    recurrence: Optional[Literal["none", "daily", "weekly", "monthly"]] = None
+    recurrence_interval: Optional[int] = Field(default=None, ge=1, le=30)
 
 
 class CommunityEventRsvpRequest(BaseModel):
@@ -788,6 +871,8 @@ class UserProfile(BaseModel):
     secondary_dog_name: str = ""
     secondary_dog_age_months: int = 0
     secondary_dog_photo_url: str = ""
+    secondary_dog_gender: str = ""
+    secondary_dog_weight_kg: str = ""
     bio: str = ""
     suburb: str = ""
     favorite_suburbs: list[str] = Field(default_factory=list)
@@ -826,6 +911,8 @@ class UserProfileUpsertRequest(BaseModel):
     secondary_dog_name: str = ""
     secondary_dog_age_months: int = 0
     secondary_dog_photo_url: str = ""
+    secondary_dog_gender: str = ""
+    secondary_dog_weight_kg: str = ""
     bio: str = ""
     suburb: str = ""
     favorite_suburbs: list[str] = Field(default_factory=list)

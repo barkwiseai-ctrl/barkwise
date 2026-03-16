@@ -4,6 +4,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.temporal.ChronoUnit
+import java.util.Base64
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -23,7 +24,7 @@ class MockApiService private constructor() : ApiService {
             description = "Full groom + de-shed packages for doodles and double coats.",
             fullDescription = "Mobile grooming van with calm, low-stress sessions and photo updates.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/bordoodle,dog?lock=101",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -33.8842,
             longitude = 151.2106,
@@ -57,7 +58,7 @@ class MockApiService private constructor() : ApiService {
             description = "Daily solo and pair walks with route photos.",
             fullDescription = "Structured 30-60 minute walks with post-walk behavior notes.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/dog,walking,city?lock=102",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -33.8854,
             longitude = 151.2131,
@@ -87,7 +88,7 @@ class MockApiService private constructor() : ApiService {
             description = "Reliable weekday pack walks for social dogs.",
             fullDescription = "Small-group walks with hydration checks and photo updates.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/dog,park,walk?lock=103",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -33.8990,
             longitude = 151.1764,
@@ -113,7 +114,7 @@ class MockApiService private constructor() : ApiService {
             description = "Express tidy trims and sensitive-skin wash plans.",
             fullDescription = "Fast but gentle sessions for routine coat maintenance.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/grooming,dog,newtown?lock=104",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -33.8976,
             longitude = 151.1783,
@@ -139,7 +140,7 @@ class MockApiService private constructor() : ApiService {
             description = "Morning and evening walks with behavior notes.",
             fullDescription = "Consistent solo walks for energetic and anxious dogs.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/dog,redfern,walk?lock=105",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -33.8927,
             longitude = 151.2037,
@@ -172,7 +173,7 @@ class MockApiService private constructor() : ApiService {
             description = "Low-stress grooming for seniors and anxious pets.",
             fullDescription = "One-on-one appointments with coat and skin notes every visit.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/grooming,senior,dog?lock=106",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -33.8918,
             longitude = 151.2055,
@@ -205,7 +206,7 @@ class MockApiService private constructor() : ApiService {
             description = "Toy-breed specialist grooming with coat-safe products.",
             fullDescription = "Face tidy, nails, and paw care for small breeds.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/brown,toy,dog,cavoodle?lock=107",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -33.8862,
             longitude = 151.2104,
@@ -235,7 +236,7 @@ class MockApiService private constructor() : ApiService {
             description = "Budget-friendly weekday and weekend park walks.",
             fullDescription = "Short and medium route options with simple status updates.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/dog,walk,park?lock=108",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -33.8940,
             longitude = 151.2022,
@@ -261,7 +262,7 @@ class MockApiService private constructor() : ApiService {
             description = "Local weekday walk club for Sunshine West families.",
             fullDescription = "Recurring slots focused on predictable routines and safety checks.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/dog,sunshine,west?lock=109",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -37.7921,
             longitude = 144.8169,
@@ -287,7 +288,7 @@ class MockApiService private constructor() : ApiService {
             description = "Neighbourhood grooming studio with gentle handling.",
             fullDescription = "Wash, dry, tidy trim, and coat-care notes in every session.",
             imageUrls = listOf(
-                "https://loremflickr.com/640/640/dog,grooming,melbourne?lock=110",
+                "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
             ),
             latitude = -37.7914,
             longitude = 144.8158,
@@ -1025,9 +1026,11 @@ class MockApiService private constructor() : ApiService {
             dogBreedMix = "Labradoodle",
             dogSexNeuter = "Female, desexed",
             dogWeightClass = "Medium (10-25kg)",
-            dogPhotoUrls = listOf("https://loremflickr.com/640/640/dog,portrait?lock=6001"),
+            dogPhotoUrls = listOf("https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80"),
             secondaryDogName = "Poppy",
             secondaryDogAgeMonths = 18,
+            secondaryDogGender = "female",
+            secondaryDogWeightKg = "12.0",
             bio = "Groomer and dog parent.",
             suburb = "Surry Hills",
             favoriteSuburbs = listOf("Surry Hills", "Newtown"),
@@ -1061,7 +1064,7 @@ class MockApiService private constructor() : ApiService {
             dogBreedMix = "Cavoodle",
             dogSexNeuter = "Male, desexed",
             dogWeightClass = "Small (0-10kg)",
-            dogPhotoUrls = listOf("https://loremflickr.com/640/640/black,white,dog?lock=202"),
+            dogPhotoUrls = listOf("https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80"),
             bio = "Pet parent of Milo. Loves social dog walks and local events.",
             suburb = "Surry Hills",
             favoriteSuburbs = listOf("Newtown", "Redfern"),
@@ -1162,15 +1165,19 @@ class MockApiService private constructor() : ApiService {
     private var groupCounter = 6
     private var blackoutCounter = 3
     private var quoteCounter = 4
+    private var quoteOfferCounter = 1
     private var commentCounter = 5
     private var vetCoachSessionCounter = 3
     private var vetVerificationCounter = 3
     private var moderationReportCounter = 1
     private var authInviteCounter = 1
     private var directMessageCounter = 8
+    private var authSessionUserId = "user_2"
     private val blockedUsersByUser = mutableMapOf<String, MutableSet<String>>()
     private val moderationReports = mutableListOf<CommunityReport>()
     private val analyticsEvents = mutableListOf<Pair<Instant, CommunityAnalyticsEventCreateRequest>>()
+    private val diagnosticEvents = mutableListOf<Pair<Instant, CommunityDiagnosticEventCreateRequest>>()
+    private val quoteOffers = mutableListOf<ServiceQuoteOffer>()
     private val communityAdminUsers = setOf("admin", "user_1", "user_3")
 
     private fun derivePostOwner(post: CommunityPost): String {
@@ -1178,6 +1185,23 @@ class MockApiService private constructor() : ApiService {
         if (explicit.isNotEmpty()) return explicit
         val slot = kotlin.math.abs(post.id.hashCode()) % 4
         return "user_${slot + 1}"
+    }
+
+    private fun usersShareGroupMembership(userA: String, userB: String): Boolean {
+        val a = userA.trim()
+        val b = userB.trim()
+        if (a.isBlank() || b.isBlank()) return false
+        if (a == b) return true
+        return groupMembers.values.any { members -> a in members && b in members }
+    }
+
+    private fun applySharePointPrecision(latitude: Double, longitude: Double, precision: String): Pair<Double, Double> {
+        return if (precision == "exact") {
+            latitude to longitude
+        } else {
+            // ~100m precision by rounding to 3 decimals.
+            kotlin.math.round(latitude * 1000.0) / 1000.0 to kotlin.math.round(longitude * 1000.0) / 1000.0
+        }
     }
 
     private fun suburbCenter(suburb: String): Pair<Double, Double>? = when (suburb.lowercase()) {
@@ -1386,7 +1410,7 @@ class MockApiService private constructor() : ApiService {
             description = payload.description,
             fullDescription = payload.fullDescription ?: payload.description,
             imageUrls = payload.imageUrls.takeIf { it.isNotEmpty() }
-                ?: listOf("https://loremflickr.com/640/640/dog,pet?lock=${providers.size + 101}"),
+                ?: listOf("https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80"),
             latitude = payload.latitude ?: -33.8889,
             longitude = payload.longitude ?: 151.2111,
             ownerUserId = payload.userId,
@@ -1605,6 +1629,161 @@ class MockApiService private constructor() : ApiService {
             ),
         )
         return updatedView
+    }
+
+    override suspend fun createQuoteOffer(
+        quoteRequestId: String,
+        payload: ServiceQuoteOfferCreateRequest,
+    ): ServiceQuoteOffer {
+        val existing = quoteRequests[quoteRequestId] ?: error("Quote request not found")
+        val target = existing.targets.firstOrNull { it.providerId == payload.providerId }
+            ?: error("Quote target not found")
+        if (target.ownerUserId != payload.actorUserId) error("Only listing owner can submit quote offer")
+        if (target.status != "pending") error("Quote target already responded")
+        if (payload.priceCents <= 0) error("price_cents must be greater than 0")
+
+        val now = Instant.now()
+        val normalizedCurrency = payload.currency.trim().uppercase().ifBlank { "AUD" }
+        val offer = ServiceQuoteOffer(
+            id = "quote_offer_${quoteOfferCounter++}",
+            quoteRequestId = quoteRequestId,
+            providerId = payload.providerId,
+            actorUserId = payload.actorUserId,
+            priceCents = payload.priceCents,
+            currency = normalizedCurrency,
+            proposedDate = payload.proposedDate,
+            proposedTimeSlot = payload.proposedTimeSlot,
+            expiresAt = payload.expiresAt,
+            note = payload.note,
+            status = "active",
+            createdAt = now.toString(),
+        )
+        quoteOffers.add(0, offer)
+
+        val summary = if (payload.note.isBlank()) {
+            "Offer ${offer.currency} ${"%.2f".format(offer.priceCents / 100.0)} for ${offer.proposedDate} ${offer.proposedTimeSlot}."
+        } else {
+            payload.note
+        }
+        val updatedTarget = target.copy(
+            status = "accepted",
+            responseMessage = summary,
+            respondedAt = now.toString(),
+        )
+        val updatedTargets = existing.targets.map { row ->
+            if (row.providerId == payload.providerId) updatedTarget else row
+        }
+        val nextStatus = when {
+            updatedTargets.all { it.status == "declined" } -> "closed"
+            updatedTargets.any { it.status == "accepted" || it.status == "declined" } -> "responded"
+            else -> "pending"
+        }
+        quoteRequests[quoteRequestId] = ServiceQuoteRequestView(
+            quoteRequest = existing.quoteRequest.copy(
+                status = nextStatus,
+                updatedAt = now.toString(),
+            ),
+            targets = updatedTargets,
+        )
+
+        notifications.add(
+            0,
+            AppNotification(
+                id = "notif_quote_offer_${Instant.now().toEpochMilli()}",
+                userId = existing.quoteRequest.userId,
+                title = "New quote offer",
+                body = "Provider offered ${offer.currency} ${"%.2f".format(offer.priceCents / 100.0)} for ${offer.proposedDate} ${offer.proposedTimeSlot}.",
+                category = "booking",
+                read = false,
+                createdAt = now.toString(),
+                deepLink = "quote:${existing.quoteRequest.id}",
+            ),
+        )
+        return offer
+    }
+
+    override suspend fun getProviderInbox(
+        actorUserId: String,
+        includeResolved: Boolean,
+        limit: Int,
+    ): ProviderInboxResponse {
+        val providerIdsForActor = providers
+            .asSequence()
+            .filter { provider -> provider.ownerUserId == actorUserId }
+            .map { provider -> provider.id }
+            .toSet()
+        val providerById = providers.associateBy { provider -> provider.id }
+
+        val quoteItems = quoteRequests.values
+            .flatMap { requestView ->
+                requestView.targets
+                    .filter { target ->
+                        target.ownerUserId == actorUserId &&
+                            (includeResolved || target.status == "pending")
+                    }
+                    .map { target ->
+                        val provider = providerById[target.providerId]
+                        ProviderInboxItem(
+                            id = "quote:${requestView.quoteRequest.id}:${target.providerId}",
+                            itemType = "quote_request",
+                            providerId = target.providerId,
+                            providerName = provider?.name ?: target.providerName,
+                            status = target.status,
+                            title = "Quote request • ${requestView.quoteRequest.category.replace("_", " ")}",
+                            subtitle = "${requestView.quoteRequest.preferredWindow} • ${requestView.quoteRequest.suburb}",
+                            priority = if (target.status == "pending") "high" else "normal",
+                            createdAt = target.createdAt,
+                            dueAt = runCatching {
+                                Instant.parse(target.createdAt).plus(15, ChronoUnit.MINUTES).toString()
+                            }.getOrNull(),
+                            quoteRequestId = requestView.quoteRequest.id,
+                            customerUserId = requestView.quoteRequest.userId,
+                        )
+                    }
+            }
+
+        val bookingItems = bookings
+            .asSequence()
+            .filter { booking -> booking.providerId in providerIdsForActor }
+            .filter { booking ->
+                includeResolved || booking.status in setOf(
+                    "requested",
+                    "provider_confirmed",
+                    "in_progress",
+                    "reschedule_requested",
+                    "rescheduled",
+                )
+            }
+            .map { booking ->
+                val provider = providerById[booking.providerId]
+                ProviderInboxItem(
+                    id = "booking:${booking.id}",
+                    itemType = "booking",
+                    providerId = booking.providerId,
+                    providerName = provider?.name ?: "Provider",
+                    status = booking.status,
+                    title = "Booking • ${booking.petName}",
+                    subtitle = "${booking.date} ${booking.timeSlot}",
+                    priority = if (booking.status in setOf("requested", "reschedule_requested")) "high" else "normal",
+                    createdAt = bookingStatusHistoryByBookingId[booking.id]
+                        ?.maxByOrNull { entry -> entry.createdAt }
+                        ?.createdAt
+                        ?: now.toString(),
+                    bookingId = booking.id,
+                    customerUserId = booking.ownerUserId,
+                )
+            }
+            .toList()
+
+        val merged = (quoteItems + bookingItems)
+            .sortedByDescending { item -> item.createdAt }
+            .take(limit.coerceAtLeast(1))
+
+        return ProviderInboxResponse(
+            actorUserId = actorUserId,
+            total = merged.size,
+            items = merged,
+        )
     }
 
     override suspend fun getVetCoachProfile(userId: String): VetCoachProfile {
@@ -1956,8 +2135,8 @@ class MockApiService private constructor() : ApiService {
             else -> "gpt_fallback"
         }
         val answerBadges = when {
-            isFaq -> listOf("FAQ QA", "Barkwise QA")
-            isRag -> listOf("RAG Grounded", "Barkwise AI")
+            isFaq -> listOf("FAQ QA", "BarkWise QA")
+            isRag -> listOf("RAG Grounded", "BarkWise AI")
             else -> listOf("GPT Fallback", "Mock")
         }
         val citations = when {
@@ -2245,6 +2424,8 @@ class MockApiService private constructor() : ApiService {
     ): List<CommunityPost> {
         val blocked = userId?.let { blockedUsersByUser[it].orEmpty() }.orEmpty()
         val cutoff = recentHours?.let { Instant.now().minus(it.toLong(), ChronoUnit.HOURS) }
+        val nowInstant = Instant.now()
+        val viewer = userId?.trim().orEmpty()
         val filtered = posts.map { post -> withDerivedPostFields(post) }.filter { post ->
             val owner = derivePostOwner(post)
             val matchesSuburb = suburb.isNullOrBlank() || post.suburb.equals(suburb, ignoreCase = true)
@@ -2257,7 +2438,29 @@ class MockApiService private constructor() : ApiService {
                 post.title.contains(query, ignoreCase = true) ||
                 post.body.contains(query, ignoreCase = true)
             val visibleForViewer = owner !in blocked
-            matchesSuburb && matchesPostType && matchesAlertType && matchesAlertStatus && matchesOpenOnly && matchesRecency && matchesQuery && visibleForViewer
+            val shareScope = post.shareScope?.lowercase() ?: "friends"
+            val shareStarted = post.lastSeenAt.isNullOrBlank() || !parseInstantValue(post.lastSeenAt).isAfter(nowInstant)
+            val sharePointStillActive = post.type != "share_point" ||
+                post.expiresAt.isNullOrBlank() ||
+                parseInstantValue(post.expiresAt).isAfter(nowInstant)
+            val sharePointVisibleToViewer = post.type != "share_point" ||
+                (
+                    (shareStarted || owner == viewer) &&
+                        when (shareScope) {
+                            "community" -> true
+                            else -> viewer.isNotBlank() && (viewer == owner || usersShareGroupMembership(viewer, owner))
+                        }
+                    )
+            matchesSuburb &&
+                matchesPostType &&
+                matchesAlertType &&
+                matchesAlertStatus &&
+                matchesOpenOnly &&
+                matchesRecency &&
+                matchesQuery &&
+                visibleForViewer &&
+                sharePointStillActive &&
+                sharePointVisibleToViewer
         }
         val distanceFiltered = if (maxDistanceKm != null && centerLat != null && centerLng != null) {
             filtered.filter { post ->
@@ -2282,6 +2485,61 @@ class MockApiService private constructor() : ApiService {
 
     override suspend fun createPost(payload: CommunityPostCreate): CommunityPost {
         val owner = payload.userId?.takeIf { it.isNotBlank() } ?: "guest_user"
+        val createdAtInstant = Instant.now()
+        val isSharePoint = payload.type == "share_point"
+        if (isSharePoint && (payload.latitude == null || payload.longitude == null)) {
+            error("share_point requires latitude and longitude")
+        }
+        val shareMode = if (!isSharePoint) {
+            payload.contactPref
+        } else if (payload.contactPref.equals("share_at", ignoreCase = true)) {
+            "share_at"
+        } else {
+            "share_now"
+        }
+        val shareScope = if (!isSharePoint) {
+            null
+        } else if (payload.shareScope.equals("community", ignoreCase = true)) {
+            "community"
+        } else {
+            "friends"
+        }
+        val sharePrecision = if (!isSharePoint) {
+            null
+        } else if (payload.sharePrecision.equals("exact", ignoreCase = true)) {
+            "exact"
+        } else {
+            "approximate"
+        }
+        val resolvedShareAt = if (!isSharePoint) {
+            payload.lastSeenAt
+        } else if (shareMode == "share_now") {
+            createdAtInstant.toString()
+        } else {
+            val scheduledAt = parseInstantOrNull(payload.lastSeenAt)
+                ?: error("share_at requires ISO datetime in last_seen_at")
+            if (scheduledAt.isAfter(createdAtInstant.plus(24, ChronoUnit.HOURS))) {
+                error("share_at must be within 24 hours")
+            }
+            scheduledAt.toString()
+        }
+        val roundedCoordinates = if (isSharePoint) {
+            applySharePointPrecision(
+                latitude = payload.latitude ?: 0.0,
+                longitude = payload.longitude ?: 0.0,
+                precision = sharePrecision ?: "approximate",
+            )
+        } else {
+            null
+        }
+        val shareExpiresAt = if (!isSharePoint) {
+            null
+        } else {
+            val shareAtInstant = parseInstantOrNull(resolvedShareAt) ?: createdAtInstant
+            val maxWindow = createdAtInstant.plus(24, ChronoUnit.HOURS)
+            val oneHourAfterShare = shareAtInstant.plus(1, ChronoUnit.HOURS)
+            if (oneHourAfterShare.isBefore(maxWindow)) oneHourAfterShare.toString() else maxWindow.toString()
+        }
         val created = CommunityPost(
             id = "post_${postCounter++}",
             type = payload.type,
@@ -2289,21 +2547,27 @@ class MockApiService private constructor() : ApiService {
             title = payload.title,
             body = payload.body,
             suburb = payload.suburb,
-            createdAt = Instant.now().toString(),
+            createdAt = createdAtInstant.toString(),
             alertType = payload.alertType,
             alertStatus = if (payload.type == "lost_found") "open" else null,
             petName = payload.petName,
             petTraits = payload.petTraits,
-            lastSeenAt = payload.lastSeenAt,
+            lastSeenAt = resolvedShareAt,
             lastSeenLocation = payload.lastSeenLocation,
-            contactPref = payload.contactPref,
+            contactPref = shareMode,
+            shareScope = shareScope,
+            sharePrecision = sharePrecision,
             photoUrls = payload.photoUrls,
-            latitude = payload.latitude,
-            longitude = payload.longitude,
+            latitude = roundedCoordinates?.first ?: payload.latitude,
+            longitude = roundedCoordinates?.second ?: payload.longitude,
             resolvedAt = null,
             resolvedNote = null,
-            followUpDueAt = if (payload.type == "lost_found") Instant.now().plus(12, ChronoUnit.HOURS).toString() else null,
-            expiresAt = if (payload.type == "lost_found") Instant.now().plus(72, ChronoUnit.HOURS).toString() else null,
+            followUpDueAt = if (payload.type == "lost_found") createdAtInstant.plus(12, ChronoUnit.HOURS).toString() else null,
+            expiresAt = when {
+                payload.type == "lost_found" -> createdAtInstant.plus(72, ChronoUnit.HOURS).toString()
+                isSharePoint -> shareExpiresAt
+                else -> null
+            },
         )
         val enriched = withDerivedPostFields(created)
         posts.add(0, enriched)
@@ -2458,6 +2722,23 @@ class MockApiService private constructor() : ApiService {
         val current = withDerivedPostFields(posts[index])
         val requester = payload.requesterUserId?.takeIf { it.isNotBlank() } ?: "guest_user"
         if (derivePostOwner(current) != requester) error("Only post owner can update this post")
+        val nextPrecision = when {
+            payload.sharePrecision.equals("exact", ignoreCase = true) -> "exact"
+            payload.sharePrecision.equals("approximate", ignoreCase = true) -> "approximate"
+            else -> current.sharePrecision
+        }
+        val nextLatitude = payload.latitude ?: current.latitude
+        val nextLongitude = payload.longitude ?: current.longitude
+        val adjustedCoordinates = if (
+            current.type == "share_point" &&
+            nextLatitude != null &&
+            nextLongitude != null &&
+            nextPrecision == "approximate"
+        ) {
+            applySharePointPrecision(nextLatitude, nextLongitude, "approximate")
+        } else {
+            null
+        }
         val updated = current.copy(
             title = payload.title?.takeIf { it.isNotBlank() } ?: current.title,
             body = payload.body?.takeIf { it.isNotBlank() } ?: current.body,
@@ -2470,9 +2751,11 @@ class MockApiService private constructor() : ApiService {
             },
             lastSeenLocation = payload.lastSeenLocation ?: current.lastSeenLocation,
             contactPref = payload.contactPref ?: current.contactPref,
+            shareScope = payload.shareScope ?: current.shareScope,
+            sharePrecision = nextPrecision,
             photoUrls = payload.photoUrls ?: current.photoUrls,
-            latitude = payload.latitude ?: current.latitude,
-            longitude = payload.longitude ?: current.longitude,
+            latitude = adjustedCoordinates?.first ?: nextLatitude,
+            longitude = adjustedCoordinates?.second ?: nextLongitude,
         )
         posts[index] = updated
         return updated
@@ -2584,7 +2867,81 @@ class MockApiService private constructor() : ApiService {
         )
     }
 
+    override suspend fun getCommunityActivationFunnel(
+        requesterUserId: String?,
+        windowHours: Int,
+    ): CommunityActivationFunnel {
+        val cutoff = Instant.now().minus(windowHours.toLong(), ChronoUnit.HOURS)
+        val scopedAnalytics = analyticsEvents.filter { (createdAt, event) ->
+            createdAt.isAfter(cutoff) &&
+                event.event.startsWith("activation_") &&
+                (requesterUserId.isNullOrBlank() || event.userId == requesterUserId)
+        }
+        val scopedDiagnostics = diagnosticEvents.filter { (createdAt, event) ->
+            createdAt.isAfter(cutoff) &&
+                event.message.startsWith("activation_") &&
+                (requesterUserId.isNullOrBlank() || event.userId == requesterUserId)
+        }
+
+        val byEvent = mutableMapOf<String, Int>()
+        val byStage = mutableMapOf<String, Int>()
+        val byStatus = mutableMapOf<String, Int>()
+
+        scopedAnalytics.forEach { (_, payload) ->
+            byEvent[payload.event] = (byEvent[payload.event] ?: 0) + 1
+            val suffix = payload.event.removePrefix("activation_")
+            val pivot = suffix.lastIndexOf('_')
+            if (pivot <= 0) {
+                val stage = suffix.ifBlank { "unknown" }
+                byStage[stage] = (byStage[stage] ?: 0) + 1
+            } else {
+                val stage = suffix.substring(0, pivot).ifBlank { "unknown" }
+                val status = suffix.substring(pivot + 1).ifBlank { "unknown" }
+                byStage[stage] = (byStage[stage] ?: 0) + 1
+                byStatus[status] = (byStatus[status] ?: 0) + 1
+            }
+        }
+
+        val topFailures = scopedAnalytics
+            .asSequence()
+            .filter { (_, payload) -> payload.event.endsWith("_failed") }
+            .sortedByDescending { (createdAt, _) -> createdAt }
+            .take(25)
+            .map { (createdAt, payload) ->
+                CommunityActivationFailure(
+                    event = payload.event,
+                    createdAt = createdAt.toString(),
+                    userId = payload.userId,
+                    error = payload.metadata["error"].orEmpty(),
+                )
+            }
+            .toList()
+
+        val uniqueUsers = scopedAnalytics
+            .asSequence()
+            .map { (_, payload) -> payload.userId.trim() }
+            .filter { userId -> userId.isNotBlank() }
+            .distinct()
+            .sorted()
+            .toList()
+
+        return CommunityActivationFunnel(
+            windowHours = windowHours,
+            requesterUserId = requesterUserId,
+            activationEventCount = scopedAnalytics.size,
+            activationDiagnosticCount = scopedDiagnostics.size,
+            uniqueUsers = uniqueUsers,
+            uniqueUserCount = uniqueUsers.size,
+            lastEventAt = scopedAnalytics.maxOfOrNull { (createdAt, _) -> createdAt.toString() },
+            byEvent = byEvent.toSortedMap(),
+            byStage = byStage.toSortedMap(),
+            byStatus = byStatus.toSortedMap(),
+            topFailures = topFailures,
+        )
+    }
+
     override suspend fun createCommunityDiagnosticEvent(payload: CommunityDiagnosticEventCreateRequest): Map<String, String> {
+        diagnosticEvents += Instant.now() to payload
         return mapOf("status" to "ok")
     }
 
@@ -2608,12 +2965,52 @@ class MockApiService private constructor() : ApiService {
             suburb = payload.suburb,
             date = payload.date,
             groupId = payload.groupId,
+            locationName = payload.locationName,
+            locationLatitude = payload.locationLatitude,
+            locationLongitude = payload.locationLongitude,
+            recurrence = payload.recurrence,
+            recurrenceInterval = payload.recurrenceInterval,
             attendeeCount = 0,
             createdBy = payload.userId,
-            status = if (payload.groupId == null) "approved" else "pending",
+            status = if (payload.groupId == null) "approved" else "pending_approval",
         )
         events.add(0, event)
         return event
+    }
+
+    override suspend fun updateEvent(
+        eventId: String,
+        payload: CommunityEventUpdateRequest,
+    ): CommunityEvent {
+        val index = events.indexOfFirst { it.id == eventId }
+        if (index < 0) error("Event not found: $eventId")
+        val current = events[index]
+        if (current.createdBy != payload.userId) error("Only event owner can edit this event")
+        val updated = current.copy(
+            title = payload.title ?: current.title,
+            description = payload.description ?: current.description,
+            date = payload.date ?: current.date,
+            groupId = payload.groupId,
+            locationName = when {
+                payload.clearLocation -> null
+                payload.locationName != null -> payload.locationName
+                else -> current.locationName
+            },
+            locationLatitude = when {
+                payload.clearLocation -> null
+                payload.locationLatitude != null -> payload.locationLatitude
+                else -> current.locationLatitude
+            },
+            locationLongitude = when {
+                payload.clearLocation -> null
+                payload.locationLongitude != null -> payload.locationLongitude
+                else -> current.locationLongitude
+            },
+            recurrence = payload.recurrence ?: current.recurrence,
+            recurrenceInterval = payload.recurrenceInterval ?: current.recurrenceInterval,
+        )
+        events[index] = updated
+        return updated
     }
 
     override suspend fun rsvpEvent(
@@ -2644,6 +3041,7 @@ class MockApiService private constructor() : ApiService {
     }
 
     override suspend fun login(payload: AuthLoginRequest): AuthLoginResponse {
+        authSessionUserId = payload.userId.trim().ifBlank { authSessionUserId }
         return AuthLoginResponse(
             accessToken = "mock-token-${payload.userId}",
             tokenType = "bearer",
@@ -2706,11 +3104,58 @@ class MockApiService private constructor() : ApiService {
         if (payload.otpCode.trim() != expected) error("Invalid OTP")
         otpCodeByInviteEmail.remove(key)
         otpExpiresByInviteEmail.remove(key)
+        authSessionUserId = invite.userId
         return AuthOtpVerifyResponse(
             accessToken = "mock-otp-token-${invite.userId}",
             tokenType = "bearer",
             userId = invite.userId,
             expiresAt = Instant.now().plus(7, ChronoUnit.DAYS).toString(),
+        )
+    }
+
+    override suspend fun issueFriendQr(): AuthFriendQrIssueResponse {
+        val activeUserId = authSessionUserId.trim().ifBlank { "user_2" }
+        val profile = userProfilesByUserId[activeUserId]
+        val humanName = profile?.displayName?.trim().orEmpty().ifBlank { activeUserId }
+        val dogName = profile?.dogName?.trim().orEmpty().ifBlank { "Dog" }
+        val expiresAt = Instant.now().plus(30, ChronoUnit.MINUTES).toString()
+        val payload = listOf(
+            activeUserId,
+            humanName.replace("|", " "),
+            dogName.replace("|", " "),
+            expiresAt,
+        ).joinToString("|")
+        val token = Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(payload.toByteArray(Charsets.UTF_8))
+        return AuthFriendQrIssueResponse(
+            friendToken = token,
+            friendUrl = "barkwise://friend?friend_token=$token",
+            expiresAt = expiresAt,
+        )
+    }
+
+    override suspend fun verifyFriendQr(payload: AuthFriendQrVerifyRequest): AuthFriendQrVerifyResponse {
+        val token = payload.friendToken.trim()
+        if (token.isBlank()) error("Friend token required")
+        val decoded = runCatching {
+            val bytes = Base64.getUrlDecoder().decode(token)
+            String(bytes, Charsets.UTF_8)
+        }.getOrElse { throw IllegalArgumentException("Invalid friend QR token") }
+        val parts = decoded.split("|")
+        if (parts.size < 4) error("Invalid friend QR token")
+        val userId = parts[0].trim()
+        val humanName = parts[1].trim().ifBlank { "BarkWise member" }
+        val dogName = parts[2].trim().ifBlank { "Dog" }
+        val expiresAt = parts[3].trim()
+        if (userId.isBlank()) error("Invalid friend QR token")
+        if (parseInstantValue(expiresAt).isBefore(Instant.now())) error("Friend QR expired")
+        if (userId == authSessionUserId) error("Cannot add yourself")
+        return AuthFriendQrVerifyResponse(
+            userId = userId,
+            humanName = humanName,
+            dogName = dogName,
+            expiresAt = expiresAt,
         )
     }
 
@@ -2782,6 +3227,8 @@ class MockApiService private constructor() : ApiService {
             secondaryDogName = payload.secondaryDogName.trim(),
             secondaryDogAgeMonths = payload.secondaryDogAgeMonths.coerceAtLeast(0),
             secondaryDogPhotoUrl = payload.secondaryDogPhotoUrl.trim(),
+            secondaryDogGender = payload.secondaryDogGender.trim().lowercase(),
+            secondaryDogWeightKg = payload.secondaryDogWeightKg.trim(),
             bio = payload.bio.trim(),
             suburb = payload.suburb.trim(),
             favoriteSuburbs = payload.favoriteSuburbs
@@ -3161,6 +3608,14 @@ class MockApiService private constructor() : ApiService {
         return runCatching { Instant.parse(raw) }
             .recoverCatching { OffsetDateTime.parse(raw).toInstant() }
             .getOrElse { Instant.EPOCH }
+    }
+
+    private fun parseInstantOrNull(raw: String?): Instant? {
+        val clean = raw?.trim().orEmpty()
+        if (clean.isBlank()) return null
+        return runCatching { Instant.parse(clean) }
+            .recoverCatching { OffsetDateTime.parse(clean).toInstant() }
+            .getOrNull()
     }
 
     companion object {

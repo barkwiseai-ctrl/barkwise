@@ -126,6 +126,13 @@ class MemoryStore:
         turns.reverse()
         return turns
 
+    def delete_user_data(self, user_id: str) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM user_memory WHERE user_id = ?", (user_id,))
+                conn.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
+                conn.commit()
+
     def _safe_json_object(self, raw_value: Any) -> Dict[str, Any]:
         if raw_value in (None, ""):
             return {}

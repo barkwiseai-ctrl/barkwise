@@ -1,4 +1,8 @@
+import json
+import os
 import re
+import time
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -31,6 +35,28 @@ class RagRetriever:
         "groomers": "grooming",
         "walkers": "walking",
     }
+    QUERY_EXPANSIONS: Dict[str, Set[str]] = {
+        "feed": {"nutrition", "diet", "food", "feeding"},
+        "food": {"nutrition", "diet", "feed", "feeding"},
+        "feeding": {"nutrition", "diet", "feed", "food"},
+        "diet": {"nutrition", "food", "feeding", "weight"},
+        "brush": {"brushing", "grooming", "coat", "skin"},
+        "brushing": {"brush", "grooming", "coat"},
+        "groom": {"grooming", "coat", "skin"},
+        "grooming": {"groom", "coat", "brush"},
+        "coat": {"grooming", "brush", "skin"},
+        "itch": {"skin", "allergy", "coat"},
+        "itchy": {"skin", "allergy", "coat"},
+        "walk": {"walking", "exercise", "activity"},
+        "walking": {"walk", "exercise", "activity"},
+        "exercise": {"walk", "walking", "activity", "weight"},
+        "overweight": {"weight", "obesity", "nutrition", "exercise"},
+        "weight": {"obesity", "nutrition", "exercise", "diet"},
+        "anxious": {"anxiety", "behavior", "training"},
+        "anxiety": {"anxious", "behavior", "training"},
+        "training": {"behavior", "reward", "reactive"},
+        "reactive": {"behavior", "training", "anxiety"},
+    }
     SOURCE_CAPS: Dict[str, int] = {
         "knowledge_base": 3,
         "provider": 2,
@@ -38,6 +64,37 @@ class RagRetriever:
         "community_post": 2,
         "community_event": 2,
     }
+    HIGH_RISK_SOURCE_CAPS: Dict[str, int] = {
+        "knowledge_base": 4,
+    }
+    HIGH_RISK_AU_AUTHORITIES: Set[str] = {
+        "rspca australia",
+        "agriculture victoria",
+        "nsw government",
+        "australian veterinary association",
+        "ava",
+    }
+    HIGH_RISK_GLOBAL_AUTHORITIES: Set[str] = {
+        "aaha",
+        "wsava",
+        "avsab",
+        "cdc",
+        "fda",
+        "fda cvm",
+        "who",
+        "american heartworm society",
+        "merck veterinary manual",
+        "aspca animal poison control",
+        "avma",
+    }
+    HIGH_RISK_BLOCKED_AUTHORITY_MARKERS: Set[str] = {
+        "reddit",
+    }
+
+    def __init__(self) -> None:
+        self.cache_ttl_seconds = self._read_int_env("RAG_CONTEXT_CACHE_TTL_SECONDS", default=45, min_value=0, max_value=3600)
+        self.cache_max_entries = self._read_int_env("RAG_CONTEXT_CACHE_MAX_ENTRIES", default=256, min_value=0, max_value=5000)
+        self._context_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
     def build_context(
         self,
@@ -46,8 +103,25 @@ class RagRetriever:
         profile_memory: Dict[str, Any],
         intent: str,
         tool_results: Dict[str, Any],
+        high_risk_mode: bool = False,
+        high_risk_terms: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        query_tokens = self._rag_tokens(message)
+        profile_summary = self._profile_summary(profile_memory)
+        tool_boost_names = self._extract_tool_entity_names(tool_results)
+        cache_key = self._context_cache_key(
+            message=message,
+            suburb=suburb,
+            intent=intent,
+            profile_summary=profile_summary,
+            tool_boost_names=tool_boost_names,
+            high_risk_mode=high_risk_mode,
+            high_risk_terms=high_risk_terms or [],
+        )
+        cached = self._context_cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        query_tokens = self._expand_query_tokens(self._rag_tokens(message))
         scored: List[Tuple[float, Dict[str, Any]]] = []
 
         scored.extend(self._retrieve_dog_knowledge_docs(query_tokens=query_tokens, intent=intent))
@@ -56,7 +130,6 @@ class RagRetriever:
         scored.extend(self._retrieve_post_docs(query_tokens=query_tokens, suburb=suburb))
         scored.extend(self._retrieve_event_docs(query_tokens=query_tokens, suburb=suburb))
 
-        tool_boost_names = self._extract_tool_entity_names(tool_results)
         if tool_boost_names:
             boosted: List[Tuple[float, Dict[str, Any]]] = []
             for score, doc in scored:
@@ -67,7 +140,7 @@ class RagRetriever:
             scored = boosted
 
         intent_boosted: List[Tuple[float, Dict[str, Any]]] = []
-        health_risk_query = self._is_health_risk_query(query_tokens)
+        health_risk_query = self._is_health_risk_query(query_tokens) or high_risk_mode
         for score, doc in scored:
             source = str(doc.get("source", ""))
             score += self._intent_source_boost(intent=intent, source=source)
@@ -82,27 +155,118 @@ class RagRetriever:
             intent_boosted.append((score, doc))
         scored = intent_boosted
 
+        if high_risk_mode:
+            scored = self._apply_high_risk_trust_policy(
+                scored,
+                high_risk_terms=high_risk_terms or [],
+                query_tokens=query_tokens,
+            )
+
         scored.sort(key=lambda item: item[0], reverse=True)
-        top_docs = self._select_top_docs(scored)
+        if high_risk_mode:
+            top_docs = self._select_top_docs(
+                scored,
+                max_docs=4,
+                source_caps=self.HIGH_RISK_SOURCE_CAPS,
+            )
+            if high_risk_terms and not self._has_high_risk_term_match(top_docs, high_risk_terms):
+                top_docs = self._fallback_high_risk_docs(priority_terms=high_risk_terms)
+        else:
+            top_docs = self._select_top_docs(scored)
         if not top_docs:
-            if intent in {"general_pet_question", "weight_concern", "lost_found"}:
+            if high_risk_mode:
+                top_docs = self._fallback_high_risk_docs(priority_terms=high_risk_terms or [])
+            elif intent in {"general_pet_question", "weight_concern", "lost_found"}:
                 top_docs = []
             else:
                 top_docs = [doc for _, doc in self._retrieve_provider_docs(query_tokens=set(), suburb=suburb)[:2]]
 
-        profile_summary = {
-            key: value
-            for key, value in profile_memory.items()
-            if key in {"pet_name", "pet_type", "breed", "age_years", "weight_kg", "suburb"}
-        }
-
-        return {
+        context = {
             "intent": intent,
             "query": message.strip(),
             "suburb": suburb,
             "profile_summary": profile_summary,
             "documents": top_docs,
+            "high_risk_mode": high_risk_mode,
+            "high_risk_terms": list(high_risk_terms or []),
+            "source_policy": "trusted_knowledge_only_no_reddit" if high_risk_mode else "default",
         }
+        self._context_cache_set(cache_key, context)
+        return context
+
+    @staticmethod
+    def _read_int_env(name: str, default: int, min_value: int, max_value: int) -> int:
+        raw = os.getenv(name)
+        if raw is None:
+            parsed = default
+        else:
+            try:
+                parsed = int(str(raw).strip())
+            except (TypeError, ValueError):
+                parsed = default
+        if parsed < min_value:
+            parsed = min_value
+        if parsed > max_value:
+            parsed = max_value
+        return parsed
+
+    @staticmethod
+    def _profile_summary(profile_memory: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            key: value
+            for key, value in profile_memory.items()
+            if key in {"pet_name", "pet_type", "breed", "age_years", "weight_kg", "suburb"}
+        }
+
+    def _context_cache_key(
+        self,
+        *,
+        message: str,
+        suburb: Optional[str],
+        intent: str,
+        profile_summary: Dict[str, Any],
+        tool_boost_names: Set[str],
+        high_risk_mode: bool,
+        high_risk_terms: List[str],
+    ) -> str:
+        payload = {
+            "message": str(message).strip().lower(),
+            "suburb": str(suburb or "").strip().lower(),
+            "intent": str(intent),
+            "profile_summary": profile_summary,
+            "tool_entities": sorted(tool_boost_names),
+            "high_risk_mode": bool(high_risk_mode),
+            "high_risk_terms": sorted(str(term).strip().lower() for term in high_risk_terms if str(term).strip()),
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+    def _context_cache_get(self, key: str) -> Optional[Dict[str, Any]]:
+        if self.cache_ttl_seconds <= 0 or self.cache_max_entries <= 0:
+            return None
+        entry = self._context_cache.get(key)
+        if entry is None:
+            return None
+        expires_at, context = entry
+        now = time.monotonic()
+        if expires_at <= now:
+            self._context_cache.pop(key, None)
+            return None
+        return deepcopy(context)
+
+    def _context_cache_set(self, key: str, context: Dict[str, Any]) -> None:
+        if self.cache_ttl_seconds <= 0 or self.cache_max_entries <= 0:
+            return
+        now = time.monotonic()
+        self._prune_context_cache(now)
+        self._context_cache[key] = (now + float(self.cache_ttl_seconds), deepcopy(context))
+        while len(self._context_cache) > self.cache_max_entries:
+            oldest_key = next(iter(self._context_cache))
+            self._context_cache.pop(oldest_key, None)
+
+    def _prune_context_cache(self, now: float) -> None:
+        expired_keys = [key for key, (expires_at, _) in self._context_cache.items() if expires_at <= now]
+        for key in expired_keys:
+            self._context_cache.pop(key, None)
 
     def _intent_source_boost(self, intent: str, source: str) -> float:
         if intent in {"general_pet_question", "weight_concern"} and source == "knowledge_base":
@@ -132,10 +296,17 @@ class RagRetriever:
         }
         return len(query_tokens.intersection(risk_tokens)) > 0
 
-    def _select_top_docs(self, scored: List[Tuple[float, Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    def _select_top_docs(
+        self,
+        scored: List[Tuple[float, Dict[str, Any]]],
+        *,
+        max_docs: int = 6,
+        source_caps: Optional[Dict[str, int]] = None,
+    ) -> List[Dict[str, Any]]:
         selected: List[Dict[str, Any]] = []
         seen_keys: Set[str] = set()
         source_counts: Dict[str, int] = {}
+        caps = source_caps or self.SOURCE_CAPS
 
         for score, doc in scored:
             if score <= 0:
@@ -145,13 +316,13 @@ class RagRetriever:
             dedupe_key = f"{source}:{doc_id}"
             if dedupe_key in seen_keys:
                 continue
-            cap = self.SOURCE_CAPS.get(source, 2)
+            cap = caps.get(source, 2)
             if source_counts.get(source, 0) >= cap:
                 continue
             seen_keys.add(dedupe_key)
             source_counts[source] = source_counts.get(source, 0) + 1
             selected.append(doc)
-            if len(selected) >= 6:
+            if len(selected) >= max_docs:
                 break
 
         return selected
@@ -164,12 +335,31 @@ class RagRetriever:
         docs = rag_context.get("documents", [])
         if not isinstance(docs, list) or not docs:
             return None
+        high_risk_mode = bool(rag_context.get("high_risk_mode", False))
+        high_risk_terms = rag_context.get("high_risk_terms", [])
+        if not isinstance(high_risk_terms, list):
+            high_risk_terms = []
 
         lines: List[str] = []
         if support_mode:
             lines.append("I know this can feel stressful, and you are doing the right thing by asking.")
             lines.append("")
-        lines.append("From what I can see in your local BarkAI data:")
+        if high_risk_mode:
+            concern_label = ", ".join(str(item) for item in high_risk_terms[:3] if str(item).strip())
+            if concern_label:
+                lines.append(f"This looks high-risk ({concern_label}). I cannot diagnose in chat.")
+            else:
+                lines.append("This looks high-risk. I cannot diagnose in chat.")
+            lines.append("Use this safety-first plan now:")
+            lines.append("1. Contact a veterinarian or emergency clinic for real-time triage immediately.")
+            lines.append("2. Keep your dog calm and avoid home medications or induced vomiting unless a vet directs it.")
+            lines.append(
+                "3. If collapse, trouble breathing, repeated vomiting, seizures, or severe weakness occur, treat as an emergency now."
+            )
+            lines.append("")
+            lines.append("Trusted references for immediate guidance:")
+        else:
+            lines.append("From what I can see in your local BarkAI data:")
         for doc in docs[:3]:
             if not isinstance(doc, dict):
                 continue
@@ -184,8 +374,146 @@ class RagRetriever:
                 lines.append(f"- {title}")
 
         lines.append("")
-        lines.append("If you want, I can narrow this to the best next action for your specific pet.")
+        if high_risk_mode:
+            lines.append("I can help you prepare what to tell the vet right now (symptoms, timing, and possible exposure).")
+        else:
+            lines.append("If you want, I can narrow this to the best next action for your specific pet.")
         return "\n".join(lines).strip()
+
+    def _apply_high_risk_trust_policy(
+        self,
+        scored: List[Tuple[float, Dict[str, Any]]],
+        *,
+        high_risk_terms: List[str],
+        query_tokens: Set[str],
+    ) -> List[Tuple[float, Dict[str, Any]]]:
+        filtered: List[Tuple[float, Dict[str, Any]]] = []
+        phrase_terms, token_terms = self._expand_high_risk_terms(high_risk_terms)
+        for score, doc in scored:
+            source = str(doc.get("source", "")).strip()
+            if source != "knowledge_base":
+                continue
+            authority = str(doc.get("authority", "")).strip()
+            authority_priority = self._high_risk_authority_priority(authority)
+            if authority_priority < 0:
+                continue
+            title = str(doc.get("title", "")).lower()
+            snippet = str(doc.get("snippet", "")).lower()
+            doc_blob = f"{title} {snippet}"
+            doc_tokens = self._rag_tokens(doc_blob)
+            phrase_hits = [term for term in phrase_terms if term in doc_blob]
+            token_hits = [term for term in token_terms if term in doc_tokens]
+            matched_terms = [*phrase_hits, *token_hits]
+            relevance_bonus = 0.0
+            if matched_terms:
+                relevance_bonus += 1.2 + (0.2 * min(3, len(matched_terms)))
+            elif (phrase_terms or token_terms) and score < 0.45:
+                continue
+            overlap_bonus = self._rag_overlap_score(query_tokens=query_tokens, doc_tokens=doc_tokens)
+            filtered.append((score + 1.0 + authority_priority + relevance_bonus + overlap_bonus, doc))
+        return filtered
+
+    def _high_risk_authority_priority(self, authority: str) -> float:
+        normalized = authority.strip().lower()
+        if not normalized:
+            return 0.0
+        if any(marker in normalized for marker in self.HIGH_RISK_BLOCKED_AUTHORITY_MARKERS):
+            return -5.0
+        if any(authority_name in normalized for authority_name in self.HIGH_RISK_AU_AUTHORITIES):
+            return 1.5
+        if any(authority_name in normalized for authority_name in self.HIGH_RISK_GLOBAL_AUTHORITIES):
+            return 0.9
+        return 0.2
+
+    def _fallback_high_risk_docs(self, priority_terms: List[str]) -> List[Dict[str, Any]]:
+        topic_markers = {
+            "parvo",
+            "poison",
+            "toxin",
+            "emergency",
+            "heatstroke",
+            "tick",
+            "tick paralysis",
+            "rabies",
+            "heartworm",
+            "vaccine",
+            "leptospirosis",
+            "dehydration",
+            "vomiting",
+            "diarrhea",
+        }
+        phrase_terms, token_terms = self._expand_high_risk_terms(priority_terms)
+        matched_scored_docs: List[Tuple[float, Dict[str, Any]]] = []
+        generic_scored_docs: List[Tuple[float, Dict[str, Any]]] = []
+        for item in TRUSTED_DOG_KNOWLEDGE:
+            title = str(item.get("title", ""))
+            content = str(item.get("content", ""))
+            authority = str(item.get("source", ""))
+            priority = self._high_risk_authority_priority(authority)
+            if priority < 0:
+                continue
+            topics = [str(topic).lower() for topic in item.get("topics", [])]
+            topic_score = 1.0 if any(marker in topic for marker in topic_markers for topic in topics) else 0.0
+            if not topic_score and any(marker in content.lower() for marker in topic_markers):
+                topic_score = 0.5
+            doc_blob = f"{title.lower()} {content.lower()}"
+            doc_tokens = self._rag_tokens(doc_blob)
+            phrase_hits = [term for term in phrase_terms if term in doc_blob]
+            token_hits = [term for term in token_terms if term in doc_tokens]
+            has_match = bool(phrase_hits or token_hits)
+            match_bonus = 1.5 if has_match else 0.0
+            doc = {
+                "source": "knowledge_base",
+                "id": str(item.get("id", "")),
+                "title": title,
+                "authority": authority,
+                "url": str(item.get("url", "")),
+                "snippet": content,
+            }
+            scored_item = (priority + topic_score + match_bonus, doc)
+            if has_match:
+                matched_scored_docs.append(scored_item)
+            else:
+                generic_scored_docs.append(scored_item)
+        if (phrase_terms or token_terms) and matched_scored_docs:
+            scored_docs = matched_scored_docs
+        else:
+            scored_docs = [*matched_scored_docs, *generic_scored_docs]
+        scored_docs.sort(key=lambda pair: pair[0], reverse=True)
+        return self._select_top_docs(
+            scored_docs,
+            max_docs=4,
+            source_caps=self.HIGH_RISK_SOURCE_CAPS,
+        )
+
+    def _expand_high_risk_terms(self, high_risk_terms: List[str]) -> Tuple[Set[str], Set[str]]:
+        phrase_terms: Set[str] = set()
+        token_terms: Set[str] = set()
+        for raw_term in high_risk_terms:
+            term = str(raw_term).strip().lower()
+            if not term:
+                continue
+            if " " in term:
+                phrase_terms.add(term)
+            for token in self._rag_tokens(term):
+                if len(token) >= 4:
+                    token_terms.add(token)
+        return phrase_terms, token_terms
+
+    def _has_high_risk_term_match(self, docs: List[Dict[str, Any]], high_risk_terms: List[str]) -> bool:
+        phrase_terms, token_terms = self._expand_high_risk_terms(high_risk_terms)
+        if not phrase_terms and not token_terms:
+            return False
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            doc_blob = f"{str(doc.get('title', '')).lower()} {str(doc.get('snippet', '')).lower()}"
+            if any(term in doc_blob for term in phrase_terms):
+                return True
+            doc_tokens = self._rag_tokens(doc_blob)
+            if any(term in doc_tokens for term in token_terms):
+                return True
+        return False
 
     def _retrieve_dog_knowledge_docs(
         self,
@@ -238,7 +566,7 @@ class RagRetriever:
             )
 
         scored.sort(key=lambda pair: pair[0], reverse=True)
-        return scored[:4]
+        return scored[:12]
 
     def _retrieve_provider_docs(
         self,
@@ -430,6 +758,12 @@ class RagRetriever:
                     normalized_token = singular
             cleaned.add(normalized_token)
         return cleaned
+
+    def _expand_query_tokens(self, tokens: Set[str]) -> Set[str]:
+        expanded = set(tokens)
+        for token in list(tokens):
+            expanded.update(self.QUERY_EXPANSIONS.get(token, set()))
+        return expanded
 
     def _rag_overlap_score(self, query_tokens: Set[str], doc_tokens: Set[str]) -> float:
         if not doc_tokens:

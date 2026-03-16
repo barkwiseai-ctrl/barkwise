@@ -1,5 +1,11 @@
 package com.petsocial.app.ui.screens
 
+import android.Manifest
+import android.content.Context
+import android.graphics.Bitmap
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -26,18 +32,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.petsocial.app.data.ChatCta
 import com.petsocial.app.data.ChatResponse
 import com.petsocial.app.data.ChatTurn
 import com.petsocial.app.data.PetProfileSuggestion
 import com.petsocial.app.ui.A2uiCardState
 import com.petsocial.app.ui.BarkThread
+import java.io.File
+import java.io.FileOutputStream
 
 @Composable
 fun ChatScreen(
@@ -51,20 +63,48 @@ fun ChatScreen(
     a2uiProviderCard: A2uiCardState?,
     barkThreads: List<BarkThread>,
     selectedBarkThreadId: String,
+    onboardingMode: Boolean,
+    onboardingNeedsPhoto: Boolean,
     onSelectBarkThread: (String) -> Unit,
     onNewBarkThread: () -> Unit,
     onSend: (String) -> Unit,
+    onOnboardingPhotoCaptured: (Boolean, String?) -> Unit,
     onCtaClick: (ChatCta) -> Unit,
     onAcceptProfile: () -> Unit,
     onSubmitProvider: () -> Unit,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
     var inputFocused by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    var launchCameraAfterPermission by rememberSaveable { mutableStateOf(false) }
     val conversationListState = rememberLazyListState()
     val isShowingStreaming = loading && streamingAssistantText.isNotBlank()
     val hasQuickActions = chatResponse?.ctaChips?.isNotEmpty() == true
     val hasProfileCard = ((a2uiProfileCard?.fields?.isNotEmpty() == true) || profileSuggestion != null)
     val hasProviderCard = a2uiProviderCard != null
+    val hasCameraPermission = remember(context) {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview(),
+    ) { bitmap ->
+        val capturedPhotoUri = bitmap?.let { captured ->
+            persistOnboardingDogPhoto(context = context, bitmap = captured)
+        }
+        onOnboardingPhotoCaptured(capturedPhotoUri != null, capturedPhotoUri)
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted && launchCameraAfterPermission) {
+            launchCameraAfterPermission = false
+            runCatching { cameraLauncher.launch(null) }
+                .onFailure { onOnboardingPhotoCaptured(false, null) }
+        } else if (!granted) {
+            launchCameraAfterPermission = false
+            onOnboardingPhotoCaptured(false, null)
+        }
+    }
     val listCount = conversation.size +
         (if (isShowingStreaming) 1 else 0) +
         (if (hasProviderCard) 1 else 0) +
@@ -92,25 +132,30 @@ fun ChatScreen(
             .navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(androidx.compose.foundation.rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            AssistChip(
-                onClick = onNewBarkThread,
-                label = { Text("New Thread") },
-            )
-            barkThreads.forEach { thread ->
+        if (!onboardingMode) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 AssistChip(
-                    onClick = { onSelectBarkThread(thread.id) },
-                    label = {
-                        Text(
-                            if (thread.id == selectedBarkThreadId) "• ${thread.title}" else thread.title,
-                        )
-                    },
+                    onClick = onNewBarkThread,
+                    label = { Text("New Thread", style = MaterialTheme.typography.labelMedium) },
                 )
+                barkThreads.forEach { thread ->
+                    AssistChip(
+                        onClick = { onSelectBarkThread(thread.id) },
+                        label = {
+                            Text(
+                                if (thread.id == selectedBarkThreadId) "• ${thread.title}" else thread.title,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                    )
+                }
             }
         }
 
@@ -136,7 +181,7 @@ fun ChatScreen(
                 if (conversation.isEmpty() && !loading) {
                     item {
                         Text(
-                            text = "BarkAI is ready for pet questions, local pet listings, and community help.",
+                            text = "Ask BarkAI anything about your dog, local services, or community plans.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
@@ -203,6 +248,7 @@ fun ChatScreen(
                                             label = {
                                                 Text(
                                                     if (cta.action == "new_bark_thread") "New Thread" else cta.label,
+                                                    style = MaterialTheme.typography.labelMedium,
                                                 )
                                             },
                                         )
@@ -229,13 +275,34 @@ fun ChatScreen(
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
-                    label = { Text("Message BarkAI") },
+                    label = { Text(if (onboardingMode) "Reply to BarkWiseAI" else "Message BarkAI") },
                     modifier = Modifier
                         .weight(1f)
                         .onFocusChanged { inputFocused = it.isFocused },
                     minLines = 1,
                     maxLines = if (inputFocused) 4 else 1,
                 )
+                if (onboardingMode && onboardingNeedsPhoto) {
+                    Button(
+                        enabled = !loading,
+                        onClick = {
+                            val permissionGranted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.CAMERA,
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (permissionGranted || hasCameraPermission) {
+                                runCatching { cameraLauncher.launch(null) }
+                                    .onFailure { onOnboardingPhotoCaptured(false, null) }
+                            } else {
+                                launchCameraAfterPermission = true
+                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
+                        },
+                        modifier = Modifier.width(92.dp),
+                    ) {
+                        Text("Camera", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
                 Button(
                     enabled = !loading,
                     onClick = {
@@ -244,7 +311,7 @@ fun ChatScreen(
                     },
                     modifier = Modifier.width(84.dp),
                 ) {
-                    Text("Send")
+                    Text("Send", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -256,16 +323,53 @@ private fun MessageBubble(turn: ChatTurn) {
     val isUser = turn.role == "user"
     val bg = if (isUser) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceContainer
     val align = if (isUser) Arrangement.End else Arrangement.Start
+    val visibleBadges = turn.answerBadges.filterNot { badge ->
+        badge.equals("onboarding_script", ignoreCase = true) ||
+            badge.contains("onboarding script", ignoreCase = true) ||
+            badge.contains("onboard script", ignoreCase = true)
+    }
 
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = align) {
-        Text(
-            text = turn.content,
-            style = MaterialTheme.typography.bodyMedium,
+        Column(
             modifier = Modifier
                 .fillMaxWidth(0.9f)
                 .background(bg, RoundedCornerShape(14.dp))
                 .padding(10.dp),
-        )
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = turn.content,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!isUser && visibleBadges.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                ) {
+                    visibleBadges.forEach { badge ->
+                        AssistChip(onClick = {}, label = { Text(badge) })
+                    }
+                }
+            }
+            if (!isUser && turn.citations.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Sources",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    turn.citations.take(3).forEachIndexed { index, citation ->
+                        val authority = citation.source.ifBlank { "BarkWise" }
+                        val url = citation.url?.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty()
+                        Text(
+                            text = "${index + 1}. ${citation.title} ($authority)$url",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -283,8 +387,22 @@ private fun A2uiCard(
                 Text("$k: $v", style = MaterialTheme.typography.bodySmall)
             }
             Button(onClick = onAction) {
-                Text(actionLabel)
+                Text(actionLabel, style = MaterialTheme.typography.labelMedium)
             }
         }
     }
+}
+
+private fun persistOnboardingDogPhoto(context: Context, bitmap: Bitmap): String? {
+    val directory = File(context.filesDir, "onboarding_dog_photos")
+    if (!directory.exists() && !directory.mkdirs()) return null
+    val file = File(directory, "dog_${System.currentTimeMillis()}.jpg")
+    return runCatching {
+        FileOutputStream(file).use { stream ->
+            val compressed = bitmap.compress(Bitmap.CompressFormat.JPEG, 92, stream)
+            if (!compressed) throw IllegalStateException("Failed to compress onboarding photo.")
+            stream.flush()
+        }
+        file.toURI().toString()
+    }.getOrNull()
 }
