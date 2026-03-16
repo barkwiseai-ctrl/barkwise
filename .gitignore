@@ -21,6 +21,12 @@ android/share/
 backend/data/*.sqlite3
 backend/data/*.sqlite3-shm
 backend/data/*.sqlite3-wal
+backend/data/*.log
+backend/data/api-bot-loop.lock/
+backend/data/api-bot-runs/
+backend/data/security-audit-snapshots/
+backend/data/security_audit_metrics.json
 
 # Local worktrees and scratch space
+tmp/
 tmp/provider-os-worktree/
