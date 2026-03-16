@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
+  <rect width="108" height="108" fill="#8FBFA3" />
+
+  <!-- Left floppy ear -->
+  <ellipse cx="27.5" cy="39" rx="8" ry="12.5" fill="#151F27" />
+  <ellipse cx="29" cy="40.8" rx="3.8" ry="7.2" fill="#394551" />
+
+  <!-- Main head (still right-weighted like current BarkWise icon) -->
+  <ellipse cx="70" cy="58" rx="32" ry="37" fill="#151F27" />
+
+  <!-- White blaze + muzzle -->
+  <ellipse cx="56" cy="58" rx="8.2" ry="15.5" fill="#F4F7F9" />
+  <ellipse cx="56" cy="72" rx="12.4" ry="8.8" fill="#EEF2F4" />
+
+  <!-- Tri-colour tan points -->
+  <ellipse cx="49.8" cy="57.2" rx="2.8" ry="1.5" fill="#C78B53" />
+  <ellipse cx="62.2" cy="57.2" rx="2.8" ry="1.5" fill="#C78B53" />
+  <ellipse cx="45.8" cy="64.8" rx="2.6" ry="1.8" fill="#C78B53" />
+
+  <!-- Eyes -->
+  <ellipse cx="50.6" cy="61.2" rx="2.4" ry="2.2" fill="#0E1418" />
+  <ellipse cx="61.4" cy="61.2" rx="2.4" ry="2.2" fill="#0E1418" />
+  <circle cx="50.0" cy="60.5" r="0.65" fill="#FFFFFF" />
+  <circle cx="60.8" cy="60.5" r="0.65" fill="#FFFFFF" />
+
+  <!-- Nose + mouth -->
+  <path d="M56 64.1 L59.9 68.3 H52.1 Z" fill="#0E1418" />
+  <rect x="55.3" y="68.3" width="1.4" height="4.2" rx="0.7" fill="#0E1418" />
+  <ellipse cx="52.6" cy="72.2" rx="2.9" ry="1.0" fill="#2B353D" />
+  <ellipse cx="59.4" cy="72.2" rx="2.9" ry="1.0" fill="#2B353D" />
+  <ellipse cx="56" cy="74.9" rx="1.8" ry="1.5" fill="#F08E84" />
+
+  <!-- Small top nub -->
+  <ellipse cx="39.5" cy="31.6" rx="3.2" ry="4.6" fill="#151F27" />
+</svg>

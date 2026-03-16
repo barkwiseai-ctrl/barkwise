@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#8FBFA3" />
+
+  <!-- Broader labrador ear -->
+  <ellipse cx="170" cy="212" rx="58" ry="96" fill="#F4F8F5" />
+  <ellipse cx="180" cy="228" rx="31" ry="60" fill="#E7EDE9" />
+
+  <!-- Main head -->
+  <ellipse cx="360" cy="288" rx="204" ry="220" fill="#F4F8F5" />
+
+  <!-- Broad muzzle -->
+  <ellipse cx="286" cy="330" rx="108" ry="62" fill="#E6ECE8" />
+  <ellipse cx="286" cy="374" rx="66" ry="36" fill="#DEE5E0" />
+
+  <!-- Eyes -->
+  <ellipse cx="246" cy="280" rx="11" ry="9" fill="#1F2F28" />
+  <ellipse cx="326" cy="280" rx="11" ry="9" fill="#1F2F28" />
+  <circle cx="243" cy="276" r="3" fill="#FFFFFF" />
+  <circle cx="323" cy="276" r="3" fill="#FFFFFF" />
+
+  <!-- Labrador-style nose -->
+  <path d="M286 308 C300 308 311 317 312 331 C305 336 295 339 286 339 C277 339 267 336 260 331 C261 317 272 308 286 308 Z" fill="#1F2F28" />
+  <rect x="283" y="339" width="6" height="16" rx="3" fill="#1F2F28" />
+  <ellipse cx="266" cy="361" rx="18" ry="6" fill="#31463D" />
+  <ellipse cx="306" cy="361" rx="18" ry="6" fill="#31463D" />
+  <ellipse cx="286" cy="382" rx="11" ry="9" fill="#F08E84" />
+
+  <!-- Top nub -->
+  <ellipse cx="206" cy="162" rx="24" ry="32" fill="#F4F8F5" />
+</svg>

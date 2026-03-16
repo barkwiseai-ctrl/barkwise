@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#8FBFA3" />
+
+  <!-- Longer spaniel ear -->
+  <ellipse cx="168" cy="224" rx="56" ry="106" fill="#F4F8F5" />
+  <ellipse cx="177" cy="246" rx="30" ry="68" fill="#E5ECE8" />
+
+  <!-- Main head -->
+  <ellipse cx="354" cy="288" rx="192" ry="218" fill="#F4F8F5" />
+
+  <!-- Brow / bridge -->
+  <ellipse cx="282" cy="286" rx="84" ry="34" fill="#EAF0EC" />
+
+  <!-- Spaniel muzzle -->
+  <ellipse cx="286" cy="334" rx="98" ry="60" fill="#E6EDE8" />
+  <ellipse cx="286" cy="378" rx="60" ry="34" fill="#DEE6E1" />
+
+  <!-- Eyes -->
+  <ellipse cx="248" cy="282" rx="10" ry="9" fill="#1F2F28" />
+  <ellipse cx="324" cy="282" rx="10" ry="9" fill="#1F2F28" />
+  <circle cx="245" cy="279" r="2.5" fill="#FFFFFF" />
+  <circle cx="321" cy="279" r="2.5" fill="#FFFFFF" />
+
+  <!-- Nose + mouth -->
+  <path d="M286 314 L306 338 L266 338 Z" fill="#1F2F28" />
+  <rect x="283" y="338" width="6" height="16" rx="3" fill="#1F2F28" />
+  <ellipse cx="268" cy="360" rx="17" ry="5.5" fill="#31463D" />
+  <ellipse cx="304" cy="360" rx="17" ry="5.5" fill="#31463D" />
+  <ellipse cx="286" cy="381" rx="11" ry="9" fill="#F08E84" />
+
+  <!-- Soft left cheek cut for canine jawline -->
+  <ellipse cx="250" cy="368" rx="36" ry="46" fill="#F4F8F5" />
+
+  <!-- Small top nub -->
+  <ellipse cx="202" cy="158" rx="22" ry="31" fill="#F4F8F5" />
+</svg>

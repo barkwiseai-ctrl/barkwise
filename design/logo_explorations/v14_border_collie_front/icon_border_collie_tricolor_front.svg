@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
+  <rect width="108" height="108" fill="#8FBFA3" />
+
+  <!-- Front-facing floppy ears -->
+  <ellipse cx="31" cy="44" rx="10" ry="15.5" fill="#151F27" />
+  <ellipse cx="77" cy="44" rx="10" ry="15.5" fill="#151F27" />
+  <ellipse cx="33" cy="45.5" rx="4.6" ry="9" fill="#394551" />
+  <ellipse cx="75" cy="45.5" rx="4.6" ry="9" fill="#394551" />
+
+  <!-- Main black coat -->
+  <ellipse cx="54" cy="56" rx="26" ry="28" fill="#151F27" />
+
+  <!-- Tri-colour white blaze + muzzle -->
+  <ellipse cx="54" cy="54" rx="8.8" ry="16" fill="#F4F7F9" />
+  <ellipse cx="54" cy="70" rx="14" ry="10.2" fill="#EEF2F4" />
+
+  <!-- Tan points -->
+  <ellipse cx="47.2" cy="54.8" rx="3.2" ry="1.8" fill="#C78B53" />
+  <ellipse cx="60.8" cy="54.8" rx="3.2" ry="1.8" fill="#C78B53" />
+  <ellipse cx="43.4" cy="61.8" rx="2.8" ry="1.9" fill="#C78B53" />
+  <ellipse cx="64.6" cy="61.8" rx="2.8" ry="1.9" fill="#C78B53" />
+
+  <!-- Eyes -->
+  <ellipse cx="48.6" cy="59.7" rx="2.5" ry="2.3" fill="#0E1418" />
+  <ellipse cx="59.4" cy="59.7" rx="2.5" ry="2.3" fill="#0E1418" />
+  <circle cx="47.9" cy="59.0" r="0.7" fill="#FFFFFF" />
+  <circle cx="58.7" cy="59.0" r="0.7" fill="#FFFFFF" />
+
+  <!-- Nose + mouth -->
+  <path d="M54 63.3 L58.2 67.8 H49.8 Z" fill="#0E1418" />
+  <rect x="53.3" y="67.8" width="1.4" height="4.2" rx="0.7" fill="#0E1418" />
+  <ellipse cx="50.8" cy="71.8" rx="3.1" ry="1.1" fill="#2B353D" />
+  <ellipse cx="57.2" cy="71.8" rx="3.1" ry="1.1" fill="#2B353D" />
+  <ellipse cx="54" cy="74.8" rx="1.8" ry="1.5" fill="#F08E84" />
+</svg>

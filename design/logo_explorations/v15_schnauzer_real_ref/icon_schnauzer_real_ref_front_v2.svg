@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
+  <rect width="108" height="108" fill="#8FBFA3" />
+
+  <!-- Folded/drop ears (less pointy, more schnauzer-like) -->
+  <path d="M33 36 C27 38 25 44 28 50 C31 55 35 55 37 50 C38 46 37 40 33 36 Z" fill="#646D78" />
+  <path d="M75 36 C81 38 83 44 80 50 C77 55 73 55 71 50 C70 46 71 40 75 36 Z" fill="#646D78" />
+  <path d="M31.5 40 C29.5 42.5 29 46 30.7 49.2 C32.3 46.5 33.1 43.4 31.5 40 Z" fill="#828A95" />
+  <path d="M76.5 40 C78.5 42.5 79 46 77.3 49.2 C75.7 46.5 74.9 43.4 76.5 40 Z" fill="#828A95" />
+
+  <!-- Salt/pepper head -->
+  <ellipse cx="54" cy="51.5" rx="22.8" ry="21.8" fill="#B8BFC8" />
+
+  <!-- Eyebrows (strong schnauzer marker) -->
+  <path d="M42.5 47.8 C45 45.8 48.5 45.8 51 47.8 C48.7 49.2 44.8 49.3 42.5 47.8 Z" fill="#535C67" />
+  <path d="M65.5 47.8 C63 45.8 59.5 45.8 57 47.8 C59.3 49.2 63.2 49.3 65.5 47.8 Z" fill="#535C67" />
+
+  <!-- Eyes -->
+  <ellipse cx="46.8" cy="51.8" rx="2.25" ry="2.2" fill="#152127" />
+  <ellipse cx="61.2" cy="51.8" rx="2.25" ry="2.2" fill="#152127" />
+  <circle cx="46.1" cy="51.2" r="0.55" fill="#FFFFFF" />
+  <circle cx="60.5" cy="51.2" r="0.55" fill="#FFFFFF" />
+
+  <!-- Long muzzle -->
+  <ellipse cx="54" cy="61.8" rx="10.8" ry="8.2" fill="#E7ECF0" />
+
+  <!-- Schnauzer beard (squarer with point) -->
+  <path d="M44.5 63.8 C43.5 70.5 44.5 77.8 54 85.2 C63.5 77.8 64.5 70.5 63.5 63.8 Z" fill="#EDF1F4" />
+
+  <!-- Nose + philtrum -->
+  <path d="M54 55.8 L57.2 59.6 H50.8 Z" fill="#121B21" />
+  <rect x="53.35" y="59.6" width="1.3" height="4.0" rx="0.65" fill="#121B21" />
+
+  <!-- Moustache -->
+  <ellipse cx="49.1" cy="66.3" rx="4.5" ry="1.8" fill="#BBC2CA" />
+  <ellipse cx="58.9" cy="66.3" rx="4.5" ry="1.8" fill="#BBC2CA" />
+
+  <!-- Mouth + tiny tongue -->
+  <ellipse cx="50.8" cy="69.8" rx="2.45" ry="0.9" fill="#36414A" />
+  <ellipse cx="57.2" cy="69.8" rx="2.45" ry="0.9" fill="#36414A" />
+  <ellipse cx="54" cy="72.0" rx="1.55" ry="1.3" fill="#F08E84" />
+
+  <!-- Light whisker lines -->
+  <path d="M44.2 66.8 L39.0 67.9" stroke="#CED3D8" stroke-width="0.75" stroke-linecap="round" />
+  <path d="M63.8 66.8 L69.0 67.9" stroke="#CED3D8" stroke-width="0.75" stroke-linecap="round" />
+</svg>
