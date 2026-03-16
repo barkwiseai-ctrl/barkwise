@@ -4,6 +4,8 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta
 
+import pytest
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -23,6 +25,26 @@ def test_auth_ttl_non_positive_env_falls_back(monkeypatch):
     sys.modules.pop("app.auth", None)
     auth = importlib.import_module("app.auth")
     assert auth.TOKEN_TTL_HOURS == 24
+
+
+def test_auth_required_rejects_default_secret(monkeypatch):
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    monkeypatch.delenv("AUTH_SECRET", raising=False)
+    monkeypatch.setenv("AUTH_ALLOW_DEMO_LOGIN", "false")
+    sys.modules.pop("app.auth", None)
+    with pytest.raises(RuntimeError, match="AUTH_SECRET must be set"):
+        importlib.import_module("app.auth")
+    sys.modules.pop("app.auth", None)
+
+
+def test_auth_required_rejects_demo_login_enabled(monkeypatch):
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    monkeypatch.setenv("AUTH_SECRET", "hardening-secret")
+    monkeypatch.setenv("AUTH_ALLOW_DEMO_LOGIN", "true")
+    sys.modules.pop("app.auth", None)
+    with pytest.raises(RuntimeError, match="AUTH_ALLOW_DEMO_LOGIN must be false"):
+        importlib.import_module("app.auth")
+    sys.modules.pop("app.auth", None)
 
 
 def test_memory_store_handles_invalid_json_state(tmp_path):

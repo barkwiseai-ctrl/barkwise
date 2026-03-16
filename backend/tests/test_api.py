@@ -1409,6 +1409,11 @@ def test_mvp_day2_contract_freeze_parks_and_grooming():
         "suburb",
         "date",
         "group_id",
+        "location_name",
+        "location_latitude",
+        "location_longitude",
+        "recurrence",
+        "recurrence_interval",
         "attendee_count",
         "created_by",
         "rsvp_status",
@@ -1497,6 +1502,27 @@ def test_mvp_day2_contract_freeze_parks_and_grooming():
     created_event = event_create.json()
     assert_exact_keys(created_event, event_keys, "community/events:create")
     event_id = created_event["id"]
+    assert created_event["recurrence"] == "none"
+    assert created_event["recurrence_interval"] == 1
+
+    event_update = client.put(
+        f"/community/events/{event_id}",
+        json={
+            "user_id": "user_2",
+            "title": "Contract Freeze Walk (Recurring)",
+            "location_name": "BarkWise test pin",
+            "location_latitude": -33.8886,
+            "location_longitude": 151.2094,
+            "recurrence": "weekly",
+            "recurrence_interval": 1,
+        },
+        headers=headers,
+    )
+    assert event_update.status_code == 200
+    updated_event = event_update.json()
+    assert_exact_keys(updated_event, event_keys, "community/events:update")
+    assert updated_event["location_name"] == "BarkWise test pin"
+    assert updated_event["recurrence"] == "weekly"
 
     events_resp = client.get("/community/events", params={"suburb": "Surry Hills", "user_id": "user_2"})
     assert events_resp.status_code == 200
@@ -1687,6 +1713,114 @@ def test_quote_response_updates_response_time_metric():
     matched = next((item for item in providers.json() if item["id"] == first_target["provider_id"]), None)
     assert matched is not None
     assert matched["response_time_minutes"] is not None
+
+
+def test_quote_offer_creates_structured_offer_and_notifies_requester():
+    requester_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert requester_login.status_code == 200
+    requester_token = requester_login.json()["access_token"]
+
+    create = client.post(
+        "/services/quotes/request",
+        json={
+            "user_id": "user_2",
+            "category": "dog_walking",
+            "suburb": "Surry Hills",
+            "preferred_window": "Weekday mornings",
+            "pet_details": "2-year old kelpie, high energy",
+            "note": "",
+        },
+        headers={"Authorization": f"Bearer {requester_token}"},
+    )
+    assert create.status_code == 200
+    quote_payload = create.json()
+    quote_id = quote_payload["quote_request"]["id"]
+    target = quote_payload["targets"][0]
+
+    owner_user_id = target["owner_user_id"]
+    owner_login = client.post("/auth/login", json={"user_id": owner_user_id, "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_token = owner_login.json()["access_token"]
+
+    offer_resp = client.post(
+        f"/services/quotes/{quote_id}/offer",
+        json={
+            "actor_user_id": owner_user_id,
+            "provider_id": target["provider_id"],
+            "price_cents": 6200,
+            "currency": "AUD",
+            "proposed_date": (datetime.utcnow().date() + timedelta(days=5)).isoformat(),
+            "proposed_time_slot": "10:00",
+            "expires_at": (datetime.utcnow() + timedelta(days=2)).isoformat(),
+            "note": "Can do this as a recurring weekday slot.",
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert offer_resp.status_code == 200
+    offer_payload = offer_resp.json()
+    assert offer_payload["quote_request_id"] == quote_id
+    assert offer_payload["provider_id"] == target["provider_id"]
+    assert offer_payload["price_cents"] == 6200
+    assert offer_payload["currency"] == "AUD"
+
+    refreshed_request, refreshed_targets = service_store.get_quote_request(quote_id)
+    assert refreshed_request.status in {"responded", "closed"}
+    matched_target = next((row for row in refreshed_targets if row.provider_id == target["provider_id"]), None)
+    assert matched_target is not None
+    assert matched_target.status == "accepted"
+
+    requester_notifications = client.get("/notifications", params={"user_id": "user_2"})
+    assert requester_notifications.status_code == 200
+    assert any(
+        item["title"] == "New quote offer" and item["deep_link"] == f"quote:{quote_id}"
+        for item in requester_notifications.json()
+    )
+
+
+def test_provider_inbox_lists_pending_quote_requests():
+    requester_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert requester_login.status_code == 200
+    requester_token = requester_login.json()["access_token"]
+
+    create = client.post(
+        "/services/quotes/request",
+        json={
+            "user_id": "user_2",
+            "category": "grooming",
+            "suburb": "Surry Hills",
+            "preferred_window": "Saturday afternoon",
+            "pet_details": "Cavoodle, needs low-noise groom",
+            "note": "",
+        },
+        headers={"Authorization": f"Bearer {requester_token}"},
+    )
+    assert create.status_code == 200
+    quote_payload = create.json()
+    quote_id = quote_payload["quote_request"]["id"]
+    target = quote_payload["targets"][0]
+
+    owner_user_id = target["owner_user_id"]
+    owner_login = client.post("/auth/login", json={"user_id": owner_user_id, "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_token = owner_login.json()["access_token"]
+
+    inbox_resp = client.get(
+        "/services/provider/inbox",
+        params={
+            "actor_user_id": owner_user_id,
+            "include_resolved": False,
+            "limit": 50,
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert inbox_resp.status_code == 200
+    inbox_payload = inbox_resp.json()
+    assert inbox_payload["actor_user_id"] == owner_user_id
+    assert inbox_payload["total"] >= 1
+    assert any(
+        item["item_type"] == "quote_request" and item["quote_request_id"] == quote_id
+        for item in inbox_payload["items"]
+    )
 
 
 def test_quote_reminder_dispatch_at_15_minutes():
@@ -2400,6 +2534,62 @@ def test_community_post_rate_limit():
         },
     )
     assert blocked.status_code == 429
+
+
+def test_activation_analytics_endpoint_summarizes_events():
+    suffix = uuid4().hex[:8]
+    user_id = f"activation_user_{suffix}"
+    login = client.post("/auth/login", json={"user_id": user_id, "password": "petsocial-demo"})
+    assert login.status_code == 200
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    events_to_seed = [
+        "activation_qr_scan_attempted",
+        "activation_qr_scan_succeeded",
+        "activation_otp_verify_failed",
+    ]
+    for event_name in events_to_seed:
+        seeded = client.post(
+            "/community/analytics/events",
+            json={
+                "user_id": user_id,
+                "event": event_name,
+                "category": "community",
+                "metadata": {"source": "api_test"},
+            },
+            headers=headers,
+        )
+        assert seeded.status_code == 200
+
+    diagnostic = client.post(
+        "/community/diagnostics/events",
+        json={
+            "user_id": user_id,
+            "kind": "error",
+            "message": "activation_otp_verify_failed",
+            "context": {"source": "api_test"},
+        },
+        headers=headers,
+    )
+    assert diagnostic.status_code == 200
+
+    response = client.get(
+        "/community/analytics/activation",
+        params={"requester_user_id": user_id, "window_hours": 24},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["requester_user_id"] == user_id
+    assert payload["activation_event_count"] >= 3
+    assert payload["activation_diagnostic_count"] >= 1
+    assert payload["unique_user_count"] == 1
+    assert payload["by_event"].get("activation_qr_scan_attempted", 0) >= 1
+    assert payload["by_event"].get("activation_qr_scan_succeeded", 0) >= 1
+    assert payload["by_event"].get("activation_otp_verify_failed", 0) >= 1
+    assert payload["by_status"].get("attempted", 0) >= 1
+    assert payload["by_status"].get("succeeded", 0) >= 1
+    assert payload["by_status"].get("failed", 0) >= 1
+    assert any(item.get("event") == "activation_otp_verify_failed" for item in payload["top_failures"])
 
 
 def test_moderation_queue_and_block_filtering():

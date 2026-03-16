@@ -1,0 +1,42 @@
+{
+  "default_country_code": "AU",
+  "country_names": {
+    "AU": "Australia",
+    "NZ": "New Zealand",
+    "US": "United States",
+    "GB": "United Kingdom",
+    "DEFAULT": "your region"
+  },
+  "ute_tray_policy_by_country": {
+    "AU": "au_working_dog_transition",
+    "NZ": "au_working_dog_transition",
+    "DEFAULT": "global_strict_transition"
+  },
+  "suburb_country_hints": {
+    "nsw": "AU",
+    "new south wales": "AU",
+    "vic": "AU",
+    "victoria": "AU",
+    "qld": "AU",
+    "queensland": "AU",
+    "wa": "AU",
+    "western australia": "AU",
+    "sa": "AU",
+    "south australia": "AU",
+    "tas": "AU",
+    "tasmania": "AU",
+    "act": "AU",
+    "nt": "AU",
+    "northern territory": "AU",
+    "sydney": "AU",
+    "melbourne": "AU",
+    "brisbane": "AU",
+    "perth": "AU",
+    "adelaide": "AU",
+    "canberra": "AU",
+    "hobart": "AU",
+    "darwin": "AU",
+    "sunshine west": "AU",
+    "surry hills": "AU"
+  }
+}

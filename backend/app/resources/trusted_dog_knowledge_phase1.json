@@ -1,0 +1,234 @@
+[
+  {
+    "id": "kb_aaha_vax_core_noncore_2024",
+    "title": "Core vs Non-Core Vaccine Planning",
+    "source": "AAHA",
+    "url": "https://www.aaha.org/resources/2022-aaha-canine-vaccination-guidelines/",
+    "topics": ["vaccination", "preventive care", "puppy", "adult dog", "risk-based care"],
+    "content": "Vaccination plans should be individualized for each dog. Core vaccines are broadly recommended, while non-core vaccines should be selected based on lifestyle, geography, and exposure risk in discussion with a veterinarian."
+  },
+  {
+    "id": "kb_aaha_lepto_core_update",
+    "title": "Leptospirosis Included in Core Protection",
+    "source": "AAHA",
+    "url": "https://www.aaha.org/resources/2022-aaha-canine-vaccination-guidelines/",
+    "topics": ["vaccination", "leptospirosis", "public health"],
+    "content": "AAHA's updated guidance includes leptospirosis in core recommendations for dogs, highlighting both canine health and zoonotic risk considerations when planning preventive care."
+  },
+  {
+    "id": "kb_wsava_vax_global_2024",
+    "title": "Global Vaccination Framework for Dogs",
+    "source": "WSAVA",
+    "url": "https://wsava.org/global-guidelines/vaccination-guidelines/",
+    "topics": ["vaccination", "global guidelines", "core vaccines", "booster timing"],
+    "content": "WSAVA guidelines support evidence-based vaccination with attention to regional disease pressure, patient age, and risk profile instead of one-size-fits-all schedules."
+  },
+  {
+    "id": "kb_wsava_nutrition_basics",
+    "title": "Nutrition Assessment as a Clinical Vital Sign",
+    "source": "WSAVA",
+    "url": "https://wsava.org/global-guidelines/global-nutrition-guidelines/",
+    "topics": ["nutrition", "body condition", "feeding", "weight management"],
+    "content": "Nutrition should be routinely assessed using body condition, muscle condition, life stage, and clinical status. Feeding plans should be adjusted gradually and monitored over time."
+  },
+  {
+    "id": "kb_wsava_food_label_quality",
+    "title": "How to Evaluate Dog Food Quality Claims",
+    "source": "WSAVA",
+    "url": "https://wsava.org/global-guidelines/global-nutrition-guidelines/",
+    "topics": ["nutrition", "diet selection", "food labels", "owner education"],
+    "content": "Ingredient lists alone do not determine quality. Owners should use broader nutritional and manufacturer-quality indicators and review diets with their veterinarian."
+  },
+  {
+    "id": "kb_avsab_humane_training_2021",
+    "title": "Humane Dog Training Methods",
+    "source": "AVSAB",
+    "url": "https://avsab.org/wp-content/uploads/2021/08/AVSAB-Humane-Dog-Training-Position-Statement-2021.pdf",
+    "topics": ["training", "behavior", "welfare", "reward-based methods"],
+    "content": "AVSAB recommends reward-based methods for training and behavior modification. Aversive tools and punishment-based methods are associated with welfare and relationship risks."
+  },
+  {
+    "id": "kb_avsab_socialization",
+    "title": "Puppy Socialization Position Guidance",
+    "source": "AVSAB",
+    "url": "https://avsab.org/resources/position-statements/",
+    "topics": ["puppy", "socialization", "behavior prevention"],
+    "content": "Early, structured socialization can reduce later fear and behavior problems. Socialization plans should be safe, positive, and coordinated with veterinary preventive care."
+  },
+  {
+    "id": "kb_cdc_dog_bite_prevention",
+    "title": "Dog Bite and Scratch Prevention",
+    "source": "CDC",
+    "url": "https://www.cdc.gov/healthy-pets/about/dogs.html",
+    "topics": ["safety", "children", "dog bites", "public health"],
+    "content": "Most dog bites are preventable. Supervision, safe handling around dogs, and avoiding interactions when dogs are stressed, sleeping, eating, or guarding resources reduce risk."
+  },
+  {
+    "id": "kb_cdc_pet_food_safety",
+    "title": "Pet Food Safety and Infection Risk",
+    "source": "CDC",
+    "url": "https://www.cdc.gov/healthy-pets/about/pet-food-safety.html",
+    "topics": ["nutrition safety", "food hygiene", "raw diets"],
+    "content": "Pet food and treats can carry germs. Safe handling and hygiene are important for both pet and family health, and diet choices should be discussed with a veterinarian."
+  },
+  {
+    "id": "kb_cdc_tick_prevention_dogs",
+    "title": "Tick Prevention for Dogs",
+    "source": "CDC",
+    "url": "https://www.cdc.gov/ticks/prevention/preventing-ticks-on-pets.html",
+    "topics": ["ticks", "parasites", "prevention", "vector-borne disease"],
+    "content": "Daily tick checks and veterinarian-guided prevention products are important for reducing tickborne disease risk in dogs and for limiting ticks entering the home."
+  },
+  {
+    "id": "kb_fda_heartworm_facts",
+    "title": "Heartworm Disease Basics and Prevention",
+    "source": "FDA CVM",
+    "url": "https://www.fda.gov/animal-veterinary/animal-health-literacy/keep-worms-out-your-pets-heart-facts-about-heartworm-disease",
+    "topics": ["heartworm", "mosquito-borne disease", "testing", "prevention"],
+    "content": "Heartworm disease can be severe and is mosquito-borne. Prevention and routine testing are key, and treatment is more complex and risky than prevention."
+  },
+  {
+    "id": "kb_ahs_heartworm_guidelines_2024",
+    "title": "American Heartworm Society Guidance",
+    "source": "American Heartworm Society",
+    "url": "https://www.heartwormsociety.org/guidelines",
+    "topics": ["heartworm", "prevention", "testing cadence", "clinical guidance"],
+    "content": "AHS guidelines support year-round prevention, routine testing, and evidence-based diagnosis and treatment workflows under veterinary supervision."
+  },
+  {
+    "id": "kb_ahs_preventives_reference",
+    "title": "FDA-Approved Preventive Use Overview",
+    "source": "American Heartworm Society",
+    "url": "https://www.heartwormsociety.org/preventives",
+    "topics": ["heartworm", "preventive medications", "owner adherence"],
+    "content": "Consistent preventive use and adherence to veterinary recommendations are central to heartworm control. Missed doses increase infection risk."
+  },
+  {
+    "id": "kb_aspca_poison_control",
+    "title": "Immediate Steps for Suspected Poisoning",
+    "source": "ASPCA Animal Poison Control",
+    "url": "https://www.aspca.org/pet-care/animal-poison-control",
+    "topics": ["poison", "emergency triage", "toxin exposure"],
+    "content": "If poisoning is suspected, immediate veterinary or poison-control consultation is advised. Delays and unsupervised home remedies can worsen outcomes."
+  },
+  {
+    "id": "kb_merck_food_hazards",
+    "title": "Household Food Hazards for Dogs",
+    "source": "Merck Veterinary Manual",
+    "url": "https://www.merckvetmanual.com/special-pet-topics/poisoning/food-hazards",
+    "topics": ["toxins", "food poisoning", "grapes", "raisins", "emergency"],
+    "content": "Some common foods can cause severe toxicity in dogs. Rapid assessment and timely veterinary treatment are critical after known or suspected ingestion."
+  },
+  {
+    "id": "kb_aaha_life_stage_care",
+    "title": "Canine Life Stage Wellness Structure",
+    "source": "AAHA",
+    "url": "https://www.aaha.org/resources/life-stage-canine/",
+    "topics": ["wellness exams", "life stage care", "preventive planning"],
+    "content": "Preventive care should be matched to life stage, with regular rechecks and proactive counseling for behavior, nutrition, and disease prevention."
+  },
+  {
+    "id": "kb_wsava_vax_table_practical",
+    "title": "Practical Vaccine Table Use in Decision Support",
+    "source": "WSAVA",
+    "url": "https://wsava.org/global-guidelines/vaccination-guidelines/",
+    "topics": ["vaccination", "decision support", "core vs non-core", "shelter dogs"],
+    "content": "WSAVA vaccination tables can support consistent risk-based decisions, including core vaccine timing and non-core recommendations based on exposure profile."
+  },
+  {
+    "id": "kb_cdc_vet_checkups_general",
+    "title": "Routine Vet Checkups and Preventive Parasite Control",
+    "source": "CDC",
+    "url": "https://www.cdc.gov/healthy-pets/about/dogs.html",
+    "topics": ["preventive care", "vet visits", "flea tick heartworm prevention"],
+    "content": "Regular veterinary checkups, vaccination review, and parasite prevention are key parts of keeping dogs healthy and reducing zoonotic and household risk."
+  },
+  {
+    "id": "kb_fda_heartworm_year_round",
+    "title": "Year-Round Heartworm Prevention Emphasis",
+    "source": "FDA",
+    "url": "https://www.fda.gov/consumers/consumer-updates/ounce-prevention-worth-pound-cure-protect-your-pet-heartworms-year-round",
+    "topics": ["heartworm", "year-round prevention", "owner adherence"],
+    "content": "Year-round heartworm prevention is recommended because mosquitoes and exposure risk can persist beyond peak seasons, and prevention is safer than treatment."
+  },
+  {
+    "id": "kb_rspca_au_parvovirus",
+    "title": "Canine Parvovirus Basics",
+    "source": "RSPCA Australia",
+    "url": "https://kb.rspca.org.au/categories/companion-animals/dogs/health-issues/what-is-canine-parvovirus",
+    "topics": ["parvo", "vaccination", "puppy", "infectious disease"],
+    "content": "Canine parvovirus can cause severe gastrointestinal illness, especially in unvaccinated puppies. Early veterinary assessment and preventive vaccination are central to reducing serious outcomes."
+  },
+  {
+    "id": "kb_rspca_au_separation_anxiety",
+    "title": "Managing Separation-Related Anxiety in Dogs",
+    "source": "RSPCA Australia",
+    "url": "https://kb.rspca.org.au/knowledge-base/what-can-i-do-if-my-dog-is-anxious-when-im-not-at-home/",
+    "topics": ["separation anxiety", "behavior", "home alone training"],
+    "content": "Separation-related distress is a behavioral welfare issue that should be managed with gradual desensitization, predictable routines, and professional behavioral support where needed."
+  },
+  {
+    "id": "kb_rspca_au_puppy_feeding",
+    "title": "Puppy Feeding Fundamentals",
+    "source": "RSPCA Australia",
+    "url": "https://kb.rspca.org.au/categories/companion-animals/dogs/puppies/what-should-i-feed-my-puppy",
+    "topics": ["puppy", "feeding", "nutrition", "growth"],
+    "content": "Puppies require complete and balanced growth-stage nutrition with feeding amounts adjusted for age, size, and body condition. Diet transitions should be gradual and monitored."
+  },
+  {
+    "id": "kb_rspca_au_pronged_collars",
+    "title": "Welfare Risks of Pronged Collars",
+    "source": "RSPCA Australia",
+    "url": "https://kb.rspca.org.au/knowledge-base/are-pronged-collars-harmful-to-my-dog/",
+    "topics": ["training", "equipment", "welfare", "aversive methods"],
+    "content": "Aversive training tools can negatively affect welfare and behavior outcomes. Humane, reward-based approaches are preferred for long-term behavior change and safety."
+  },
+  {
+    "id": "kb_agvic_routine_healthcare_dogs",
+    "title": "Routine Healthcare for Dogs",
+    "source": "Agriculture Victoria",
+    "url": "https://agriculture.vic.gov.au/livestock-and-animals/animal-welfare-victoria/dogs/health/routine-healthcare-for-dogs",
+    "topics": ["preventive care", "vaccination", "worming", "vet checks"],
+    "content": "Routine canine healthcare includes vaccination planning, parasite control, dental and general health monitoring, and regular veterinary checks based on life stage and risk."
+  },
+  {
+    "id": "kb_agvic_heat_and_pets",
+    "title": "Heat Safety for Dogs",
+    "source": "Agriculture Victoria",
+    "url": "https://agriculture.vic.gov.au/livestock-and-animals/animal-welfare-victoria/dogs/health/heat-and-pets",
+    "topics": ["heatstroke", "summer safety", "emergency prevention"],
+    "content": "Dogs can develop life-threatening heat illness quickly in warm conditions. Owners should provide shade, cool water, and avoid high-heat exercise, with urgent vet care for heat stress signs."
+  },
+  {
+    "id": "kb_nsw_pets_hot_weather",
+    "title": "Preparing Pets for Hot Weather Emergencies",
+    "source": "NSW Government",
+    "url": "https://www.nsw.gov.au/emergency/prepare/pets-and-livestock",
+    "topics": ["heat safety", "emergency planning", "pet preparedness"],
+    "content": "Emergency planning for pets during heat and disaster conditions includes transport readiness, access to water and shelter, and early action before severe weather peaks."
+  },
+  {
+    "id": "kb_cdc_leptospirosis_pets",
+    "title": "Leptospirosis in Pets",
+    "source": "CDC",
+    "url": "https://www.cdc.gov/leptospirosis/pets/index.html",
+    "topics": ["leptospirosis", "zoonosis", "vaccination", "environmental exposure"],
+    "content": "Leptospirosis can affect dogs and people. Risk reduction includes environmental precautions, early veterinary assessment when symptoms appear, and prevention planning with a veterinarian."
+  },
+  {
+    "id": "kb_wsava_pain_guidelines",
+    "title": "Pain Management Guidelines",
+    "source": "WSAVA",
+    "url": "https://wsava.org/global-guidelines/pain-guidelines/",
+    "topics": ["pain", "analgesia", "welfare", "clinical care"],
+    "content": "Pain assessment should be integrated into routine veterinary care. Timely recognition and multimodal management improve welfare and recovery outcomes in dogs."
+  },
+  {
+    "id": "kb_who_rabies_dog_vaccination",
+    "title": "WHO Position on Rabies Control Through Dog Vaccination",
+    "source": "WHO",
+    "url": "https://www.who.int/publications/i/item/9789240082731",
+    "topics": ["rabies", "vaccination", "public health", "dog-mediated disease"],
+    "content": "WHO guidance emphasizes vaccination of dogs as a core strategy for preventing dog-mediated rabies and protecting communities in at-risk regions."
+  }
+]

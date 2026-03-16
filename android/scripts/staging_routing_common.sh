@@ -10,7 +10,7 @@ WATCHDOG_SCRIPT="${WATCHDOG_SCRIPT:-$ROOT_DIR/android/scripts/keep_staging_local
 HOST_PORT="${HOST_PORT:-8000}"
 DEVICE_PORT="${DEVICE_PORT:-8000}"
 CHECK_SECONDS="${CHECK_SECONDS:-5}"
-PACKAGE_NAME="${PACKAGE_NAME:-com.petsocial.app.staging}"
+PACKAGE_NAME="${PACKAGE_NAME:-com.barkwise.app.staging}"
 
 ensure_state_dir() {
   mkdir -p "$STATE_DIR"

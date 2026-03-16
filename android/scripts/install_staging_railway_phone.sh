@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ANDROID_DIR="$ROOT_DIR/android"
 RAILWAY_BASE_URL="${RAILWAY_BASE_URL:-https://barkwise-production.up.railway.app/}"
-PACKAGE_NAME="${PACKAGE_NAME:-com.petsocial.app.staging}"
+PACKAGE_NAME="${PACKAGE_NAME:-com.barkwise.app.staging}"
 
 echo "Installing staging build against Railway: ${RAILWAY_BASE_URL}"
 (

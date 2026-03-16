@@ -23,90 +23,120 @@ DOG_PERSONAS: dict[str, dict[str, Any]] = {
         "dog_name": "Snowy",
         "breed": "black and white bull arab",
         "summary": "a bit cowardly but loves to play and still thinks he is much smaller than he is",
+        "announcer_nickname": "The Gentle Bulldozer",
+        "signature_move": "accidental shoulder-check zoomie cutback",
+        "conflict_trigger": "tight-space chase traffic",
+        "deescalation_cue": "short confidence laps with calm handler voice",
+        "temperament_tags": ["timid_start", "big_heart", "size_misjudge"],
         "interaction_notes": [
             "Snowy started cautious, then launched into chase and accidentally trampled a smaller dog during a turn.",
             "Snowy hid behind his owner at first, then joined playful wrestling and clipped another dog by misjudging his size.",
             "Snowy was nervous around louder dogs early, but later joined tag games and accidentally bowled through a smaller pup.",
         ],
         "photo_urls": [
-            "https://images.unsplash.com/photo-1530281700549-e82e7bf110d6",
-            "https://images.unsplash.com/photo-1518717758536-85ae29035b6d",
-            "https://images.unsplash.com/photo-1517423440428-a5a00ad493e8",
+            "https://images.unsplash.com/photo-1761768857261-4dc56d99e9b6?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1587919970477-06cb1b38ae28?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1517423440428-a5a00ad493e8?auto=format&fit=crop&w=1800&q=80",
         ],
     },
     "sesame": {
         "dog_name": "Sesame",
         "breed": "brown and black border collie/poodle cross (schnauzer-like face)",
         "summary": "high-drive and ball-obsessed, with quick defensive reactions if another dog threatens her ball",
+        "announcer_nickname": "Ball Security Chief",
+        "signature_move": "rocket fetch burst into hard pivot guard",
+        "conflict_trigger": "another dog entering her toy bubble",
+        "deescalation_cue": "split-toy zones and structured reset intervals",
+        "temperament_tags": ["high_drive", "territorial_toys", "quick_recover"],
         "interaction_notes": [
             "Sesame ran relentless ball sprints, then snapped into guard mode when another dog got close to her ball.",
             "Sesame looked brilliant in fetch drills, but became defensive and vocal when a second dog challenged her toy.",
             "Sesame had elite chase focus and then got angry during a ball dispute, requiring a calm reset.",
         ],
         "photo_urls": [
-            "https://images.unsplash.com/photo-1525253013412-55c1a69a5738",
-            "https://images.unsplash.com/photo-1522276498395-f4f68f7f8454",
-            "https://images.unsplash.com/photo-1517849845537-4d257902454a",
+            "https://images.unsplash.com/photo-1599896375763-0e1e826a1a53?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1758875219035-3882459a5a88?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1522276498395-f4f68f7f8454?auto=format&fit=crop&w=1800&q=80",
         ],
     },
     "annika": {
         "dog_name": "Annika",
         "breed": "black golden retriever/poodle cross",
         "summary": "goofy, not very bright, playful, and always friendly with every dog",
+        "announcer_nickname": "Mayor of Zoomie Town",
+        "signature_move": "play-bow spam followed by full-pack bounce loop",
+        "conflict_trigger": "rarely triggers conflict herself, but can ignore subtle social cues",
+        "deescalation_cue": "gentle redirect into slower greeting circuits",
+        "temperament_tags": ["goofy", "hyper_social", "chaotic_good"],
         "interaction_notes": [
             "Annika bounced from dog to dog with goofy energy and open play bows all session.",
             "Annika misread cues a few times, then happily reset and made friendly re-introductions.",
             "Annika turned every interaction into a playful game and stayed social with all dogs.",
         ],
         "photo_urls": [
-            "https://images.unsplash.com/photo-1518717758536-85ae29035b6d",
-            "https://images.unsplash.com/photo-1548199973-03cce0bbc87b",
-            "https://images.unsplash.com/photo-1507146426996-ef05306b995a",
+            "https://cdn.pixabay.com/photo/2021/01/19/16/01/goldendoodle-5931682_1280.jpg",
+            "https://cdn.pixabay.com/photo/2016/09/26/13/47/luna-1696004_1280.jpg",
+            "https://images.unsplash.com/photo-1623052940981-68af5e58bfae?auto=format&fit=crop&w=1800&q=80",
         ],
     },
     "pepsi": {
         "dog_name": "Pepsi",
         "breed": "brown/tan staffie-jack russell cross",
         "summary": "a tough, aggressive player who is wary of men at first but usually warms up over time",
+        "announcer_nickname": "The Pressure Tester",
+        "signature_move": "chest-bump feint into rapid loop-back",
+        "conflict_trigger": "sudden direct approaches from unfamiliar men",
+        "deescalation_cue": "side-on introductions and short decompression breaks",
+        "temperament_tags": ["physical_play", "guarded_then_warm", "intense_start"],
         "interaction_notes": [
             "Pepsi played hard with chest-bumps and fast pivots, then slowly built trust with a male handler.",
             "Pepsi came in tense around male strangers, but after structured greetings shifted into confident play.",
             "Pepsi pushed rough play boundaries early and then settled into balanced interactions after decompression.",
         ],
         "photo_urls": [
-            "https://images.unsplash.com/photo-1601758228041-f3b2795255f1",
-            "https://images.unsplash.com/photo-1516734212186-65266f4f17c8",
-            "https://images.unsplash.com/photo-1537151608828-ea2b11777ee8",
+            "https://images.unsplash.com/photo-1597513299114-bfab8234a241?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1764142233821-5191eafc45f4?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1601758228041-f3b2795255f1?auto=format&fit=crop&w=1800&q=80",
         ],
     },
     "billie": {
         "dog_name": "Billie",
         "breed": "tan boxer cross",
         "summary": "older but still full of love and eager to join play sessions",
+        "announcer_nickname": "The Veteran Sweetheart",
+        "signature_move": "slow-roll entry then surprise energy burst",
+        "conflict_trigger": "overcrowded high-speed scramble",
+        "deescalation_cue": "space, water break, then controlled re-entry",
+        "temperament_tags": ["senior_energy", "affectionate", "steadying_presence"],
         "interaction_notes": [
             "Billie did slower warm-ups, then joined play with tail-wagging body slams and affectionate breaks.",
             "Billie paced herself because of age, but still jumped into group games and shared calm social time.",
             "Billie alternated cuddle checks with high-energy bursts and was warmly social throughout.",
         ],
         "photo_urls": [
-            "https://images.unsplash.com/photo-1517849845537-4d257902454a",
-            "https://images.unsplash.com/photo-1530281700549-e82e7bf110d6",
-            "https://images.unsplash.com/photo-1543466835-00a7907e9de1",
+            "https://images.unsplash.com/photo-1536922896465-755303c526a6?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1577737410281-25d01aa14540?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=1800&q=80",
         ],
     },
     "buddy": {
         "dog_name": "Buddy",
         "breed": "mostly black cavoodle with white spots",
         "summary": "playful and social, but repeatedly escalates with Sesame and neither dog backs down without intervention",
+        "announcer_nickname": "The Escalation Engine",
+        "signature_move": "re-entry sprint right after separation",
+        "conflict_trigger": "contested toy possession with Sesame",
+        "deescalation_cue": "full separation cycle and handler-led reset before rejoin",
+        "temperament_tags": ["social_with_pack", "toy_rivalry", "high_reengagement"],
         "interaction_notes": [
             "Buddy and Sesame escalated during toy tension and had to be pulled apart before quickly re-engaging.",
             "Buddy played well with most dogs, then entered another prolonged standoff with Sesame over ball control.",
             "Buddy had multiple reset breaks after escalating with Sesame; both dogs kept trying to re-enter conflict.",
         ],
         "photo_urls": [
-            "https://images.unsplash.com/photo-1507146426996-ef05306b995a",
-            "https://images.unsplash.com/photo-1518717758536-85ae29035b6d",
-            "https://images.unsplash.com/photo-1548199973-03cce0bbc87b",
+            "https://images.unsplash.com/photo-1610961039751-2b5ebf906e77?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1764142233821-5191eafc45f4?auto=format&fit=crop&w=1800&q=80",
+            "https://images.unsplash.com/photo-1507146426996-ef05306b995a?auto=format&fit=crop&w=1800&q=80",
         ],
     },
 }
@@ -119,6 +149,13 @@ EVENTS = [
     "Collenso Controlled Play Rotation",
     "Collenso Confidence Walk",
     "Collenso Recall & Social Check-in",
+]
+
+COMMENTARY_OPENERS = [
+    "Commentary desk check-in",
+    "Round-by-round lens",
+    "Pack analyst note",
+    "Live sideline read",
 ]
 
 NEW_DOG_SCENARIOS: list[dict[str, Any]] = [
@@ -284,6 +321,8 @@ class BotWorker:
                             0.05,
                             True,
                         ),
+                        ("community_create_collenso_commentary", self._action_collenso_commentary, 0.12, True),
+                        ("community_create_collenso_reply", self._action_collenso_reply, 0.08, True),
                         ("community_create_collenso_event", self._action_create_event, 0.05, True),
                     ]
                 )
@@ -473,6 +512,92 @@ class BotWorker:
         }
         return self.client.request("POST", "/community/posts", json_body=payload)
 
+    def _recent_collenso_posts(self, limit: int = 20) -> list[dict[str, Any]]:
+        result = self.client.request(
+            "GET",
+            "/community/posts",
+            query={
+                "user_id": self.user_id,
+                "suburb": self.collenso_suburb,
+                "sort_by": "newest",
+                "q": "collenso",
+            },
+        )
+        if not result.ok or not isinstance(result.body, list):
+            return []
+        posts: list[dict[str, Any]] = []
+        for row in result.body:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("type") or "").strip().lower() != "group_post":
+                continue
+            posts.append(row)
+            if len(posts) >= limit:
+                break
+        return posts
+
+    def _safe_comment_body(self, text: str, limit: int = 500) -> str:
+        body = " ".join(text.split()).strip()
+        if len(body) <= limit:
+            return body
+        return body[: limit - 3].rstrip() + "..."
+
+    def _persona_flavor_line(self, profile: dict[str, Any]) -> str:
+        nickname = str(profile.get("announcer_nickname") or profile.get("dog_name") or "Pack member")
+        signature_move = str(profile.get("signature_move") or "adaptive play flow")
+        trigger = str(profile.get("conflict_trigger") or "crowded toy lanes")
+        deescalation = str(profile.get("deescalation_cue") or "short decompression loops")
+        return (
+            f"{nickname} signature is {signature_move}; key trigger is {trigger}; "
+            f"best reset remains {deescalation}"
+        )
+
+    def _fallback_commentary_post(
+        self,
+        i: int,
+        *,
+        target_post_id: str,
+        body: str,
+        parent_comment_id: Optional[str] = None,
+    ) -> ApiResult:
+        nonce = self._nonce(i)
+        reply_hint = f" [Reply ref: {parent_comment_id}]" if parent_comment_id else ""
+        payload = {
+            "type": "group_post",
+            "user_id": self.user_id,
+            "title": f"Collenso desk commentary ({nonce})",
+            "body": self._safe_comment_body(
+                f"[Thread ref: {target_post_id}]{reply_hint} {body} Live desk stream continues."
+            ),
+            "suburb": self.collenso_suburb,
+        }
+        return self.client.request("POST", "/community/posts", json_body=payload)
+
+    def _post_comment_with_fallback(
+        self,
+        i: int,
+        *,
+        post_id: str,
+        body: str,
+        parent_comment_id: Optional[str] = None,
+    ) -> ApiResult:
+        payload: dict[str, Any] = {"user_id": self.user_id, "body": body}
+        if parent_comment_id:
+            payload["parent_comment_id"] = parent_comment_id
+        result = self.client.request(
+            "POST",
+            f"/community/posts/{post_id}/comments",
+            json_body=payload,
+        )
+        if result.status_code == 404:
+            return self._fallback_commentary_post(
+                i,
+                target_post_id=post_id,
+                body=body,
+                parent_comment_id=parent_comment_id,
+            )
+        return result
+
     def _action_collenso_day_report(self, i: int) -> ApiResult:
         if not self.persona_profile:
             return self._action_collenso_observer_report(i)
@@ -483,6 +608,7 @@ class BotWorker:
         summary = self.persona_profile["summary"]
         interaction = self.rand.choice(self.persona_profile["interaction_notes"])
         cross_pack_note = self._cross_pack_line(dog_name)
+        flavor_line = self._persona_flavor_line(self.persona_profile)
         photo_urls = self._pick_photos(self.persona_profile["photo_urls"], min_count=2, max_count=3)
 
         payload = {
@@ -491,7 +617,8 @@ class BotWorker:
             "title": f"Collenso day report: {dog_name} ({nonce})",
             "body": (
                 f"{dog_name} ({breed}) - {summary}. "
-                f"At {self.collenso_group_name}: {interaction} {cross_pack_note} Ref: {nonce}."
+                f"At {self.collenso_group_name}: {interaction} {cross_pack_note} "
+                f"Persona cue: {flavor_line}. Ref: {nonce}."
             ),
             "suburb": self.collenso_suburb,
             "photo_urls": photo_urls,
@@ -512,12 +639,110 @@ class BotWorker:
             "title": f"Collenso interaction snapshot: {dog_name} ({nonce})",
             "body": (
                 f"Interaction snapshot from {self.collenso_group_name}: {interaction} "
-                f"Handlers used short decompression loops and controlled re-entry. Ref: {nonce}."
+                f"Handlers used short decompression loops and controlled re-entry. "
+                f"Style cue: {self._persona_flavor_line(self.persona_profile)}. Ref: {nonce}."
             ),
             "suburb": self.collenso_suburb,
             "photo_urls": photo_urls,
         }
         return self.client.request("POST", "/community/posts", json_body=payload)
+
+    def _action_collenso_commentary(self, i: int) -> ApiResult:
+        posts = self._recent_collenso_posts(limit=24)
+        target = next(
+            (
+                post
+                for post in posts
+                if str(post.get("created_by") or "").strip() != self.user_id
+            ),
+            None,
+        )
+        if not target:
+            return self._action_collenso_day_report(i)
+
+        post_id = str(target.get("id") or "").strip()
+        if not post_id:
+            return self._action_collenso_day_report(i)
+
+        profile = self.persona_profile
+        if not profile:
+            body = self._safe_comment_body(
+                f"{self.rand.choice(COMMENTARY_OPENERS)}: strong handler structure on this Collenso post. "
+                "The pack looked safer once reset loops were enforced."
+            )
+        else:
+            dog_name = str(profile.get("dog_name") or self.user_id)
+            flavor = self._persona_flavor_line(profile)
+            opener = self.rand.choice(COMMENTARY_OPENERS)
+            body = self._safe_comment_body(
+                f"{opener}: {dog_name} check-in. {flavor}. "
+                "Tempo improved once handlers separated toy zones and reintroduced dogs in pairs."
+            )
+        return self._post_comment_with_fallback(i, post_id=post_id, body=body)
+
+    def _action_collenso_reply(self, i: int) -> ApiResult:
+        posts = self._recent_collenso_posts(limit=18)
+        if not posts:
+            return self._action_collenso_commentary(i)
+
+        self.rand.shuffle(posts)
+        for post in posts:
+            post_id = str(post.get("id") or "").strip()
+            if not post_id:
+                continue
+            comments_result = self.client.request(
+                "GET",
+                f"/community/posts/{post_id}/comments",
+                query={"user_id": self.user_id, "limit": 40},
+            )
+            if comments_result.status_code == 404:
+                profile = self.persona_profile
+                if profile:
+                    dog_name = str(profile.get("dog_name") or self.user_id)
+                    signature = str(profile.get("signature_move") or "clean reset flow")
+                    body = self._safe_comment_body(
+                        f"Reply from {dog_name}: keeping this thread active with {signature} and clean reset lanes."
+                    )
+                else:
+                    body = self._safe_comment_body(
+                        "Reply stream continues: preserve lane spacing and keep high-drive pairs on clean reset order."
+                    )
+                return self._fallback_commentary_post(i, target_post_id=post_id, body=body)
+            if not comments_result.ok or not isinstance(comments_result.body, list):
+                continue
+            candidates = [
+                row
+                for row in comments_result.body
+                if isinstance(row, dict)
+                and str(row.get("user_id") or "").strip() != self.user_id
+                and str(row.get("status") or "active") == "active"
+            ]
+            if not candidates:
+                continue
+            parent = self.rand.choice(candidates)
+            parent_id = str(parent.get("id") or "").strip()
+            if not parent_id:
+                continue
+            profile = self.persona_profile
+            if profile:
+                dog_name = str(profile.get("dog_name") or self.user_id)
+                signature = str(profile.get("signature_move") or "clean reset flow")
+                body = self._safe_comment_body(
+                    f"Reply from {dog_name}: agreed on that read. "
+                    f"Next round should favor {signature} with cleaner lane spacing."
+                )
+            else:
+                body = self._safe_comment_body(
+                    "Reply: agree. Keep transitions tight, separate high-drive pairs early, and preserve calm re-entry order."
+                )
+            return self._post_comment_with_fallback(
+                i,
+                post_id=post_id,
+                body=body,
+                parent_comment_id=parent_id,
+            )
+
+        return self._action_collenso_commentary(i)
 
     def _cross_pack_line(self, dog_name: str) -> str:
         lines = [

@@ -62,6 +62,22 @@ CASES: List[EvalCase] = [
         expected_answer_terms=["poison", "vet"],
     ),
     EvalCase(
+        name="Puppy feeding guidance",
+        message="What should I feed my puppy?",
+        suburb="Surry Hills",
+        expected_lane="RAG",
+        expected_sources=["knowledge_base"],
+        expected_answer_terms=["feed", "food", "diet", "nutrition"],
+    ),
+    EvalCase(
+        name="Coat brushing guidance",
+        message="How often should I brush my dog's coat?",
+        suburb="Surry Hills",
+        expected_lane="RAG",
+        expected_sources=["knowledge_base"],
+        expected_answer_terms=["brush", "coat", "groom"],
+    ),
+    EvalCase(
         name="Local dog walker",
         message="Find dog walkers near me",
         suburb="Surry Hills",
