@@ -21,6 +21,21 @@ from app.services.service_store import service_store
 client = TestClient(app)
 
 
+def _enable_provider_mode(user_id: str, token: str) -> None:
+    response = client.put(
+        "/auth/profile",
+        json={
+            "requester_user_id": user_id,
+            "display_name": user_id,
+            "human_role_label": "Member",
+            "service_provider_mode": True,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["service_provider_mode"] is True
+
+
 def _find_provider_with_available_slots(
     *,
     category: str,
@@ -645,6 +660,21 @@ def test_chat_general_route_includes_fallback_badge():
     assert payload["answer_badges"], "General route should include answer badges"
 
 
+def test_chat_profile_suggestion_captures_owner_name_and_suburb_from_message():
+    response = client.post(
+        "/chat",
+        json={
+            "user_id": f"chat_profile_user_{uuid4().hex[:8]}",
+            "message": "Hi, I'm Alex Chen, I live in Richmond and my dog name is Milo. He is 3 years old and 12 kg.",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["suggested_profile"]["owner_name"] == "Alex Chen"
+    assert payload["suggested_profile"]["suburb"] == "Richmond"
+    assert payload["suggested_profile"]["pet_name"] == "Milo"
+
+
 def test_security_rate_limit_metrics_snapshot_tracks_429_surfaces(monkeypatch):
     security_audit_service.reset_rate_limit_metrics()
     monkeypatch.setattr(auth_router, "LOGIN_FAILURE_LIMIT", 1)
@@ -786,6 +816,7 @@ def test_create_service_provider():
     login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
     assert login.status_code == 200
     token = login.json()["access_token"]
+    _enable_provider_mode("user_2", token)
 
     response = client.post(
         "/services/providers",
@@ -806,10 +837,32 @@ def test_create_service_provider():
     assert payload["owner_user_id"] == "user_2"
 
 
+def test_create_service_provider_requires_provider_mode():
+    login = client.post("/auth/login", json={"user_id": "user_provider_mode_off", "password": "petsocial-demo"})
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+
+    response = client.post(
+        "/services/providers",
+        json={
+            "user_id": "user_provider_mode_off",
+            "name": "Mode Off Listing",
+            "category": "dog_walking",
+            "suburb": "Sunshine West",
+            "description": "Should be blocked until provider mode is enabled.",
+            "price_from": 25,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "Provider mode is off" in response.json()["detail"]
+
+
 def test_create_service_provider_alias_routes():
     login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
     assert login.status_code == 200
     token = login.json()["access_token"]
+    _enable_provider_mode("user_2", token)
 
     singular_post = client.post(
         "/services/provider",
@@ -846,6 +899,7 @@ def test_update_cancel_restore_service_provider():
     login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
     assert login.status_code == 200
     token = login.json()["access_token"]
+    _enable_provider_mode("user_2", token)
 
     created = client.post(
         "/services/providers",
@@ -915,6 +969,7 @@ def test_service_provider_edit_cancel_forbidden_for_non_owner():
     login_owner = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
     assert login_owner.status_code == 200
     owner_token = login_owner.json()["access_token"]
+    _enable_provider_mode("user_2", owner_token)
 
     create_response = client.post(
         "/services/providers",
@@ -2001,6 +2056,7 @@ def test_quote_sprint_metrics_surface_for_responding_provider():
     provider_login = client.post("/auth/login", json={"user_id": "user_4", "password": "petsocial-demo"})
     assert provider_login.status_code == 200
     provider_token = provider_login.json()["access_token"]
+    _enable_provider_mode("user_4", provider_token)
 
     create_provider = client.post(
         "/services/providers",
@@ -2699,8 +2755,8 @@ def test_services_recommendations_infer_suburb_from_dog_park_membership():
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["inferred_suburb"] == "Surry Hills"
-    assert payload["suburb_source"] == "dog_park_membership"
+    assert payload["inferred_suburb"] is None
+    assert payload["suburb_source"] == "none"
     assert isinstance(payload["providers"], list)
     if payload["providers"]:
         assert all(provider["category"] == "grooming" for provider in payload["providers"])

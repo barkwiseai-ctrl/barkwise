@@ -101,6 +101,67 @@ UPLOAD_ROOT = Path(
         str(Path(__file__).resolve().parent.parent / "web" / "uploads" / "lost_found"),
     )
 )
+SEEDED_GROUP_IDS = {
+    "g_official_surryhills",
+    "g_official_newtown",
+    "g_official_redfern",
+    "g_user_collenso_dogpark",
+    "g_user_dogpark_surry",
+    "g_user_1",
+    "g_user_2",
+    "g_user_3",
+    "g_user_4",
+    "g_user_5",
+    "g_user_6",
+    "g_user_7",
+    "g_user_8",
+    "g_user_9",
+}
+SEEDED_POST_IDS = {
+    "p_collenso_annika_1",
+    "p_collenso_snowy_1",
+    "p_collenso_sesame_1",
+    "p_collenso_pepsi_1",
+    "p_collenso_billie_1",
+    "p_collenso_buddy_1",
+    "p_collenso_newdog_1",
+    "p_dogpark_1",
+    "p_dogpark_2",
+    "p_dogpark_3",
+    "p_dogpark_4",
+    "p_dogpark_5",
+    "p_dogpark_6",
+    "p_dogpark_7",
+    "p_dogpark_8",
+    "p_1",
+    "p_2",
+    "p_3",
+    "p_4",
+    "p_5",
+    "p_6",
+    "p_7",
+    "p_8",
+    "p_9",
+    "p_10",
+    "p_11",
+    "p_12",
+    "p_13",
+    "p_14",
+    "p_15",
+}
+SEEDED_EVENT_IDS = {"evt_000", "evt_001", "evt_002", "evt_003"}
+
+
+def _is_seeded_group(group: Group) -> bool:
+    group_id = (group.id or "").strip()
+    group_name = (group.name or "").strip().lower()
+    if group_id in SEEDED_GROUP_IDS:
+        return True
+    if group_id.startswith("g_official_"):
+        return True
+    if group.official and group_name.endswith("official pet community"):
+        return True
+    return False
 
 
 def _persist_community_state() -> None:
@@ -157,7 +218,37 @@ def _bootstrap_community_state() -> None:
     LOST_FOUND_FOLLOWUPS_SENT.update(decoded["lost_found_followups_sent"])
 
 
+def _remove_seeded_community_content() -> None:
+    seeded_group_ids = {group.id for group in groups if _is_seeded_group(group)}
+    groups[:] = [group for group in groups if group.id not in seeded_group_ids]
+    group_memberships[:] = [membership for membership in group_memberships if membership.group_id not in seeded_group_ids]
+    community_posts[:] = [post for post in community_posts if post.id not in SEEDED_POST_IDS]
+    community_events[:] = [event for event in community_events if event.id not in SEEDED_EVENT_IDS]
+    event_rsvps[:] = [rsvp for rsvp in event_rsvps if rsvp.event_id not in SEEDED_EVENT_IDS]
+    for post_id in list(COMMUNITY_COMMENTS_BY_POST.keys()):
+        if post_id in SEEDED_POST_IDS:
+            COMMUNITY_COMMENTS_BY_POST.pop(post_id, None)
+    for group_id in list(GROUP_BADGES.keys()):
+        if group_id in seeded_group_ids:
+            GROUP_BADGES.pop(group_id, None)
+    for challenge_id, challenge in list(GROUP_CHALLENGES.items()):
+        if challenge.group_id in seeded_group_ids:
+            GROUP_CHALLENGES.pop(challenge_id, None)
+    for key in list(GROUP_CHALLENGE_CONTRIBUTIONS.keys()):
+        if any(group_id in key[0] for group_id in seeded_group_ids):
+            GROUP_CHALLENGE_CONTRIBUTIONS.pop(key, None)
+    for key in list(GROUP_MEMBER_REWARD_POINTS.keys()):
+        if key[0] in seeded_group_ids:
+            GROUP_MEMBER_REWARD_POINTS.pop(key, None)
+
+
+def persist_community_state_snapshot() -> None:
+    _persist_community_state()
+
+
 _bootstrap_community_state()
+_remove_seeded_community_content()
+_persist_community_state()
 
 
 def remove_user_data(user_id: str) -> None:
@@ -753,89 +844,6 @@ def _dispatch_lost_found_followups() -> None:
         _persist_community_state()
 
 
-def ensure_official_group(suburb: str) -> Group:
-    normalized = _normalize_suburb(suburb)
-    existing = next((g for g in groups if g.official and g.suburb.lower() == normalized.lower()), None)
-    if existing:
-        _active_group_challenges(existing)
-        return existing
-
-    group = Group(
-        id=f"g_official_{uuid4().hex[:8]}",
-        name=f"{normalized} Official Pet Community",
-        suburb=normalized,
-        member_count=0,
-        official=True,
-    )
-    groups.append(group)
-    _active_group_challenges(group)
-    return group
-
-
-def _seed_group_rewards() -> None:
-    seed_points = {
-        ("g_user_dogpark_surry", "user_1"): {"pack_builder": 3, "clean_park": 3},
-        ("g_user_dogpark_surry", "user_2"): {"pack_builder": 2, "clean_park": 2},
-        ("g_user_dogpark_surry", "user_3"): {"pack_builder": 1, "clean_park": 2},
-        ("g_user_5", "user_2"): {"pack_builder": 4, "clean_park": 2},
-        ("g_official_surryhills", "guest_user"): {"pack_builder": 2, "clean_park": 1},
-    }
-    for (group_id, user_id), values in seed_points.items():
-        record = _reward_points(group_id, user_id)
-        record["pack_builder"] = max(record.get("pack_builder", 0), int(values["pack_builder"]))
-        record["clean_park"] = max(record.get("clean_park", 0), int(values["clean_park"]))
-
-    seed_contributions = [
-        ("g_user_dogpark_surry", "pack_builder", "user_1", 3),
-        ("g_user_dogpark_surry", "pack_builder", "user_2", 2),
-        ("g_user_dogpark_surry", "pack_builder", "user_3", 1),
-        ("g_user_dogpark_surry", "clean_park_streak", "user_1", 3),
-        ("g_user_dogpark_surry", "clean_park_streak", "user_2", 2),
-        ("g_user_dogpark_surry", "clean_park_streak", "user_3", 2),
-        ("g_user_5", "pack_builder", "user_2", 4),
-        ("g_user_5", "clean_park_streak", "user_2", 2),
-        ("g_official_surryhills", "pack_builder", "guest_user", 2),
-    ]
-    for group_id, challenge_type, user_id, contribution_count in seed_contributions:
-        group = next((item for item in groups if item.id == group_id), None)
-        if not group:
-            continue
-        membership = next(
-            (
-                record
-                for record in group_memberships
-                if record.group_id == group_id and record.user_id == user_id and record.status == "member"
-            ),
-            None,
-        )
-        if not membership:
-            continue
-        challenge = _ensure_group_challenge(group, challenge_type)
-        key = (challenge.id, user_id)
-        GROUP_CHALLENGE_CONTRIBUTIONS[key] = max(
-            GROUP_CHALLENGE_CONTRIBUTIONS.get(key, 0),
-            contribution_count,
-        )
-
-    for group in groups:
-        for challenge in _active_group_challenges(group):
-            challenge.progress_count = _sum_challenge_progress(challenge.id)
-            challenge.status = "completed" if challenge.progress_count >= challenge.target_count else "active"
-            if challenge.status == "completed":
-                badge = "Pack Builder" if challenge.type == "pack_builder" else "Clean Park Collective"
-                GROUP_BADGES.setdefault(group.id, set()).add(badge)
-
-
-for suburb in KNOWN_SUBURBS:
-    ensure_official_group(suburb)
-
-for seeded_group in groups:
-    _active_group_challenges(seeded_group)
-
-_seed_group_rewards()
-_persist_community_state()
-
-
 def _membership_status(group_id: str, user_id: Optional[str]) -> str:
     if not user_id:
         return "none"
@@ -875,9 +883,6 @@ def list_groups(
     suburb: Optional[str] = Query(default=None),
     user_id: Optional[str] = Query(default=None),
 ):
-    if suburb:
-        ensure_official_group(suburb)
-
     result = groups
     if suburb:
         result = [g for g in result if g.suburb.lower() == suburb.lower()]
@@ -1075,7 +1080,6 @@ def complete_group_onboarding(
 def create_group(payload: GroupCreateRequest, authorization: Optional[str] = Header(default=None)):
     assert_actor_authorized(actor_user_id=payload.user_id, authorization=authorization)
     suburb = _normalize_suburb(payload.suburb)
-    ensure_official_group(suburb)
 
     existing = next(
         (

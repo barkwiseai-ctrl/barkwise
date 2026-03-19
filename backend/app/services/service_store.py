@@ -67,6 +67,63 @@ ACCOUNT_LABELS = {
 }
 
 DEFAULT_VET_USERS = {"user_1", "user_3"}
+SEEDED_PROVIDER_IDS = {
+    "svc_1",
+    "svc_2",
+    "svc_3",
+    "svc_4",
+    "svc_5",
+    "svc_6",
+    "svc_7",
+    "svc_8",
+    "svc_9",
+    "svc_10",
+    "svc_11",
+    "svc_12",
+    "svc_sw_1",
+    "svc_sw_2",
+    "svc_sw_3",
+    "svc_sw_4",
+    "svc_sw_5",
+}
+SEEDED_REVIEW_IDS = {
+    "r_1",
+    "r_2",
+    "r_3",
+    "r_4",
+    "r_5",
+    "r_6",
+    "r_7",
+    "r_8",
+    "r_9",
+    "r_10",
+    "r_11",
+    "r_12",
+    "r_13",
+    "r_14",
+    "r_15",
+    "r_16",
+    "r_17",
+    "r_18",
+    "r_19",
+    "r_20",
+    "r_21",
+    "r_22",
+    "r_23",
+    "r_24",
+    "r_sw_1",
+    "r_sw_2",
+    "r_sw_3",
+    "r_sw_4",
+    "r_sw_5",
+}
+SEEDED_QUOTE_REQUEST_IDS = {"qr_seed_1", "qr_seed_2", "qr_seed_3", "qr_seed_4"}
+SEEDED_QUOTE_TARGET_IDS = {"qrt_seed_1", "qrt_seed_2", "qrt_seed_3", "qrt_seed_4", "qrt_seed_5", "qrt_seed_6", "qrt_seed_7"}
+SEEDED_BOOKING_IDS = {"bk_seed_1", "bk_seed_2", "bk_seed_3", "bk_seed_4", "bk_seed_5", "bk_seed_6", "bk_seed_7"}
+SEEDED_BOOKING_HISTORY_IDS = {"bkh_seed_1", "bkh_seed_2", "bkh_seed_3", "bkh_seed_4"}
+SEEDED_BLACKOUT_IDS = {"bo_seed_1", "bo_seed_2"}
+SEEDED_VET_SESSION_IDS = {"vcs_seed_1", "vcs_seed_2"}
+SEEDED_VET_VERIFICATION_IDS = {"vver_seed_1", "vver_seed_2"}
 
 
 class ServiceStoreError(ValueError):
@@ -101,7 +158,7 @@ class ServiceStore:
         configured_vets = {value.strip() for value in os.getenv("VET_USER_IDS", "").split(",") if value.strip()}
         self._vet_user_ids: Set[str] = configured_vets or set(DEFAULT_VET_USERS)
         self._init_db()
-        self._seed_if_needed()
+        self._remove_seeded_content()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -325,866 +382,38 @@ class ServiceStore:
             return
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
-    def _seed_if_needed(self) -> None:
-        seed_providers = [
-            {
-                "id": "svc_1",
-                "name": "Happy Paws Walkers",
-                "category": "dog_walking",
-                "suburb": "Surry Hills",
-                "rating": 4.8,
-                "review_count": 128,
-                "price_from": 25,
-                "description": "30-60 minute neighborhood walks with photo updates.",
-                "full_description": "Trusted local walkers offering flexible plans, GPS-tracked routes, and photo check-ins after each walk.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1548199973-03cce0bbc87b",
-                    "https://images.unsplash.com/photo-1517849845537-4d257902454a",
-                ],
-                "latitude": -33.8889,
-                "longitude": 151.2111,
-            },
-            {
-                "id": "svc_2",
-                "name": "Urban Tail Walk Co",
-                "category": "dog_walking",
-                "suburb": "Newtown",
-                "rating": 4.6,
-                "review_count": 74,
-                "price_from": 22,
-                "description": "Reliable weekday walks and weekend pack sessions.",
-                "full_description": "Structured walk plans for energetic dogs, including social pack walks and solo sessions for reactive pets.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1518717758536-85ae29035b6d",
-                    "https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9",
-                ],
-                "latitude": -33.8981,
-                "longitude": 151.1742,
-            },
-            {
-                "id": "svc_3",
-                "name": "Fresh Fur Groom Studio",
-                "category": "grooming",
-                "suburb": "Redfern",
-                "rating": 4.9,
-                "review_count": 96,
-                "price_from": 45,
-                "description": "Bath, nail trim, and breed-specific grooming.",
-                "full_description": "Gentle grooming sessions with skin-safe products, breed-specific styling, and stress-aware handling.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1516734212186-65266f4f17c8",
-                    "https://images.unsplash.com/photo-1525253013412-55c1a69a5738",
-                ],
-                "latitude": -33.8928,
-                "longitude": 151.2040,
-            },
-            {
-                "id": "svc_4",
-                "name": "City Stride Canine Walkers",
-                "category": "dog_walking",
-                "suburb": "Surry Hills",
-                "rating": 4.7,
-                "review_count": 63,
-                "price_from": 28,
-                "description": "Structured solo walks with behavior notes after each outing.",
-                "full_description": "Ideal for dogs needing routine. Includes solo walk focus, leash manners, and owner debrief.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1444212477490-ca407925329e",
-                    "https://images.unsplash.com/photo-1523480717984-24cba35ae1ef",
-                ],
-                "latitude": -33.8878,
-                "longitude": 151.2137,
-            },
-            {
-                "id": "svc_5",
-                "name": "Paws & Play Newtown",
-                "category": "dog_walking",
-                "suburb": "Newtown",
-                "rating": 4.5,
-                "review_count": 58,
-                "price_from": 24,
-                "description": "Energetic group walks for social dogs in local parks.",
-                "full_description": "Small-pack walks with controlled introductions and post-walk hydration checks.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1537151608828-ea2b11777ee8",
-                    "https://images.unsplash.com/photo-1517423440428-a5a00ad493e8",
-                ],
-                "latitude": -33.8999,
-                "longitude": 151.1768,
-            },
-            {
-                "id": "svc_6",
-                "name": "Redfern Rover Routes",
-                "category": "dog_walking",
-                "suburb": "Redfern",
-                "rating": 4.8,
-                "review_count": 89,
-                "price_from": 27,
-                "description": "Neighborhood adventure walks with live location sharing.",
-                "full_description": "Route variety around parks and quieter streets, with quick photo updates and flexible timing.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1450778869180-41d0601e046e",
-                    "https://images.unsplash.com/photo-1472053217156-31b42df2319f",
-                ],
-                "latitude": -33.8935,
-                "longitude": 151.2018,
-            },
-            {
-                "id": "svc_7",
-                "name": "Eucalyptus Groom House",
-                "category": "grooming",
-                "suburb": "Surry Hills",
-                "rating": 4.9,
-                "review_count": 132,
-                "price_from": 52,
-                "description": "Calm one-on-one grooming for anxious and senior pets.",
-                "full_description": "Low-noise grooming room, sensitive-skin products, and handling pace tailored to each pet.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1516734212186-65266f4f17c8",
-                    "https://images.unsplash.com/photo-1601758228041-f3b2795255f1",
-                ],
-                "latitude": -33.8872,
-                "longitude": 151.2098,
-            },
-            {
-                "id": "svc_8",
-                "name": "King Street Pet Spa",
-                "category": "grooming",
-                "suburb": "Newtown",
-                "rating": 4.6,
-                "review_count": 80,
-                "price_from": 48,
-                "description": "Bath, brush, tidy clips, and coat care plans.",
-                "full_description": "Practical grooming packages for regular maintenance, including coat and skin notes.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1527529482837-4698179dc6ce",
-                    "https://images.unsplash.com/photo-1522276498395-f4f68f7f8454",
-                ],
-                "latitude": -33.8977,
-                "longitude": 151.1781,
-            },
-            {
-                "id": "svc_9",
-                "name": "Redfern Gentle Groomers",
-                "category": "grooming",
-                "suburb": "Redfern",
-                "rating": 4.7,
-                "review_count": 69,
-                "price_from": 46,
-                "description": "Breed-aware grooming with coat health tracking.",
-                "full_description": "Trim plans for doodles, terriers, and double-coated breeds with owner follow-up notes.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1525253013412-55c1a69a5738",
-                    "https://images.unsplash.com/photo-1544568100-847a948585b9",
-                ],
-                "latitude": -33.8917,
-                "longitude": 151.2056,
-            },
-            {
-                "id": "svc_10",
-                "name": "Laneway Leash Collective",
-                "category": "dog_walking",
-                "suburb": "Surry Hills",
-                "rating": 4.4,
-                "review_count": 37,
-                "price_from": 21,
-                "description": "Budget-friendly weekday lunchtime walks.",
-                "full_description": "Great for office-hour families needing consistent weekday exercise windows.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1543466835-00a7907e9de1",
-                    "https://images.unsplash.com/photo-1548199973-03cce0bbc87b",
-                ],
-                "latitude": -33.8898,
-                "longitude": 151.2149,
-            },
-            {
-                "id": "svc_11",
-                "name": "Inner West Wash & Style",
-                "category": "grooming",
-                "suburb": "Newtown",
-                "rating": 4.8,
-                "review_count": 104,
-                "price_from": 50,
-                "description": "Premium wash, de-shed and tidy styling.",
-                "full_description": "Detailed grooming with seasonal coat management and optional nail care bundle.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1522276498395-f4f68f7f8454",
-                    "https://images.unsplash.com/photo-1601758228041-f3b2795255f1",
-                ],
-                "latitude": -33.9006,
-                "longitude": 151.1725,
-            },
-            {
-                "id": "svc_12",
-                "name": "South Sydney Striders",
-                "category": "dog_walking",
-                "suburb": "Redfern",
-                "rating": 4.7,
-                "review_count": 77,
-                "price_from": 26,
-                "description": "Morning and evening dog-walk slots with flexible duration.",
-                "full_description": "Reliable recurring slots, harness checks, and post-walk hydration support.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1517423440428-a5a00ad493e8",
-                    "https://images.unsplash.com/photo-1537151608828-ea2b11777ee8",
-                ],
-                "latitude": -33.8946,
-                "longitude": 151.2029,
-            },
-            {
-                "id": "svc_sw_1",
-                "name": "Sunshine Coat Care",
-                "category": "grooming",
-                "suburb": "Sunshine West",
-                "rating": 4.9,
-                "review_count": 41,
-                "price_from": 47,
-                "description": "Neighbourhood grooming studio with gentle handling and quick turnarounds.",
-                "full_description": "Ideal for regular maintenance trims, wash-and-dry sessions, and coat-friendly skin checks.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1516734212186-65266f4f17c8",
-                    "https://images.unsplash.com/photo-1522276498395-f4f68f7f8454",
-                ],
-                "latitude": -37.7915,
-                "longitude": 144.8162,
-            },
-            {
-                "id": "svc_sw_2",
-                "name": "West Paws Styling",
-                "category": "grooming",
-                "suburb": "Sunshine West",
-                "rating": 4.7,
-                "review_count": 33,
-                "price_from": 44,
-                "description": "Clip, bath, nails, and tidy-up plans for active dogs.",
-                "full_description": "Balanced grooming packages for short and medium coats with optional de-shed add-ons.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1525253013412-55c1a69a5738",
-                    "https://images.unsplash.com/photo-1601758228041-f3b2795255f1",
-                ],
-                "latitude": -37.8040,
-                "longitude": 144.8300,
-            },
-            {
-                "id": "svc_sw_3",
-                "name": "Maribyrnong Mobile Groom",
-                "category": "grooming",
-                "suburb": "Sunshine West",
-                "rating": 4.6,
-                "review_count": 27,
-                "price_from": 52,
-                "description": "Mobile grooming van servicing Sunshine West and nearby streets.",
-                "full_description": "Convenient at-home appointments with flexible windows and stress-aware routines.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1544568100-847a948585b9",
-                    "https://images.unsplash.com/photo-1516734212186-65266f4f17c8",
-                ],
-                "latitude": -37.7790,
-                "longitude": 144.7810,
-            },
-            {
-                "id": "svc_sw_4",
-                "name": "Footscray Fur Finish",
-                "category": "grooming",
-                "suburb": "Sunshine West",
-                "rating": 4.8,
-                "review_count": 38,
-                "price_from": 49,
-                "description": "Premium finish trims for coat health and hygiene maintenance.",
-                "full_description": "Detailed coat shaping, nail care, and paw tidy work with post-visit notes.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1527529482837-4698179dc6ce",
-                    "https://images.unsplash.com/photo-1601758228041-f3b2795255f1",
-                ],
-                "latitude": -37.7600,
-                "longitude": 144.9000,
-            },
-            {
-                "id": "svc_sw_5",
-                "name": "Inner West Deluxe Grooming",
-                "category": "grooming",
-                "suburb": "Sunshine West",
-                "rating": 4.5,
-                "review_count": 19,
-                "price_from": 56,
-                "description": "Longer premium sessions for anxious or senior pets.",
-                "full_description": "Extended appointments with calm pacing, break windows, and optional coat restoration treatment.",
-                "image_urls": [
-                    "https://images.unsplash.com/photo-1522276498395-f4f68f7f8454",
-                    "https://images.unsplash.com/photo-1525253013412-55c1a69a5738",
-                ],
-                "latitude": -37.7200,
-                "longitude": 144.9600,
-            },
-        ]
-        seed_reviews = [
-            ("r_1", "svc_1", "Amy", 5, "Very caring walker."),
-            ("r_2", "svc_1", "Liam", 4, "On-time and friendly."),
-            ("r_3", "svc_3", "Noah", 5, "Great groom every time."),
-            ("r_4", "svc_2", "Sofia", 5, "My pup comes back calm and happy."),
-            ("r_5", "svc_2", "Jasper", 4, "Good communication and photos."),
-            ("r_6", "svc_4", "Priya", 5, "Detailed updates after each walk."),
-            ("r_7", "svc_4", "Mason", 4, "Consistent timing and care."),
-            ("r_8", "svc_5", "Ella", 4, "Great for social dogs."),
-            ("r_9", "svc_5", "Nora", 5, "Super patient with shy pups."),
-            ("r_10", "svc_6", "Lucas", 5, "Best walker in Redfern."),
-            ("r_11", "svc_6", "Grace", 4, "Reliable and friendly."),
-            ("r_12", "svc_7", "Anika", 5, "Handled my anxious dog gently."),
-            ("r_13", "svc_7", "Theo", 5, "Excellent coat finish."),
-            ("r_14", "svc_8", "Ruby", 4, "Good value grooming."),
-            ("r_15", "svc_8", "Arlo", 5, "Great tidy trim."),
-            ("r_16", "svc_9", "Finn", 5, "Professional and kind groomers."),
-            ("r_17", "svc_9", "Mia", 4, "Very happy with the result."),
-            ("r_18", "svc_10", "Jack", 4, "Affordable and dependable."),
-            ("r_19", "svc_10", "Leah", 4, "Easy booking experience."),
-            ("r_20", "svc_11", "Hannah", 5, "Premium quality service."),
-            ("r_21", "svc_11", "Daniel", 5, "Best de-shed package so far."),
-            ("r_22", "svc_12", "Chloe", 5, "Great energy and punctual."),
-            ("r_23", "svc_12", "Ryan", 4, "Solid recurring walk plan."),
-            ("r_24", "svc_3", "Isla", 5, "Our go-to groom studio."),
-            ("r_sw_1", "svc_sw_1", "Mina", 5, "Excellent with nervous dogs."),
-            ("r_sw_2", "svc_sw_2", "Owen", 4, "Good value and reliable quality."),
-            ("r_sw_3", "svc_sw_3", "Pri", 5, "Mobile option is very convenient."),
-            ("r_sw_4", "svc_sw_4", "Sasha", 5, "Great finish and clear communication."),
-            ("r_sw_5", "svc_sw_5", "Dylan", 4, "Premium service worth it for seniors."),
-        ]
-        now = datetime.utcnow()
-        today = date.today()
-        seed_quote_requests = [
-            (
-                "qr_seed_1",
-                "user_2",
-                "dog_walking",
-                "Surry Hills",
-                "Weekday mornings",
-                "Labrador, leash-trained, high energy",
-                "Need recurring slots",
-                "responded",
-                (now - timedelta(days=4)).isoformat(),
-                (now - timedelta(days=4) + timedelta(minutes=35)).isoformat(),
-            ),
-            (
-                "qr_seed_2",
-                "user_4",
-                "grooming",
-                "Surry Hills",
-                "Saturday 10:00-12:00",
-                "Toy cavoodle, sensitive skin",
-                "Prefer low-noise handling",
-                "responded",
-                (now - timedelta(days=3)).isoformat(),
-                (now - timedelta(days=3) + timedelta(minutes=25)).isoformat(),
-            ),
-            (
-                "qr_seed_3",
-                "user_1",
-                "dog_walking",
-                "Newtown",
-                "Weekday evenings",
-                "2-year old mix breed, medium activity",
-                "",
-                "responded",
-                (now - timedelta(days=2)).isoformat(),
-                (now - timedelta(days=2) + timedelta(minutes=20)).isoformat(),
-            ),
-            (
-                "qr_seed_4",
-                "user_3",
-                "grooming",
-                "Redfern",
-                "Sunday afternoons",
-                "Senior corgi, anxiety around dryers",
-                "",
-                "pending",
-                (now - timedelta(minutes=45)).isoformat(),
-                (now - timedelta(minutes=45)).isoformat(),
-            ),
-        ]
-        seed_quote_targets = [
-            (
-                "qrt_seed_1",
-                "qr_seed_1",
-                "svc_2",
-                "user_2",
-                "accepted",
-                "Can do recurring mornings.",
-                (now - timedelta(days=4)).isoformat(),
-                (now - timedelta(days=4) + timedelta(minutes=20)).isoformat(),
-                1,
-                0,
-            ),
-            (
-                "qrt_seed_2",
-                "qr_seed_1",
-                "svc_1",
-                "user_1",
-                "declined",
-                "Morning route already full.",
-                (now - timedelta(days=4)).isoformat(),
-                (now - timedelta(days=4) + timedelta(minutes=34)).isoformat(),
-                1,
-                0,
-            ),
-            (
-                "qrt_seed_3",
-                "qr_seed_2",
-                "svc_2",
-                "user_2",
-                "accepted",
-                "Can take this slot.",
-                (now - timedelta(days=3)).isoformat(),
-                (now - timedelta(days=3) + timedelta(minutes=15)).isoformat(),
-                1,
-                0,
-            ),
-            (
-                "qrt_seed_4",
-                "qr_seed_2",
-                "svc_7",
-                "user_1",
-                "accepted",
-                "Happy to help with sensitive-skin package.",
-                (now - timedelta(days=3)).isoformat(),
-                (now - timedelta(days=3) + timedelta(minutes=22)).isoformat(),
-                1,
-                0,
-            ),
-            (
-                "qrt_seed_5",
-                "qr_seed_3",
-                "svc_2",
-                "user_2",
-                "declined",
-                "Booked out for evening slots.",
-                (now - timedelta(days=2)).isoformat(),
-                (now - timedelta(days=2) + timedelta(minutes=17)).isoformat(),
-                1,
-                0,
-            ),
-            (
-                "qrt_seed_6",
-                "qr_seed_3",
-                "svc_4",
-                "user_4",
-                "accepted",
-                "Can confirm weekday evening walk.",
-                (now - timedelta(days=2)).isoformat(),
-                (now - timedelta(days=2) + timedelta(minutes=13)).isoformat(),
-                1,
-                0,
-            ),
-            (
-                "qrt_seed_7",
-                "qr_seed_4",
-                "svc_10",
-                "user_4",
-                "pending",
-                "",
-                (now - timedelta(minutes=45)).isoformat(),
-                None,
-                1,
-                0,
-            ),
-        ]
-        seed_bookings = [
-            (
-                "bk_seed_1",
-                "user_2",
-                "svc_1",
-                "Milo",
-                (today + timedelta(days=1)).isoformat(),
-                "09:00",
-                "Sensitive skin package",
-                "requested",
-                (now - timedelta(hours=2)).isoformat(),
-            ),
-            (
-                "bk_seed_2",
-                "user_1",
-                "svc_3",
-                "Luna",
-                (today + timedelta(days=2)).isoformat(),
-                "11:00",
-                "Please keep session short",
-                "provider_confirmed",
-                (now - timedelta(days=1)).isoformat(),
-            ),
-            (
-                "bk_seed_3",
-                "user_4",
-                "svc_6",
-                "Maple",
-                (today - timedelta(days=1)).isoformat(),
-                "15:00",
-                "Completed with route photos",
-                "completed",
-                (now - timedelta(days=2)).isoformat(),
-            ),
-            (
-                "bk_seed_4",
-                "user_3",
-                "svc_8",
-                "Scout",
-                (today + timedelta(days=3)).isoformat(),
-                "13:00",
-                "Needs reschedule due to work",
-                "reschedule_requested",
-                (now - timedelta(hours=6)).isoformat(),
-            ),
-            (
-                "bk_seed_5",
-                "user_2",
-                "svc_7",
-                "Nala",
-                today.isoformat(),
-                "17:00",
-                "Anxious around dryers",
-                "in_progress",
-                (now - timedelta(hours=4)).isoformat(),
-            ),
-            (
-                "bk_seed_6",
-                "user_amy",
-                "svc_10",
-                "Archie",
-                (today + timedelta(days=4)).isoformat(),
-                "11:00",
-                "",
-                "provider_confirmed",
-                (now - timedelta(hours=3)).isoformat(),
-            ),
-            (
-                "bk_seed_7",
-                "user_mia",
-                "svc_sw_1",
-                "Coco",
-                (today + timedelta(days=2)).isoformat(),
-                "09:00",
-                "",
-                "requested",
-                (now - timedelta(minutes=90)).isoformat(),
-            ),
-        ]
-        seed_booking_history = [
-            (
-                "bkh_seed_1",
-                "bk_seed_1",
-                "user_2",
-                "none",
-                "requested",
-                "booking requested",
-                (now - timedelta(hours=2)).isoformat(),
-            ),
-            (
-                "bkh_seed_2",
-                "bk_seed_2",
-                "user_1",
-                "none",
-                "requested",
-                "booking requested",
-                (now - timedelta(days=1)).isoformat(),
-            ),
-            (
-                "bkh_seed_3",
-                "bk_seed_2",
-                "user_3",
-                "requested",
-                "provider_confirmed",
-                "confirmed by provider",
-                (now - timedelta(hours=20)).isoformat(),
-            ),
-            (
-                "bkh_seed_4",
-                "bk_seed_3",
-                "user_4",
-                "provider_confirmed",
-                "completed",
-                "service completed",
-                (now - timedelta(days=1, hours=2)).isoformat(),
-            ),
-        ]
-        seed_blackouts = [
-            (
-                "bo_seed_1",
-                "svc_1",
-                (today + timedelta(days=4)).isoformat(),
-                "13:00",
-                "Clinic training block",
-                "user_1",
-                (now - timedelta(hours=3)).isoformat(),
-            ),
-            (
-                "bo_seed_2",
-                "svc_8",
-                (today + timedelta(days=2)).isoformat(),
-                "15:00",
-                "Equipment maintenance",
-                "user_2",
-                (now - timedelta(hours=5)).isoformat(),
-            ),
-        ]
-        seed_vet_profiles = [
-            (
-                "user_1",
-                82,
-                196,
-                10,
-                8.7,
-                10,
-                2,
-                (now + timedelta(days=3)).isoformat(),
-                now.isoformat(),
-            ),
-            (
-                "user_3",
-                64,
-                148,
-                8,
-                6.56,
-                8,
-                3,
-                (now + timedelta(days=4)).isoformat(),
-                now.isoformat(),
-            ),
-        ]
-        seed_vet_sessions = [
-            (
-                "vcs_seed_1",
-                "user_1",
-                24,
-                0.88,
-                "Dermatitis triage prompts",
-                "Added escalation guidance",
-                28,
-                (now - timedelta(days=2)).isoformat(),
-            ),
-            (
-                "vcs_seed_2",
-                "user_3",
-                18,
-                0.84,
-                "Grooming stress checks",
-                "Reinforced low-noise handling tips",
-                20,
-                (now - timedelta(days=1)).isoformat(),
-            ),
-        ]
-        seed_vet_verifications = [
-            (
-                "vver_seed_1",
-                "svc_3",
-                "user_1",
-                "approved",
-                0.91,
-                "Consistent hygiene and stress-aware process.",
-                (now - timedelta(days=12)).isoformat(),
-                (now + timedelta(days=78)).isoformat(),
-                19,
-            ),
-            (
-                "vver_seed_2",
-                "svc_7",
-                "user_3",
-                "approved",
-                0.87,
-                "Strong handling quality for anxious dogs.",
-                (now - timedelta(days=8)).isoformat(),
-                (now + timedelta(days=84)).isoformat(),
-                17,
-            ),
-        ]
-
+    def _remove_seeded_content(self) -> None:
         with self._lock:
             with self._connect() as conn:
-                for provider in seed_providers:
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO providers (
-                            id, name, category, suburb, rating, review_count, price_from,
-                            description, full_description, image_urls_json, latitude, longitude, status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            provider["id"],
-                            provider["name"],
-                            provider["category"],
-                            provider["suburb"],
-                            provider["rating"],
-                            provider["review_count"],
-                            provider["price_from"],
-                            provider["description"],
-                            provider["full_description"],
-                            json.dumps(provider["image_urls"]),
-                            provider["latitude"],
-                            provider["longitude"],
-                            "active",
-                        ),
-                    )
-                    # Seed sample ownership so users can act as providers and customers.
-                    if provider["id"] in {"svc_2", "svc_8"}:
-                        owner_user_id = "user_2"
-                    elif provider["id"] in {"svc_1", "svc_7"}:
-                        owner_user_id = "user_1"
-                    elif provider["id"] in {"svc_3", "svc_9"}:
-                        owner_user_id = "user_3"
-                    elif provider["id"] in {"svc_4", "svc_10"}:
-                        owner_user_id = "user_4"
-                    else:
-                        owner_user_id = f"owner_{provider['id']}"
-                    conn.execute(
-                        """
-                        INSERT INTO provider_owners (provider_id, user_id)
-                        VALUES (?, ?)
-                        ON CONFLICT(provider_id) DO UPDATE SET user_id = excluded.user_id
-                        """,
-                        (provider["id"], owner_user_id),
-                    )
-
+                conn.executemany("DELETE FROM reviews WHERE id = ?", [(value,) for value in sorted(SEEDED_REVIEW_IDS)])
                 conn.executemany(
-                    "INSERT OR IGNORE INTO reviews (id, provider_id, author, rating, comment) VALUES (?, ?, ?, ?, ?)",
-                    seed_reviews,
+                    "DELETE FROM quote_request_targets WHERE id = ?",
+                    [(value,) for value in sorted(SEEDED_QUOTE_TARGET_IDS)],
                 )
                 conn.executemany(
-                    """
-                    INSERT INTO quote_requests (
-                        id, user_id, category, suburb, preferred_window, pet_details, note, status, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        user_id = excluded.user_id,
-                        category = excluded.category,
-                        suburb = excluded.suburb,
-                        preferred_window = excluded.preferred_window,
-                        pet_details = excluded.pet_details,
-                        note = excluded.note,
-                        status = excluded.status,
-                        created_at = excluded.created_at,
-                        updated_at = excluded.updated_at
-                    """,
-                    seed_quote_requests,
+                    "DELETE FROM quote_requests WHERE id = ?",
+                    [(value,) for value in sorted(SEEDED_QUOTE_REQUEST_IDS)],
+                )
+                conn.executemany("DELETE FROM booking_status_history WHERE id = ?", [(value,) for value in sorted(SEEDED_BOOKING_HISTORY_IDS)])
+                conn.executemany("DELETE FROM booking_holds WHERE provider_id = ?", [(value,) for value in sorted(SEEDED_PROVIDER_IDS)])
+                conn.executemany("DELETE FROM bookings WHERE id = ?", [(value,) for value in sorted(SEEDED_BOOKING_IDS)])
+                conn.executemany("DELETE FROM provider_blackout_slots WHERE id = ?", [(value,) for value in sorted(SEEDED_BLACKOUT_IDS)])
+                conn.executemany(
+                    "DELETE FROM vet_coach_sessions WHERE id = ?",
+                    [(value,) for value in sorted(SEEDED_VET_SESSION_IDS)],
                 )
                 conn.executemany(
-                    """
-                    INSERT INTO quote_request_targets (
-                        id, quote_request_id, provider_id, owner_user_id, status, response_message, created_at,
-                        responded_at, reminder_15_sent, reminder_60_sent
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        quote_request_id = excluded.quote_request_id,
-                        provider_id = excluded.provider_id,
-                        owner_user_id = excluded.owner_user_id,
-                        status = excluded.status,
-                        response_message = excluded.response_message,
-                        created_at = excluded.created_at,
-                        responded_at = excluded.responded_at,
-                        reminder_15_sent = excluded.reminder_15_sent,
-                        reminder_60_sent = excluded.reminder_60_sent
-                    """,
-                    seed_quote_targets,
+                    "DELETE FROM vet_groomer_verifications WHERE id = ?",
+                    [(value,) for value in sorted(SEEDED_VET_VERIFICATION_IDS)],
                 )
-                conn.executemany(
-                    """
-                    INSERT INTO bookings (
-                        id, owner_user_id, provider_id, pet_name, booking_date, time_slot, note, status, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        owner_user_id = excluded.owner_user_id,
-                        provider_id = excluded.provider_id,
-                        pet_name = excluded.pet_name,
-                        booking_date = excluded.booking_date,
-                        time_slot = excluded.time_slot,
-                        note = excluded.note,
-                        status = excluded.status,
-                        created_at = excluded.created_at
-                    """,
-                    seed_bookings,
-                )
-                conn.executemany(
-                    """
-                    INSERT INTO booking_status_history (
-                        id, booking_id, actor_user_id, from_status, to_status, note, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        booking_id = excluded.booking_id,
-                        actor_user_id = excluded.actor_user_id,
-                        from_status = excluded.from_status,
-                        to_status = excluded.to_status,
-                        note = excluded.note,
-                        created_at = excluded.created_at
-                    """,
-                    seed_booking_history,
-                )
-                conn.executemany(
-                    """
-                    INSERT INTO provider_blackout_slots (
-                        id, provider_id, slot_date, time_slot, reason, created_by, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        provider_id = excluded.provider_id,
-                        slot_date = excluded.slot_date,
-                        time_slot = excluded.time_slot,
-                        reason = excluded.reason,
-                        created_by = excluded.created_by,
-                        created_at = excluded.created_at
-                    """,
-                    seed_blackouts,
-                )
-                conn.executemany(
-                    """
-                    INSERT INTO vet_profiles (
-                        user_id, spotlight_minutes, coaching_minutes, coaching_sessions, quality_score_sum,
-                        quality_score_count, grooming_reviews_count, highlighted_until, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        spotlight_minutes = excluded.spotlight_minutes,
-                        coaching_minutes = excluded.coaching_minutes,
-                        coaching_sessions = excluded.coaching_sessions,
-                        quality_score_sum = excluded.quality_score_sum,
-                        quality_score_count = excluded.quality_score_count,
-                        grooming_reviews_count = excluded.grooming_reviews_count,
-                        highlighted_until = excluded.highlighted_until,
-                        updated_at = excluded.updated_at
-                    """,
-                    seed_vet_profiles,
-                )
-                conn.executemany(
-                    """
-                    INSERT INTO vet_coach_sessions (
-                        id, user_id, duration_minutes, quality_score, topic, note, minutes_earned, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        user_id = excluded.user_id,
-                        duration_minutes = excluded.duration_minutes,
-                        quality_score = excluded.quality_score,
-                        topic = excluded.topic,
-                        note = excluded.note,
-                        minutes_earned = excluded.minutes_earned,
-                        created_at = excluded.created_at
-                    """,
-                    seed_vet_sessions,
-                )
-                conn.executemany(
-                    """
-                    INSERT INTO vet_groomer_verifications (
-                        id, provider_id, vet_user_id, decision, confidence_score, note, created_at, valid_until, spotlight_minutes_earned
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        provider_id = excluded.provider_id,
-                        vet_user_id = excluded.vet_user_id,
-                        decision = excluded.decision,
-                        confidence_score = excluded.confidence_score,
-                        note = excluded.note,
-                        created_at = excluded.created_at,
-                        valid_until = excluded.valid_until,
-                        spotlight_minutes_earned = excluded.spotlight_minutes_earned
-                    """,
-                    seed_vet_verifications,
-                )
-
+                conn.executemany("DELETE FROM provider_owners WHERE provider_id = ?", [(value,) for value in sorted(SEEDED_PROVIDER_IDS)])
+                conn.executemany("DELETE FROM availability_slots WHERE provider_id = ?", [(value,) for value in sorted(SEEDED_PROVIDER_IDS)])
+                conn.executemany("DELETE FROM providers WHERE id = ?", [(value,) for value in sorted(SEEDED_PROVIDER_IDS)])
                 conn.commit()
 
-        # Seed availability for the next 14 days.
-        for provider in seed_providers:
-            self.ensure_availability(provider_id=provider["id"], start_date=date.today(), days=14)
+    def _seed_if_needed(self) -> None:
+        # Production and shared backends should never auto-create fake service data.
+        return
 
     def _row_to_provider(
         self,
