@@ -55,6 +55,13 @@ from app.models import (
 )
 from app.services.notification_store import notification_store
 from app.services.community_store import community_store, decode_state_payload, encode_state_payload
+from app.services.mvp_bootstrap import (
+    mvp_bootstrap_enabled,
+    seeded_event_date_iso,
+    seeded_events,
+    seeded_groups,
+    seeded_memberships,
+)
 from app.services.rate_limiting import SlidingWindowHitStore, read_positive_int_env
 from app.services.security_audit import record_rate_limit_hit
 
@@ -242,12 +249,108 @@ def _remove_seeded_community_content() -> None:
             GROUP_MEMBER_REWARD_POINTS.pop(key, None)
 
 
+def _seed_mvp_community_content() -> None:
+    group_by_id = {group.id: group for group in groups}
+    for seeded_group in seeded_groups():
+        existing = group_by_id.get(seeded_group.id)
+        if existing is None:
+            groups.append(
+                Group(
+                    id=seeded_group.id,
+                    name=seeded_group.name,
+                    suburb=seeded_group.suburb,
+                    member_count=0,
+                    official=seeded_group.official,
+                    owner_user_id=seeded_group.owner_user_id,
+                )
+            )
+        else:
+            existing.name = seeded_group.name
+            existing.suburb = seeded_group.suburb
+            existing.official = seeded_group.official
+            existing.owner_user_id = seeded_group.owner_user_id
+
+    existing_memberships = {(membership.group_id, membership.user_id) for membership in group_memberships}
+    for seeded_membership in seeded_memberships():
+        key = (seeded_membership.group_id, seeded_membership.user_id)
+        if key in existing_memberships:
+            continue
+        group_memberships.append(
+            GroupJoinRecord(
+                group_id=seeded_membership.group_id,
+                user_id=seeded_membership.user_id,
+                status=seeded_membership.status,  # type: ignore[arg-type]
+            )
+        )
+        existing_memberships.add(key)
+
+    event_by_id = {event.id: event for event in community_events}
+    rsvp_keys = {(rsvp.event_id, rsvp.user_id) for rsvp in event_rsvps}
+    for seeded_event in seeded_events():
+        event_date = seeded_event_date_iso(offset_days=seeded_event.date_offset_days)
+        existing_event = event_by_id.get(seeded_event.id)
+        if existing_event is None:
+            community_events.append(
+                CommunityEvent(
+                    id=seeded_event.id,
+                    title=seeded_event.title,
+                    description=seeded_event.description,
+                    suburb=seeded_event.suburb,
+                    date=event_date,
+                    group_id=seeded_event.group_id,
+                    location_name=seeded_event.location_name,
+                    location_latitude=seeded_event.location_latitude,
+                    location_longitude=seeded_event.location_longitude,
+                    recurrence=seeded_event.recurrence,  # type: ignore[arg-type]
+                    recurrence_interval=seeded_event.recurrence_interval,
+                    attendee_count=0,
+                    created_by=seeded_event.created_by,
+                    status=seeded_event.status,  # type: ignore[arg-type]
+                )
+            )
+        else:
+            existing_event.title = seeded_event.title
+            existing_event.description = seeded_event.description
+            existing_event.suburb = seeded_event.suburb
+            existing_event.date = event_date
+            existing_event.group_id = seeded_event.group_id
+            existing_event.location_name = seeded_event.location_name
+            existing_event.location_latitude = seeded_event.location_latitude
+            existing_event.location_longitude = seeded_event.location_longitude
+            existing_event.recurrence = seeded_event.recurrence  # type: ignore[assignment]
+            existing_event.recurrence_interval = seeded_event.recurrence_interval
+            existing_event.created_by = seeded_event.created_by
+            existing_event.status = seeded_event.status  # type: ignore[assignment]
+        for attendee_user_id in seeded_event.attendee_user_ids:
+            rsvp_key = (seeded_event.id, attendee_user_id)
+            if rsvp_key in rsvp_keys:
+                continue
+            event_rsvps.append(EventRsvpRecord(event_id=seeded_event.id, user_id=attendee_user_id, status="attending"))
+            rsvp_keys.add(rsvp_key)
+
+    for group in groups:
+        group.member_count = sum(
+            1
+            for membership in group_memberships
+            if membership.group_id == group.id and membership.status == "member"
+        )
+    for event in community_events:
+        event.attendee_count = sum(
+            1
+            for rsvp in event_rsvps
+            if rsvp.event_id == event.id and rsvp.status == "attending"
+        )
+
+
 def persist_community_state_snapshot() -> None:
     _persist_community_state()
 
 
 _bootstrap_community_state()
-_remove_seeded_community_content()
+if mvp_bootstrap_enabled():
+    _seed_mvp_community_content()
+else:
+    _remove_seeded_community_content()
 _persist_community_state()
 
 

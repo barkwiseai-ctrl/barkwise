@@ -1,12 +1,13 @@
 package com.petsocial.app.ui.screens
 
-import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.petsocial.app.testing.ComposeTestActivity
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,11 +16,10 @@ import org.junit.runner.RunWith
 class ThenVsNowFlowHappyPathTest {
 
     @get:Rule
-    val composeRule = createAndroidComposeRule<ComponentActivity>()
+    val composeRule = createAndroidComposeRule<ComposeTestActivity>()
 
     @Test
     fun thenVsNow_happyPath_reachesResultState() {
-        composeRule.mainClock.autoAdvance = false
         composeRule.setContent {
             MaterialTheme {
                 ThenVsNowFlow(
@@ -37,8 +37,9 @@ class ThenVsNowFlowHappyPathTest {
         composeRule.onNodeWithTag("then_vs_now_generate_card_button").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("then_vs_now_generating_state").assertIsDisplayed()
 
-        composeRule.mainClock.advanceTimeBy(40)
-        composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 2_000) {
+            composeRule.onAllNodesWithTag("then_vs_now_result_state").fetchSemanticsNodes().isNotEmpty()
+        }
 
         composeRule.onNodeWithTag("then_vs_now_result_state").assertIsDisplayed()
         composeRule.onNodeWithTag("then_vs_now_share_button").assertIsDisplayed()

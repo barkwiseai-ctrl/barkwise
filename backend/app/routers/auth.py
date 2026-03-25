@@ -11,8 +11,12 @@ from app.auth import (
     create_access_token,
     is_demo_login_allowed,
     parse_bearer_token,
+    register_trusted_device,
     require_authenticated_user,
+    resolve_trusted_device_user,
     revoke_access_token,
+    revoke_trusted_device,
+    trusted_device_belongs_to_user,
 )
 from app.models import (
     AuthDeleteResponse,
@@ -26,6 +30,8 @@ from app.models import (
     AuthOtpRequestResponse,
     AuthOtpVerifyRequest,
     AuthOtpVerifyResponse,
+    AuthTrustedDeviceLoginRequest,
+    AuthTrustedDeviceResetRequest,
     UserProfile,
     UserProfileUpsertRequest,
 )
@@ -127,6 +133,7 @@ def upsert_profile(payload: UserProfileUpsertRequest, authorization: Optional[st
             phone=payload.phone,
             human_pronouns=payload.human_pronouns,
             human_role_label=payload.human_role_label,
+            service_provider_mode=payload.service_provider_mode,
             dog_name=payload.dog_name,
             dog_age_months=payload.dog_age_months,
             dog_breed_mix=payload.dog_breed_mix,
@@ -268,12 +275,50 @@ def verify_otp(payload: AuthOtpVerifyRequest):
         raise HTTPException(status_code=401, detail="Invalid or expired OTP code")
     if verified_user != user_id:
         raise HTTPException(status_code=403, detail="Invite user mismatch")
+    if payload.device_id and payload.device_id.strip():
+        register_trusted_device(
+            user_id=user_id,
+            device_id=payload.device_id,
+            recorded_at=_utc_now().isoformat(),
+        )
     token, expires_at = create_access_token(user_id=user_id)
     return AuthOtpVerifyResponse(
         access_token=token,
         user_id=user_id,
         expires_at=expires_at,
     )
+
+
+@router.post("/device/login", response_model=AuthLoginResponse)
+def trusted_device_login(payload: AuthTrustedDeviceLoginRequest):
+    user_id = resolve_trusted_device_user(
+        device_id=payload.device_id,
+        seen_at=_utc_now().isoformat(),
+    )
+    if not user_id:
+        raise HTTPException(status_code=404, detail="Trusted device not found")
+    token, expires_at = create_access_token(user_id=user_id)
+    return AuthLoginResponse(access_token=token, user_id=user_id, expires_at=expires_at)
+
+
+@router.post("/device/reset", response_model=AuthLogoutResponse)
+def reset_trusted_device(
+    payload: AuthTrustedDeviceResetRequest,
+    user_id: str = Depends(require_authenticated_user),
+    authorization: Optional[str] = Header(default=None),
+):
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not trusted_device_belongs_to_user(device_id=payload.device_id, user_id=user_id):
+        raise HTTPException(status_code=404, detail="Trusted device not found")
+    revoke_trusted_device(
+        device_id=payload.device_id,
+        revoked_at=_utc_now().isoformat(),
+    )
+    token = parse_bearer_token(authorization)
+    if token:
+        revoke_access_token(token)
+    return AuthLogoutResponse()
 
 
 @router.post("/logout", response_model=AuthLogoutResponse)

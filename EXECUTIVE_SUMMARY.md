@@ -1,6 +1,6 @@
 # Executive Summary
 
-Last updated: 2026-03-11
+Last updated: 2026-03-25
 
 Primary launch plan: [MVP_PLAY_BETA_LAUNCH_PLAN.md](/Users/yingxu/public-repos/pet-social-app/MVP_PLAY_BETA_LAUNCH_PLAN.md)
 
@@ -59,3 +59,8 @@ Completed major features:
 - Security rate-limiting and audit operations suite, including sliding-window throttles across auth/chat/community/notifications, persistent rate-limit metrics, admin audit/reset endpoints, and snapshot/threshold tooling.
 - Synthetic API bot suite for QA/monitoring with scripted user journeys, seeded activity helpers, and scheduled loop automation for continuous API health checks.
 - Google Play compliance web surface with dedicated privacy policy and account deletion pages hosted under the backend web client.
+- Cross-surface calendar draft integration for Android, including "Add to calendar" actions for community meetups and service bookings with recurrence/reminder defaults.
+- Child safety standards web page under the backend compliance surface, linked from privacy pages for Google Play policy readiness.
+- Trusted-device authentication and dual-phone MVP bootstrap flow, including OTP-linked trusted device registration, `/auth/device/login` and `/auth/device/reset` endpoints, and Android auth-session seeding scripts for owner/provider installs.
+- BarkWiseAI canine symptom triage hardening with taxonomy-backed symptom detection, conservative monitor/urgent/emergency severity classification, immediate-steps response formatting, and provider-mode toggle tooling.
+- Android deterministic state-resolution layer for onboarding completion, notification/deep-link routing, provider inbox visibility, and exact booking/quote open flows, reinforced by new unit and Compose regression test suites.

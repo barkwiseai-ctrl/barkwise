@@ -158,7 +158,7 @@ FAQ_ENTRIES: List[_FaqEntry] = [
             ),
         ],
         patterns=[
-            _pattern(r"\b(vomit|vomiting|diarrhea|diarrhoea)\b"),
+            _pattern(r"\b(vomit(?:ed|ing|s)?|diarrhea|diarrhoea)\b"),
             _pattern(r"\b(dog|puppy)\b"),
         ],
     ),
@@ -313,7 +313,7 @@ FAQ_ENTRIES: List[_FaqEntry] = [
         patterns=[
             _pattern(r"\b(heat|hot weather|hot day|summer|heatwave|heat wave)\b"),
             _pattern(r"\b(dog|puppy)\b"),
-            _pattern(r"\b(pant|panting|overheat|heatstroke|heat stress|collapse|vomit|exercise|walk)\b"),
+            _pattern(r"\b(pant|panting|overheat|heatstroke|heat stress|collapse|vomit(?:ed|ing|s)?|exercise|walk)\b"),
         ],
     ),
     _FaqEntry(

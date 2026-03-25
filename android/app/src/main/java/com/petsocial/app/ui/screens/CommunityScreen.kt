@@ -1,5 +1,6 @@
 package com.petsocial.app.ui.screens
 
+import android.app.DatePickerDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -588,35 +589,13 @@ fun CommunityScreen(
         } else if (feedItems.isEmpty()) {
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                    Column(
+                    Text(
+                        text = "No community activity yet.",
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(CommunitySpaceXs),
-                    ) {
-                        Text(
-                            text = "No community activity yet in $suburb. Join a group or create a post.",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        OutlinedButton(
-                            enabled = !loading,
-                            onClick = {
-                                createPostType = when (selectedLens) {
-                                    CommunityLens.LostFound -> "lost_found"
-                                    CommunityLens.Posts -> "group_post"
-                                }
-                                showCreatePostDialog = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                when (selectedLens) {
-                                    CommunityLens.LostFound -> "Create lost/found post"
-                                    CommunityLens.Posts -> "Create post"
-                                },
-                            )
-                        }
-                    }
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
             }
         } else {
@@ -1144,18 +1123,48 @@ fun CommunityScreen(
                     )
                 }
                 item {
+                    val plannerDatePickerLabel = plannerDate.trim()
+                        .takeIf { it.isNotBlank() }
+                        ?.let(::formatIsoDateTime)
+                        ?: "Tap to choose a date"
                     OutlinedTextField(
-                        value = plannerDate,
-                        onValueChange = { plannerDate = it },
+                        value = plannerDatePickerLabel,
+                        onValueChange = {},
                         label = {
                             Text(
                                 when (plannerMode) {
-                                    MeetupPlannerMode.PingGroup -> "Time (optional ISO, e.g. 2026-02-28T16:00:00Z)"
-                                    else -> "Date (ISO, e.g. 2026-02-28T10:00:00Z)"
+                                    MeetupPlannerMode.PingGroup -> "Date"
+                                    else -> "Event day"
                                 }
                             )
                         },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showIsoDatePicker(
+                                    context = context,
+                                    currentIsoValue = plannerDate.trim(),
+                                    fallbackHour = if (plannerMode == MeetupPlannerMode.PingGroup) 16 else 10,
+                                ) { selectedIso ->
+                                    plannerDate = selectedIso
+                                }
+                            },
+                        readOnly = true,
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    showIsoDatePicker(
+                                        context = context,
+                                        currentIsoValue = plannerDate.trim(),
+                                        fallbackHour = if (plannerMode == MeetupPlannerMode.PingGroup) 16 else 10,
+                                    ) { selectedIso ->
+                                        plannerDate = selectedIso
+                                    }
+                                },
+                            ) {
+                                Icon(Icons.Default.Event, contentDescription = "Choose event date")
+                            }
+                        },
                     )
                 }
                 item {
@@ -1255,7 +1264,7 @@ fun CommunityScreen(
                     if (!plannerLocationValid) {
                         item {
                             Text(
-                                "Enter valid numeric latitude and longitude for event location.",
+                                "Pick an event location on the map.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error,
                             )
@@ -1694,11 +1703,41 @@ fun CommunityScreen(
                     }
                     if (createPostType == "community_event") {
                         val parsedEventInstant = parseIsoInstant(createEventDate.trim())
+                        val createEventDateLabel = createEventDate.trim()
+                            .takeIf { it.isNotBlank() }
+                            ?.let(::formatIsoDateTime)
+                            ?: "Tap to choose a date"
                         OutlinedTextField(
-                            value = createEventDate,
-                            onValueChange = { createEventDate = it },
-                            label = { Text("Date (ISO, e.g. 2026-02-28T10:00:00Z)") },
-                            modifier = Modifier.fillMaxWidth(),
+                            value = createEventDateLabel,
+                            onValueChange = {},
+                            label = { Text("Event day") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showIsoDatePicker(
+                                        context = context,
+                                        currentIsoValue = createEventDate.trim(),
+                                        fallbackHour = 10,
+                                    ) { selectedIso ->
+                                        createEventDate = selectedIso
+                                    }
+                                },
+                            readOnly = true,
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = {
+                                        showIsoDatePicker(
+                                            context = context,
+                                            currentIsoValue = createEventDate.trim(),
+                                            fallbackHour = 10,
+                                        ) { selectedIso ->
+                                            createEventDate = selectedIso
+                                        }
+                                    },
+                                ) {
+                                    Icon(Icons.Default.Event, contentDescription = "Choose event date")
+                                }
+                            },
                         )
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(eventDateOptions, key = { option -> "event_date_${option.label}" }) { option ->
@@ -1782,7 +1821,7 @@ fun CommunityScreen(
                         )
                         if (!createEventLocationValid) {
                             Text(
-                                "Enter valid numeric latitude and longitude for event location.",
+                                "Pick an event location on the map.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error,
                             )
@@ -1907,7 +1946,7 @@ fun CommunityScreen(
                         }
                         if (!createSharePointLocationValid) {
                             Text(
-                                "Enter valid numeric latitude and longitude.",
+                                "Pick a valid map location.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error,
                             )
@@ -2210,6 +2249,43 @@ private fun eventDatePresets(
         EventDateOption("Tomorrow 9am", atLocal(tomorrow, 9)),
         EventDateOption("This weekend 10am", atLocal(saturday, 10)),
     )
+}
+
+private fun showIsoDatePicker(
+    context: Context,
+    currentIsoValue: String,
+    fallbackHour: Int,
+    onDateSelected: (String) -> Unit,
+) {
+    val zone = ZoneId.systemDefault()
+    val currentInstant = parseIsoInstant(currentIsoValue)
+    val initialDate = currentInstant?.atZone(zone)?.toLocalDate() ?: LocalDate.now(zone)
+    DatePickerDialog(
+        context,
+        { _, year, month, dayOfMonth ->
+            val selectedDate = LocalDate.of(year, month + 1, dayOfMonth)
+            onDateSelected(updateIsoDateKeepingLocalTime(currentIsoValue, selectedDate, fallbackHour, zone))
+        },
+        initialDate.year,
+        initialDate.monthValue - 1,
+        initialDate.dayOfMonth,
+    ).show()
+}
+
+private fun updateIsoDateKeepingLocalTime(
+    currentIsoValue: String,
+    selectedDate: LocalDate,
+    fallbackHour: Int,
+    zone: ZoneId = ZoneId.systemDefault(),
+): String {
+    val currentInstant = parseIsoInstant(currentIsoValue)
+    val selectedDateTime = if (currentInstant != null) {
+        val localDateTime = currentInstant.atZone(zone).toLocalDateTime()
+        selectedDate.atTime(localDateTime.toLocalTime())
+    } else {
+        selectedDate.atTime(fallbackHour, 0)
+    }
+    return selectedDateTime.atZone(zone).toInstant().toString()
 }
 
 private fun nextOrSameDay(start: LocalDate, target: DayOfWeek): LocalDate {
@@ -3812,6 +3888,26 @@ private fun GroupDetailSheet(
                             StatPill(label = "Going", value = goingEvents.size.toString())
                             StatPill(label = "Past", value = pastGroupEvents.size.toString())
                         }
+                        if (nearbyEvents.isNotEmpty()) {
+                            val nearbyLabel = if (nearbyEvents.size == 1) "1 event nearby" else "${nearbyEvents.size} events nearby"
+                            AssistChip(
+                                onClick = {
+                                    if (nearbyEvents.size == 1) {
+                                        onOpenEventDetails(nearbyEvents.first(), group.name)
+                                    } else {
+                                        selectedTabName = GroupDetailTab.Events.name
+                                    }
+                                },
+                                label = { Text(nearbyLabel) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Event,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -4330,6 +4426,32 @@ private fun EventLocationAndRecurrenceFields(
     recurrenceInterval: String,
     onRecurrenceIntervalChange: (String) -> Unit,
 ) {
+    val parsedLat = parseCoordinateOrNull(locationLatitude)
+    val parsedLng = parseCoordinateOrNull(locationLongitude)
+    val selectedLatLng = remember(parsedLat, parsedLng) {
+        if (parsedLat != null && parsedLng != null) LatLng(parsedLat, parsedLng) else null
+    }
+    val fallbackLatLng = remember(currentLatitude, currentLongitude) {
+        if (currentLatitude != null && currentLongitude != null) LatLng(currentLatitude, currentLongitude) else null
+    }
+    val cameraPositionState = rememberCameraPositionState()
+    val mapUiSettings = remember {
+        MapUiSettings(
+            zoomControlsEnabled = false,
+            myLocationButtonEnabled = false,
+            mapToolbarEnabled = false,
+            compassEnabled = false,
+        )
+    }
+    LaunchedEffect(selectedLatLng, fallbackLatLng) {
+        val target = selectedLatLng ?: fallbackLatLng ?: LatLng(-37.8136, 144.9631)
+        cameraPositionState.move(
+            CameraUpdateFactory.newLatLngZoom(
+                target,
+                if (selectedLatLng != null) 15f else 12f,
+            ),
+        )
+    }
     Text(
         "Location and recurrence",
         style = MaterialTheme.typography.labelMedium,
@@ -4356,21 +4478,64 @@ private fun EventLocationAndRecurrenceFields(
             label = { Text("Location label (optional)") },
             modifier = Modifier.fillMaxWidth(),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = locationLatitude,
-                onValueChange = onLocationLatitudeChange,
-                label = { Text("Latitude") },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = locationLongitude,
-                onValueChange = onLocationLongitudeChange,
-                label = { Text("Longitude") },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-            )
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Tap the map to choose the event location.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                GoogleMap(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                    cameraPositionState = cameraPositionState,
+                    uiSettings = mapUiSettings,
+                    onMapClick = { latLng ->
+                        onLocationLatitudeChange(String.format(Locale.US, "%.6f", latLng.latitude))
+                        onLocationLongitudeChange(String.format(Locale.US, "%.6f", latLng.longitude))
+                    },
+                ) {
+                    if (selectedLatLng != null) {
+                        val markerState = remember(selectedLatLng) { MarkerState(position = selectedLatLng) }
+                        Marker(
+                            state = markerState,
+                            title = locationName.ifBlank { "Event location" },
+                            snippet = currentLocationSuburb ?: "Selected location",
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (selectedLatLng != null) {
+                            "Pinned: ${String.format(Locale.US, "%.4f", selectedLatLng.latitude)}, ${String.format(Locale.US, "%.4f", selectedLatLng.longitude)}"
+                        } else {
+                            "No location selected yet."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (selectedLatLng != null) {
+                        TextButton(
+                            onClick = {
+                                onLocationLatitudeChange("")
+                                onLocationLongitudeChange("")
+                            },
+                        ) {
+                            Text("Clear pin")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4522,7 +4687,7 @@ private fun EventEditorDialog(
                 )
                 if (!locationValid) {
                     Text(
-                        "Enter valid numeric latitude and longitude for event location.",
+                        "Pick an event location on the map.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )

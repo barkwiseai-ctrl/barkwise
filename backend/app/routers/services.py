@@ -44,6 +44,7 @@ from app.services.service_store import (
     service_store,
 )
 from app.services.notification_store import notification_store
+from app.services.auth_otp_store import auth_otp_store
 
 router = APIRouter(tags=["listings"])
 
@@ -345,6 +346,11 @@ def _create_provider_impl(
     authorization: Optional[str] = Header(default=None),
 ) -> ServiceProvider:
     assert_actor_authorized(actor_user_id=request.user_id, authorization=authorization)
+    if not auth_otp_store.user_can_create_provider_listings(user_id=request.user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Provider mode is off. Turn it on from Home or ask BarkWiseAI to switch provider mode on.",
+        )
     try:
         return service_store.add_provider(
             owner_user_id=request.user_id,

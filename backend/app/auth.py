@@ -87,6 +87,17 @@ def _init_auth_db() -> None:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trusted_devices (
+                    device_hash TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    revoked_at TEXT
+                )
+                """
+            )
             conn.commit()
 
 
@@ -173,6 +184,99 @@ def verify_access_token(token: str) -> Optional[str]:
     if is_token_revoked(token):
         return None
     return user_id
+
+
+def _normalize_device_id(device_id: str) -> str:
+    return device_id.strip()
+
+
+def _trusted_device_hash(device_id: str) -> str:
+    normalized = _normalize_device_id(device_id)
+    return hmac.new(
+        _AUTH_SECRET.encode("utf-8"),
+        f"trusted_device:{normalized}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def register_trusted_device(*, user_id: str, device_id: str, recorded_at: str) -> None:
+    normalized_user = user_id.strip()
+    normalized_device = _normalize_device_id(device_id)
+    if not normalized_user or not normalized_device:
+        return
+    device_hash = _trusted_device_hash(normalized_device)
+    with _AUTH_DB_LOCK:
+        with _connect_auth_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO trusted_devices(device_hash, user_id, created_at, last_seen_at, revoked_at)
+                VALUES (?, ?, ?, ?, NULL)
+                ON CONFLICT(device_hash) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    last_seen_at = excluded.last_seen_at,
+                    revoked_at = NULL
+                """,
+                (device_hash, normalized_user, recorded_at, recorded_at),
+            )
+            conn.commit()
+
+
+def resolve_trusted_device_user(*, device_id: str, seen_at: str) -> Optional[str]:
+    normalized_device = _normalize_device_id(device_id)
+    if not normalized_device:
+        return None
+    device_hash = _trusted_device_hash(normalized_device)
+    with _AUTH_DB_LOCK:
+        with _connect_auth_db() as conn:
+            row = conn.execute(
+                """
+                SELECT user_id
+                FROM trusted_devices
+                WHERE device_hash = ? AND revoked_at IS NULL
+                """,
+                (device_hash,),
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute(
+                "UPDATE trusted_devices SET last_seen_at = ? WHERE device_hash = ?",
+                (seen_at, device_hash),
+            )
+            conn.commit()
+            return str(row["user_id"]).strip() or None
+
+
+def revoke_trusted_device(*, device_id: str, revoked_at: str) -> None:
+    normalized_device = _normalize_device_id(device_id)
+    if not normalized_device:
+        return
+    device_hash = _trusted_device_hash(normalized_device)
+    with _AUTH_DB_LOCK:
+        with _connect_auth_db() as conn:
+            conn.execute(
+                "UPDATE trusted_devices SET revoked_at = ? WHERE device_hash = ?",
+                (revoked_at, device_hash),
+            )
+            conn.commit()
+
+
+def trusted_device_belongs_to_user(*, device_id: str, user_id: str) -> bool:
+    normalized_device = _normalize_device_id(device_id)
+    normalized_user = user_id.strip()
+    if not normalized_device or not normalized_user:
+        return False
+    device_hash = _trusted_device_hash(normalized_device)
+    with _AUTH_DB_LOCK:
+        with _connect_auth_db() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM trusted_devices
+                WHERE device_hash = ? AND user_id = ? AND revoked_at IS NULL
+                """,
+                (device_hash, normalized_user),
+            ).fetchone()
+    return row is not None
 
 
 def _normalize_friend_profile_field(raw: str, *, fallback: str) -> str:

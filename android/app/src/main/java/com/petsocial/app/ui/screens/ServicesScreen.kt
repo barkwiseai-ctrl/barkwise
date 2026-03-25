@@ -11,8 +11,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -38,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -54,8 +58,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
@@ -187,12 +193,12 @@ private fun ServicesListPage(
     )
     val activeFilterCount = listOf(minRating != null, maxDistanceKm != null, sortBy != "relevance").count { it }
     val listState = rememberLazyListState()
-    var quoteCategory by rememberSaveable(selectedCategory) {
+    val visibleProviderCategoriesKey = remember(providers) {
+        providers.joinToString(separator = "|") { provider -> normalizeServiceCategory(provider.category) }
+    }
+    var quoteCategory by rememberSaveable(selectedCategory, visibleProviderCategoriesKey) {
         mutableStateOf(
-            when (selectedCategory) {
-                "dog_walking", "grooming" -> selectedCategory
-                else -> "dog_walking"
-            },
+            resolveDefaultQuoteCategory(selectedCategory = selectedCategory, providers = providers),
         )
     }
     val recommendationLabel = remember(recommendationSuburb, recommendationSource) {
@@ -218,7 +224,19 @@ private fun ServicesListPage(
     var lastRefineSubmitAt by rememberSaveable { mutableStateOf(0L) }
     var isMapGestureActive by remember { mutableStateOf(false) }
     var mapGestureHeartbeatAt by remember { mutableStateOf(0L) }
+    val availableQuoteCategories = remember(providers) {
+        providers
+            .map { provider -> normalizeServiceCategory(provider.category) }
+            .filter { category -> category == "dog_walking" || category == "grooming" }
+            .toSet()
+    }
     val canSendQuote = quoteWindow.trim().isNotBlank() && quotePetDetails.trim().length >= 3
+    val density = LocalDensity.current
+    val imeBottomPadding = WindowInsets.ime.getBottom(density).let { bottomPx ->
+        with(density) { bottomPx.toDp() }
+    }
+    val quoteSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val refineSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     LaunchedEffect(viewMode) {
         if (viewMode != "map") {
             isMapGestureActive = false
@@ -268,6 +286,13 @@ private fun ServicesListPage(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                        if (providers.isEmpty()) {
+                            Text(
+                                "Listings are still loading. You can open quotes now and the latest provider availability will sync in.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -279,25 +304,27 @@ private fun ServicesListPage(
                                     selected = viewMode == "list",
                                     onClick = { onChangeViewMode("list") },
                                     label = { Text("List") },
-                                    enabled = !loading,
                                 )
                                 FilterChip(
                                     modifier = Modifier.testTag("services_view_mode_map_chip"),
                                     selected = viewMode == "map",
                                     onClick = { onChangeViewMode("map") },
                                     label = { Text("Map") },
-                                    enabled = !loading,
                                 )
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 IconButton(
-                                    enabled = !loading,
-                                    onClick = { showQuoteSheet = true },
+                                    onClick = {
+                                        quoteCategory = resolveDefaultQuoteCategory(
+                                            selectedCategory = selectedCategory,
+                                            providers = providers,
+                                        )
+                                        showQuoteSheet = true
+                                    },
                                 ) {
-                                    Icon(Icons.Default.RequestQuote, contentDescription = "Request quote from top 3")
+                                    Icon(Icons.Default.RequestQuote, contentDescription = "Request quote to up to 3 providers")
                                 }
                                 IconButton(
-                                    enabled = !loading,
                                     onClick = { showRefineSheet = true },
                                 ) {
                                     Icon(Icons.Default.Search, contentDescription = "Refine search")
@@ -343,7 +370,7 @@ private fun ServicesListPage(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            text = "No providers match your filters yet. Try broadening distance or rating.",
+                            text = "No listings yet.",
                             modifier = Modifier.padding(14.dp),
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -366,26 +393,44 @@ private fun ServicesListPage(
     }
 
     if (showQuoteSheet) {
-        ModalBottomSheet(onDismissRequest = { showQuoteSheet = false }) {
+        ModalBottomSheet(
+            onDismissRequest = { showQuoteSheet = false },
+            sheetState = quoteSheetState,
+            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                    .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp + imeBottomPadding),
                 verticalArrangement = Arrangement.spacedBy(ServicesSpaceXs),
             ) {
-                Text("Request quote from top 3", style = MaterialTheme.typography.titleMedium)
+                Text("Request quote to up to 3 providers", style = MaterialTheme.typography.titleMedium)
+                if (providers.isEmpty()) {
+                    Text(
+                        "Provider listings are still syncing. If send stays unavailable for a moment, wait for Listings to finish loading.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(ServicesSpaceXs)) {
                     FilterChip(
                         selected = quoteCategory == "dog_walking",
                         onClick = { quoteCategory = "dog_walking" },
                         label = { Text("Dog Walking") },
-                        enabled = !loading,
                     )
                     FilterChip(
                         selected = quoteCategory == "grooming",
                         onClick = { quoteCategory = "grooming" },
                         label = { Text("Grooming") },
-                        enabled = !loading,
+                    )
+                }
+                if (providers.isNotEmpty() && !availableQuoteCategories.contains(quoteCategory)) {
+                    Text(
+                        "No BarkWise providers are currently available for ${quoteCategory.replace('_', ' ')}.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 OutlinedTextField(
@@ -394,14 +439,12 @@ private fun ServicesListPage(
                     label = { Text("Preferred window") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    enabled = !loading,
                 )
                 OutlinedTextField(
                     value = quotePetDetails,
                     onValueChange = { quotePetDetails = it },
                     label = { Text("Pet details") },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !loading,
                     minLines = 2,
                 )
                 OutlinedTextField(
@@ -409,7 +452,6 @@ private fun ServicesListPage(
                     onValueChange = { quoteNote = it },
                     label = { Text("Extra note (optional)") },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !loading,
                     minLines = 2,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -427,29 +469,34 @@ private fun ServicesListPage(
                             showQuoteSheet = false
                         },
                         modifier = Modifier.weight(1f),
-                        enabled = !loading && canSendQuote,
+                        enabled = canSendQuote && (providers.isEmpty() || availableQuoteCategories.contains(quoteCategory)),
                     ) {
                         Text("Send")
                     }
                     OutlinedButton(
                         onClick = { showQuoteSheet = false },
                         modifier = Modifier.weight(1f),
-                        enabled = !loading,
                     ) {
                         Text("Close")
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
             }
         }
     }
 
     if (showRefineSheet) {
-        ModalBottomSheet(onDismissRequest = { showRefineSheet = false }) {
+        ModalBottomSheet(
+            onDismissRequest = { showRefineSheet = false },
+            sheetState = refineSheetState,
+            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, bottom = 24.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp + imeBottomPadding),
                 verticalArrangement = Arrangement.spacedBy(ServicesSpaceSm),
             ) {
                 Text("Refine search", style = MaterialTheme.typography.titleMedium)
@@ -462,7 +509,6 @@ private fun ServicesListPage(
                             onClick = { refineCategory = key },
                             label = { Text(label) },
                             selected = refineCategory == key,
-                            enabled = !loading,
                         )
                     }
                 }
@@ -487,7 +533,6 @@ private fun ServicesListPage(
                     onValueChange = { refineSearchQuery = it },
                     label = { Text("Search listings") },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !loading,
                     singleLine = true,
                 )
                 FilterDropdown(
@@ -498,7 +543,6 @@ private fun ServicesListPage(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(ServicesSpaceXs), modifier = Modifier.fillMaxWidth()) {
                     Button(
-                        enabled = !loading,
                         onClick = {
                             val now = SystemClock.elapsedRealtime()
                             if (now - lastRefineSubmitAt < 900L) return@Button
@@ -514,7 +558,6 @@ private fun ServicesListPage(
                         Text("Apply")
                     }
                     OutlinedButton(
-                        enabled = !loading,
                         onClick = {
                             refineCategory = null
                             refineMinRating = null
@@ -532,8 +575,37 @@ private fun ServicesListPage(
                         Text("Clear")
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
             }
         }
+    }
+}
+
+private fun resolveDefaultQuoteCategory(
+    selectedCategory: String?,
+    providers: List<ServiceProvider>,
+): String {
+    val normalizedSelected = selectedCategory?.let(::normalizeServiceCategory)
+    if (normalizedSelected == "dog_walking" || normalizedSelected == "grooming") {
+        return normalizedSelected
+    }
+    val visibleCategories = providers
+        .map { provider -> normalizeServiceCategory(provider.category) }
+        .filter { category -> category == "dog_walking" || category == "grooming" }
+        .distinct()
+    return when {
+        visibleCategories.size == 1 -> visibleCategories.first()
+        visibleCategories.contains("dog_walking") -> "dog_walking"
+        visibleCategories.contains("grooming") -> "grooming"
+        else -> "dog_walking"
+    }
+}
+
+private fun normalizeServiceCategory(category: String): String {
+    return when (category.trim().lowercase(Locale.US)) {
+        "walking", "dog walking", "dog_walking" -> "dog_walking"
+        "grooming", "groomer", "groomers" -> "grooming"
+        else -> category.trim()
     }
 }
 
@@ -591,7 +663,7 @@ private fun ServicesMapPanel(
     if (providerMarkers.isEmpty() && usableNearbyBusinesses.isEmpty()) {
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
             Text(
-                text = "No location data to render map yet.",
+                text = "No listings yet.",
                 modifier = Modifier.padding(14.dp),
                 style = MaterialTheme.typography.bodyMedium,
             )

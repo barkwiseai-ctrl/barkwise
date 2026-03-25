@@ -113,6 +113,7 @@ class AuthOtpStore:
                         phone TEXT NOT NULL,
                         human_pronouns TEXT NOT NULL,
                         human_role_label TEXT NOT NULL,
+                        service_provider_mode INTEGER NOT NULL DEFAULT 0,
                         dog_name TEXT NOT NULL,
                         dog_age_months INTEGER NOT NULL DEFAULT 0,
                         dog_breed_mix TEXT NOT NULL,
@@ -160,6 +161,7 @@ class AuthOtpStore:
             "phone": "TEXT NOT NULL DEFAULT ''",
             "human_pronouns": "TEXT NOT NULL DEFAULT ''",
             "human_role_label": "TEXT NOT NULL DEFAULT ''",
+            "service_provider_mode": "INTEGER NOT NULL DEFAULT 0",
             "dog_name": "TEXT NOT NULL DEFAULT ''",
             "dog_age_months": "INTEGER NOT NULL DEFAULT 0",
             "dog_breed_mix": "TEXT NOT NULL DEFAULT ''",
@@ -268,6 +270,7 @@ class AuthOtpStore:
             phone="",
             human_pronouns="",
             human_role_label="Member",
+            service_provider_mode=False,
             dog_name="",
             dog_age_months=0,
             dog_breed_mix="",
@@ -342,6 +345,7 @@ class AuthOtpStore:
             phone=str(row["phone"]),
             human_pronouns=str(row["human_pronouns"]),
             human_role_label=str(row["human_role_label"]),
+            service_provider_mode=bool(int(row["service_provider_mode"])),
             dog_name=str(row["dog_name"]),
             dog_age_months=_to_int(row["dog_age_months"]),
             dog_breed_mix=str(row["dog_breed_mix"]),
@@ -395,7 +399,7 @@ class AuthOtpStore:
                 row = conn.execute(
                     """
                     SELECT
-                        user_id, display_name, email, phone, human_pronouns, human_role_label,
+                        user_id, display_name, email, phone, human_pronouns, human_role_label, service_provider_mode,
                         dog_name, dog_age_months, dog_breed_mix, dog_sex_neuter, dog_weight_class, dog_photo_urls,
                         secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url, secondary_dog_gender, secondary_dog_weight_kg,
                         bio, suburb, favorite_suburbs,
@@ -422,6 +426,7 @@ class AuthOtpStore:
                     """
                     INSERT INTO user_profiles (
                         user_id, display_name, email, phone, human_pronouns, human_role_label,
+                        service_provider_mode,
                         dog_name, dog_age_months, dog_breed_mix, dog_sex_neuter, dog_weight_class, dog_photo_urls,
                         secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url, secondary_dog_gender, secondary_dog_weight_kg,
                         bio, suburb, favorite_suburbs,
@@ -430,7 +435,7 @@ class AuthOtpStore:
                         vaccination_status, microchipped, recall_trained, leash_reliability,
                         emergency_contact_name, emergency_contact_phone, field_visibility, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         profile.user_id,
@@ -439,6 +444,7 @@ class AuthOtpStore:
                         profile.phone,
                         profile.human_pronouns,
                         profile.human_role_label,
+                        1 if profile.service_provider_mode else 0,
                         profile.dog_name,
                         profile.dog_age_months,
                         profile.dog_breed_mix,
@@ -493,6 +499,7 @@ class AuthOtpStore:
         phone: str,
         human_pronouns: str,
         human_role_label: str,
+        service_provider_mode: bool,
         dog_name: str,
         dog_age_months: int,
         dog_breed_mix: str,
@@ -536,6 +543,7 @@ class AuthOtpStore:
             phone=phone.strip(),
             human_pronouns=human_pronouns.strip(),
             human_role_label=human_role_label.strip(),
+            service_provider_mode=bool(service_provider_mode),
             dog_name=dog_name.strip(),
             dog_age_months=max(0, int(dog_age_months)),
             dog_breed_mix=dog_breed_mix.strip(),
@@ -574,6 +582,7 @@ class AuthOtpStore:
                     """
                     INSERT INTO user_profiles (
                         user_id, display_name, email, phone, human_pronouns, human_role_label,
+                        service_provider_mode,
                         dog_name, dog_age_months, dog_breed_mix, dog_sex_neuter, dog_weight_class, dog_photo_urls,
                         secondary_dog_name, secondary_dog_age_months, secondary_dog_photo_url, secondary_dog_gender, secondary_dog_weight_kg,
                         bio, suburb, favorite_suburbs,
@@ -582,13 +591,14 @@ class AuthOtpStore:
                         vaccination_status, microchipped, recall_trained, leash_reliability,
                         emergency_contact_name, emergency_contact_phone, field_visibility, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET
                         display_name = excluded.display_name,
                         email = excluded.email,
                         phone = excluded.phone,
                         human_pronouns = excluded.human_pronouns,
                         human_role_label = excluded.human_role_label,
+                        service_provider_mode = excluded.service_provider_mode,
                         dog_name = excluded.dog_name,
                         dog_age_months = excluded.dog_age_months,
                         dog_breed_mix = excluded.dog_breed_mix,
@@ -628,6 +638,7 @@ class AuthOtpStore:
                         normalized_profile.phone,
                         normalized_profile.human_pronouns,
                         normalized_profile.human_role_label,
+                        1 if normalized_profile.service_provider_mode else 0,
                         normalized_profile.dog_name,
                         normalized_profile.dog_age_months,
                         normalized_profile.dog_breed_mix,
@@ -673,6 +684,51 @@ class AuthOtpStore:
                     )
                 conn.commit()
         return normalized_profile
+
+    def user_can_create_provider_listings(self, *, user_id: str) -> bool:
+        return self.get_or_create_user_profile(user_id=user_id).service_provider_mode
+
+    def set_service_provider_mode(self, *, user_id: str, enabled: bool) -> UserProfile:
+        current = self.get_or_create_user_profile(user_id=user_id)
+        return self.upsert_user_profile(
+            user_id=user_id,
+            display_name=current.display_name,
+            email=current.email,
+            phone=current.phone,
+            human_pronouns=current.human_pronouns,
+            human_role_label=current.human_role_label,
+            service_provider_mode=enabled,
+            dog_name=current.dog_name,
+            dog_age_months=current.dog_age_months,
+            dog_breed_mix=current.dog_breed_mix,
+            dog_sex_neuter=current.dog_sex_neuter,
+            dog_weight_class=current.dog_weight_class,
+            dog_photo_urls=current.dog_photo_urls,
+            secondary_dog_name=current.secondary_dog_name,
+            secondary_dog_age_months=current.secondary_dog_age_months,
+            secondary_dog_photo_url=current.secondary_dog_photo_url,
+            secondary_dog_gender=current.secondary_dog_gender,
+            secondary_dog_weight_kg=current.secondary_dog_weight_kg,
+            bio=current.bio,
+            suburb=current.suburb,
+            favorite_suburbs=current.favorite_suburbs,
+            play_energy_level=current.play_energy_level,
+            play_style=current.play_style,
+            social_confidence=current.social_confidence,
+            trigger_notes=current.trigger_notes,
+            ideal_match=current.ideal_match,
+            walk_preferences=current.walk_preferences,
+            training_style=current.training_style,
+            feeding_rules=current.feeding_rules,
+            consent_boundaries=current.consent_boundaries,
+            vaccination_status=current.vaccination_status,
+            microchipped=current.microchipped,
+            recall_trained=current.recall_trained,
+            leash_reliability=current.leash_reliability,
+            emergency_contact_name=current.emergency_contact_name,
+            emergency_contact_phone=current.emergency_contact_phone,
+            field_visibility=current.field_visibility,
+        )
 
     def issue_otp(
         self,

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,6 +47,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -68,7 +70,6 @@ import androidx.core.content.ContextCompat
 import com.petsocial.app.R
 import com.petsocial.app.BuildConfig
 import com.petsocial.app.data.ApiService
-import com.petsocial.app.data.MockApiService
 import com.petsocial.app.data.PetSocialRepository
 import com.petsocial.app.location.LocationResolver
 import com.petsocial.app.ui.screens.ChatScreen
@@ -85,6 +86,63 @@ private data class TabItem(
     val tab: AppTab,
     val label: String,
 )
+
+internal fun isOwnerProdSurface(
+    appSurface: String,
+    environment: String,
+): Boolean {
+    return appSurface.equals("owner", ignoreCase = true) &&
+        environment.equals("prod", ignoreCase = true)
+}
+
+internal fun resolveDefaultTab(
+    appSurface: String,
+    environment: String,
+): AppTab {
+    return if (
+        appSurface.equals("provider", ignoreCase = true) ||
+        appSurface.equals("owner", ignoreCase = true) ||
+        isOwnerProdSurface(appSurface, environment)
+    ) {
+        AppTab.Profile
+    } else {
+        AppTab.Services
+    }
+}
+
+internal fun resolveBottomTabs(
+    appSurface: String,
+    environment: String,
+): List<AppTab> {
+    return when {
+        appSurface.equals("provider", ignoreCase = true) ||
+            appSurface.equals("owner", ignoreCase = true) ||
+            isOwnerProdSurface(appSurface, environment) -> listOf(
+            AppTab.Profile,
+            AppTab.Messages,
+            AppTab.BarkAI,
+            AppTab.Community,
+            AppTab.Services,
+        )
+        else -> listOf(
+            AppTab.Services,
+            AppTab.Community,
+            AppTab.BarkAI,
+            AppTab.Messages,
+            AppTab.Profile,
+        )
+    }
+}
+
+private fun tabLabel(tab: AppTab, isProviderSurface: Boolean): String {
+    return when (tab) {
+        AppTab.Profile -> if (isProviderSurface) "Hub" else "Home"
+        AppTab.Messages -> if (isProviderSurface) "Inbox" else "Messages"
+        AppTab.BarkAI -> "BarkAI"
+        AppTab.Community -> "Community"
+        AppTab.Services -> "Listings"
+    }
+}
 
 private fun deepLinkInviteToken(deepLink: String?): String? {
     if (deepLink.isNullOrBlank()) return null
@@ -118,6 +176,7 @@ private const val CACHE_PREFS = "petsocial_cache"
 
 @Composable
 fun PetSocialApp(initialDeepLink: String? = null) {
+    DebugRecomposeCounter(tag = "PetSocialApp")
     val context = LocalContext.current
     val baseUrl = BuildConfig.API_BASE_URL
     val fallbackBaseUrl = remember(baseUrl) {
@@ -129,26 +188,27 @@ fun PetSocialApp(initialDeepLink: String? = null) {
     val phoneSizeClass = rememberPhoneSizeClass()
     val horizontalPadding = contentHorizontalPadding(phoneSizeClass)
     val api = remember {
-        if (BuildConfig.USE_MOCK_DATA) {
-            MockApiService.create()
-        } else {
-            ApiService.create(
-                baseUrl = baseUrl,
-                fallbackBaseUrl = fallbackBaseUrl,
-                authTokenProvider = {
-                    context.getSharedPreferences(CACHE_PREFS, android.content.Context.MODE_PRIVATE)
-                        .getString("auth_token", "")
-                },
-            )
-        }
+        ApiService.create(
+            baseUrl = baseUrl,
+            fallbackBaseUrl = fallbackBaseUrl,
+            authTokenProvider = {
+                context.getSharedPreferences(CACHE_PREFS, android.content.Context.MODE_PRIVATE)
+                    .getString("auth_token", "")
+            },
+        )
     }
     val repository = remember { PetSocialRepository(api, baseUrl, fallbackBaseUrl, BuildConfig.MAPS_API_KEY, context) }
     val vm: PetSocialViewModel = viewModel(factory = PetSocialViewModelFactory(repository))
-    val state by vm.uiState.collectAsStateWithLifecycle()
+    val shellState by vm.shellUiState.collectAsStateWithLifecycle()
+    val authState by vm.authDialogUiState.collectAsStateWithLifecycle()
+    val pendingInviteState by vm.pendingInviteUiState.collectAsStateWithLifecycle()
     var locationRetryKey by remember { mutableIntStateOf(0) }
     var showLocationPermissionPrimer by rememberSaveable { mutableStateOf(false) }
     val isProviderSurface = BuildConfig.APP_SURFACE.equals("provider", ignoreCase = true)
-    val defaultTab = if (isProviderSurface) AppTab.Profile else AppTab.Services
+    val defaultTab = resolveDefaultTab(
+        appSurface = BuildConfig.APP_SURFACE,
+        environment = BuildConfig.ENVIRONMENT,
+    )
 
     val snackbarHostState = remember { SnackbarHostState() }
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -169,7 +229,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
     }
 
     LaunchedEffect(Unit) {
-        vm.loadHomeData()
+        vm.loadHomeData(scope = HomeRefreshScope.ActiveTab)
         val notificationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(
                 context,
@@ -236,45 +296,34 @@ fun PetSocialApp(initialDeepLink: String? = null) {
         }
     }
 
-    LaunchedEffect(state.activeUserId) {
+    LaunchedEffect(shellState.activeUserId) {
         vm.syncPushToken()
     }
 
-    LaunchedEffect(state.toastMessage) {
-        val message = state.toastMessage ?: return@LaunchedEffect
+    LaunchedEffect(shellState.toastMessage) {
+        val message = shellState.toastMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(message)
         vm.consumeToast()
     }
 
-    val tabs = listOf(
-        TabItem(AppTab.Services, if (isProviderSurface) "Marketplace" else "Listings"),
-        TabItem(AppTab.Community, "Community"),
-        TabItem(AppTab.BarkAI, "BarkAI"),
-        TabItem(AppTab.Messages, if (isProviderSurface) "Inbox" else "Messages"),
-        TabItem(AppTab.Profile, if (isProviderSurface) "Ops" else "Home"),
-    )
-    val unreadNotificationCount = state.notifications.count { notification -> !notification.read }
-    val unreadCommunityNotificationCount = state.notifications.count { notification ->
-        !notification.read &&
-            notification.id !in state.acknowledgedCommunityNotificationIds && (
-            notification.category.startsWith("community") ||
-                notification.category.contains("group")
-            )
+    val tabs = resolveBottomTabs(
+        appSurface = BuildConfig.APP_SURFACE,
+        environment = BuildConfig.ENVIRONMENT,
+    ).map { tab ->
+        TabItem(
+            tab = tab,
+            label = tabLabel(tab = tab, isProviderSurface = isProviderSurface),
+        )
     }
-    val unreadMessageNotificationCount = state.notifications.count { notification ->
-        !notification.read &&
-            notification.id !in state.acknowledgedMessageNotificationIds &&
-            notification.category.contains("message")
-    }
-    val shouldHandleBack = state.selectedProviderDetails != null ||
-        state.selectedMessageThreadId != null ||
-        state.selectedTab != defaultTab
+    val shouldHandleBack = shellState.selectedProviderDetails != null ||
+        shellState.selectedMessageThreadId != null ||
+        shellState.selectedTab != defaultTab
 
     BackHandler(enabled = shouldHandleBack) {
         when {
-            state.selectedProviderDetails != null -> vm.closeProviderDetails()
-            state.selectedMessageThreadId != null -> vm.clearMessageThreadSelection()
-            state.selectedTab != defaultTab -> vm.switchTab(defaultTab)
+            shellState.selectedProviderDetails != null -> vm.closeProviderDetails()
+            shellState.selectedMessageThreadId != null -> vm.clearMessageThreadSelection()
+            shellState.selectedTab != defaultTab -> vm.switchTab(defaultTab)
         }
     }
 
@@ -294,11 +343,16 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                             AppTab.Profile -> Icons.Default.Person
                         }
                         NavigationBarItem(
-                            selected = state.selectedTab == item.tab,
+                            selected = shellState.selectedTab == item.tab,
                             onClick = {
-                                vm.switchTab(item.tab)
-                                if (item.tab != AppTab.BarkAI) {
-                                    vm.loadHomeData()
+                                if (item.tab == AppTab.BarkAI) {
+                                    vm.openBarkAiTab()
+                                } else {
+                                    vm.switchTab(item.tab)
+                                    vm.loadHomeData(
+                                        showLoadingIndicators = item.tab != AppTab.Services,
+                                        scope = HomeRefreshScope.ActiveTab,
+                                    )
                                 }
                             },
                             label = {
@@ -311,8 +365,8 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                             },
                             icon = {
                                 val badgeCount = when (item.tab) {
-                                    AppTab.Community -> unreadCommunityNotificationCount
-                                    AppTab.Messages -> unreadMessageNotificationCount
+                                    AppTab.Community -> shellState.unreadCommunityNotificationCount
+                                    AppTab.Messages -> shellState.unreadMessageNotificationCount
                                     else -> 0
                                 }
                                 if (badgeCount > 0) {
@@ -354,21 +408,18 @@ fun PetSocialApp(initialDeepLink: String? = null) {
         ) {
             HeroHeader(
                 compact = phoneSizeClass != PhoneSizeClass.Large,
-                rosterPet = state.headerRosterPet,
+                rosterPet = shellState.headerRosterPet,
                 modeSummary = buildModeSummary(BuildConfig.ENVIRONMENT),
             )
-            if (state.selectedTab == AppTab.Services) {
+            if (shellState.selectedTab == AppTab.Services) {
                 SearchScopeBar(
-                    selectedSuburb = state.selectedSuburb,
-                    selectedRangeKm = state.serviceMaxDistanceKm,
-                    currentLocationSuburb = state.currentLocationSuburb,
-                    isUsingCurrentLocation = state.selectedRangeCenter == "current",
-                    showRangeSelector = state.selectedTab != AppTab.Services && state.selectedTab != AppTab.Community,
+                    selectedSuburb = shellState.selectedSuburb,
+                    selectedRangeKm = shellState.serviceMaxDistanceKm,
+                    currentLocationSuburb = shellState.currentLocationSuburb,
+                    isUsingCurrentLocation = shellState.selectedRangeCenter == "current",
+                    showRangeSelector = shellState.selectedTab != AppTab.Services && shellState.selectedTab != AppTab.Community,
                     suburbLocked = BuildConfig.ENVIRONMENT.lowercase() == "staging",
-                    onManualSuburbApply = { suburb ->
-                        vm.updateSuburb(suburb)
-                        vm.loadHomeData(state.selectedCategory)
-                    },
+                    onManualSuburbApply = vm::applyManualSuburb,
                     onUseCurrentLocation = {
                         vm.setRangeCenterCurrent(enabled = true)
                         if (LocationResolver.hasLocationPermission(context)) {
@@ -386,27 +437,25 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         vm.setRangeCenterCurrent(enabled = true)
                         locationRetryKey += 1
                     },
-                    onRangeSelect = { range ->
-                        vm.updateServiceFilters(state.serviceMinRating, range)
-                    },
+                    onRangeSelect = vm::updateServiceRange,
                 )
             }
 
-            state.error?.let {
+            shellState.error?.let {
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
             }
-            if (state.hasPendingSync && state.isOfflineMode) {
+            if (shellState.hasPendingSync && shellState.isOfflineMode) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
                         onClick = vm::retrySync,
-                        enabled = !state.loading,
+                        enabled = !shellState.loading,
                     ) {
                         Text("Retry sync")
                     }
@@ -418,224 +467,31 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                     .weight(1f)
                     .fillMaxWidth(),
             ) {
-                when (state.selectedTab) {
-                    AppTab.Services -> ServicesScreen(
-                        providers = state.providers,
-                        nearbyPetBusinesses = state.nearbyPetBusinesses,
-                        groomerPetRosters = state.groomerPetRosters,
-                        recommendationSuburb = state.servicesRecommendationSuburb,
-                        recommendationSource = state.servicesRecommendationSource,
-                        selectedCategory = state.selectedCategory,
-                        viewMode = state.servicesViewMode,
-                        searchQuery = state.servicesSearchQuery,
-                        sortBy = state.servicesSortBy,
-                        loading = state.loading,
-                        selectedDetails = state.selectedProviderDetails,
-                        availableSlots = state.availableSlots,
-                        availabilityDate = state.availabilityDate,
-                        minRating = state.serviceMinRating,
-                        maxDistanceKm = state.serviceMaxDistanceKm,
-                        onChangeViewMode = vm::setServicesViewMode,
-                        onCategorySelect = vm::loadHomeData,
-                        onSearchQueryChange = vm::updateServicesSearchQuery,
-                        onSortByChange = vm::updateServicesSortBy,
-                        onFilterChange = vm::updateServiceFilters,
-                        onRequestQuote = vm::requestQuote,
-                        onBook = vm::requestBooking,
-                        onViewDetails = vm::loadProviderDetails,
-                        onLoadAvailability = vm::loadAvailability,
-                        onCloseDetails = vm::closeProviderDetails,
-                    )
-
-                    AppTab.BarkAI -> ChatScreen(
-                        loading = state.loading,
-                        chatResponse = state.chat,
-                        conversation = state.conversation,
-                        streamingAssistantText = state.streamingAssistantText,
-                        profileSuggestion = state.profileSuggestion,
-                        a2uiProfileCard = state.a2uiProfileCard,
-                        a2uiProviderCard = state.a2uiProviderCard,
-                        barkThreads = state.barkThreads,
-                        selectedBarkThreadId = state.selectedBarkThreadId,
-                        onboardingMode = state.onboardingActive,
-                        onboardingNeedsPhoto = state.onboardingActive &&
-                            state.onboardingStep >= 2 &&
-                            !state.onboardingPhotoCaptured,
-                        onSelectBarkThread = vm::selectBarkThread,
-                        onNewBarkThread = vm::startNewBarkThread,
-                        onSend = vm::sendChat,
-                        onOnboardingPhotoCaptured = { captured, photoUri ->
-                            vm.submitOnboardingPhotoCapture(photoCaptured = captured, dogPhotoUri = photoUri)
-                        },
-                        onCtaClick = vm::handleCta,
-                        onAcceptProfile = vm::acceptProfileCard,
-                        onSubmitProvider = vm::submitProviderListing,
-                    )
-
-                    AppTab.Community -> CommunityScreen(
-                        activeUserId = state.activeUserId,
-                        loading = state.loading,
-                        suburb = state.selectedSuburb,
-                        currentLocationSuburb = state.currentLocationSuburb,
-                        currentLatitude = state.currentLatitude,
-                        currentLongitude = state.currentLongitude,
-                        postsSortBy = state.postsSortBy,
-                        selectedGroupId = state.selectedCommunityGroupId,
-                        groups = state.groups,
-                        groupPetRosters = state.groupPetRosters,
-                        latestGroupInvites = state.latestGroupInvites,
-                        blockedUserIds = state.blockedUserIds,
-                        savedPostIds = state.savedCommunityPostIds,
-                        savedEventIds = state.savedCommunityEventIds,
-                        mutedKeywords = state.mutedCommunityKeywords,
-                        followedGroupIds = state.followedGroupIds,
-                        communityWeather = state.communityWeather,
-                        autoParkCheckInEnabled = state.autoParkCheckInEnabled,
-                        autoParkCheckInRequireCrowd = state.autoParkCheckInRequireCrowd,
-                        autoParkCheckInQuorumCount = state.autoParkCheckInQuorumCount,
-                        autoParkCheckInQuorumThreshold = state.autoParkCheckInQuorumThreshold,
-                        autoParkCheckInQuorumWindowMinutes = state.autoParkCheckInQuorumWindowMinutes,
-                        posts = state.posts,
-                        postCommentsByPostId = state.communityCommentsByPostId,
-                        loadingCommentPostIds = state.loadingCommentPostIds,
-                        isCommunityModerator = state.isCommunityModerator,
-                        events = state.communityEvents,
-                        messageThreads = state.messageThreads,
-                        onOpenGroup = vm::openCommunityGroup,
-                        onOpenMessages = { participantUserId ->
-                            val targetThread = participantUserId
-                                ?.let { userId ->
-                                    state.messageThreads.firstOrNull { thread -> thread.participantUserId == userId }
-                                }
-                            if (targetThread != null) {
-                                vm.selectMessageThread(targetThread.id)
-                            }
-                            vm.switchTab(AppTab.Messages)
-                        },
-                        onDismissSelectedGroup = vm::clearSelectedCommunityGroup,
-                        onJoinGroup = vm::joinGroup,
-                        onCreateGroupInvite = vm::createGroupInvite,
-                        onClearGroupInvite = vm::clearGroupInvite,
-                        onCreateGroup = { name, createSuburb -> vm.createCommunityGroup(name, createSuburb) },
-                        onPostsSortChange = vm::updatePostsSortBy,
-                        onCreateGroupPost = vm::createCommunityGroupPost,
-                        onCreateLostFound = vm::createLostFoundAlert,
-                        onCreateSharePoint = vm::createManualSharePoint,
-                        onCreateEvent = vm::createCommunityEvent,
-                        onUpdateEvent = vm::updateCommunityEvent,
-                        onRsvpEvent = vm::rsvpEvent,
-                        onApproveJoinRequest = vm::approveNextJoinRequest,
-                        onRejectJoinRequest = vm::rejectNextJoinRequest,
-                        onApproveEvent = vm::approveEvent,
-                        onLogCleanupCheckIn = vm::logGroupCleanupCheckIn,
-                        onResolveLostFound = vm::resolveLostFoundPost,
-                        onLoadPostComments = vm::loadPostComments,
-                        onCreatePostComment = vm::createPostComment,
-                        onModeratePostComment = { commentId, action ->
-                            vm.moderatePostComment(commentId = commentId, action = action)
-                        },
-                        onResolveInviteToken = vm::resolveInviteToken,
-                        onTrackQrScanOutcome = vm::trackQrScannerOutcome,
-                        onReportPost = vm::reportCommunityPost,
-                        onReportEvent = vm::reportCommunityEvent,
-                        onBlockUser = vm::blockCommunityUser,
-                        onDeletePost = vm::deleteCommunityPost,
-                        onToggleSavePost = vm::toggleSaveCommunityPost,
-                        onToggleSaveEvent = vm::toggleSaveCommunityEvent,
-                        onSetMutedKeywords = vm::setMutedCommunityKeywords,
-                        onToggleFollowGroup = vm::toggleFollowGroup,
-                        onRefreshWeather = vm::refreshCommunityWeather,
-                        onSetAutoParkCheckInEnabled = vm::setAutoParkCheckInEnabled,
-                        onSetAutoParkCheckInRequireCrowd = vm::setAutoParkCheckInRequireCrowd,
-                        onSimulateParkArrival = vm::simulateParkArrivalCheckIn,
-                    )
-
-                    AppTab.Messages -> MessagesScreen(
-                        activeUserId = state.activeUserId,
-                        threads = state.messageThreads,
-                        mutedThreadIds = state.mutedMessageThreadIds,
-                        pinnedThreadIds = state.pinnedMessageThreadIds,
-                        unreadNotificationCount = unreadNotificationCount,
-                        selectedThreadId = state.selectedMessageThreadId,
-                        messages = state.directMessages,
-                        onOpenNotifications = vm::openProfileNotifications,
-                        onSelectThread = vm::selectMessageThread,
-                        onBackToThreads = vm::clearMessageThreadSelection,
-                        onMarkThreadRead = vm::markMessageThreadRead,
-                        onToggleMuteThread = vm::toggleMuteMessageThread,
-                        onTogglePinThread = vm::togglePinMessageThread,
-                        onBlockParticipant = vm::blockCommunityUser,
-                        onSend = vm::sendDirectMessage,
-                    )
-
-                    AppTab.Profile -> ProfileScreen(
-                        profileInfo = state.profileInfo,
-                        activeUserId = state.activeUserId,
-                        friendProfiles = state.friendProfiles,
-                        joinedEvents = state.joinedEvents,
-                        ownerBookings = state.ownerBookings,
-                        providerListings = state.providerListings,
-                        providerBookings = state.providerBookings,
-                        providerInboxItems = state.providerInboxItems,
-                        loadingProviderInbox = state.loadingProviderInbox,
-                        sendingQuoteOfferItemIds = state.sendingQuoteOfferItemIds,
-                        isSubmittingProviderInboxAction = state.loading,
-                        calendarEvents = state.calendarEvents,
-                        notifications = state.notifications,
-                        activationFunnelMetrics = state.activationFunnelMetrics,
-                        notifyFollowedGroupAlerts = state.notifyFollowedGroupAlerts,
-                        notifySavedPostUpdates = state.notifySavedPostUpdates,
-                        notifySafetyAlerts = state.notifySafetyAlerts,
-                        showIdentityHeader = state.profileIdentityHeaderVisible,
-                        friendQrPayload = state.friendQrPayload,
-                        friendQrExpiresAt = state.friendQrExpiresAt,
-                        friendQrLoading = state.friendQrLoading,
-                        onRefreshFriendQrPayload = vm::refreshFriendQrPayload,
-                        onResolveFriendQrToken = vm::resolveFriendQrToken,
-                        onRemoveFriend = vm::removeFriend,
-                        onOpenFriendMessages = vm::openMessagesForUser,
-                        onOpenMessages = { participantUserId ->
-                            val targetThread = participantUserId
-                                ?.let { userId ->
-                                    state.messageThreads.firstOrNull { thread -> thread.participantUserId == userId }
-                                }
-                            if (targetThread != null) {
-                                vm.selectMessageThread(targetThread.id)
-                            }
-                            vm.switchTab(AppTab.Messages)
-                        },
-                        onSaveProfile = vm::saveProfileInfo,
-                        onMarkNotificationRead = vm::markNotificationRead,
-                        onMarkAllNotificationsRead = vm::markAllNotificationsRead,
-                        onClearLocalNotifications = vm::clearLocalNotifications,
-                        onOpenNotificationDeepLink = vm::openNotificationDeepLink,
-                        onUpdateNotificationPreferences = vm::setNotificationPreferences,
-                        onRefreshActivationDashboard = { vm.loadHomeData(state.selectedCategory) },
-                        onRefreshProviderInbox = vm::refreshProviderInbox,
-                        onSendQuoteOffer = vm::sendQuoteOfferFromInbox,
-                        onConfirmProviderBooking = vm::confirmProviderBooking,
-                        onDeclineProviderBooking = vm::cancelProviderBooking,
-                        onRescheduleProviderBooking = vm::rescheduleProviderBooking,
-                    )
+                when (shellState.selectedTab) {
+                    AppTab.Services -> ServicesTabRoute(vm = vm)
+                    AppTab.BarkAI -> BarkAiTabRoute(vm = vm)
+                    AppTab.Community -> CommunityTabRoute(vm = vm)
+                    AppTab.Messages -> MessagesTabRoute(vm = vm)
+                    AppTab.Profile -> ProfileTabRoute(vm = vm)
                 }
             }
         }
     }
 
-    if (state.authRequired) {
-        var inviteId by rememberSaveable(state.authInviteId) {
+    if (authState.isRequired) {
+        var inviteId by rememberSaveable(authState.inviteId) {
             mutableStateOf(
-                state.authInviteId.ifBlank { "" },
+                authState.inviteId.ifBlank { "" },
             )
         }
-        var email by rememberSaveable(state.authEmail) {
+        var email by rememberSaveable(authState.email) {
             mutableStateOf(
-                state.authEmail.ifBlank { "" },
+                authState.email.ifBlank { "" },
             )
         }
         var otpCode by rememberSaveable { mutableStateOf("") }
-        val canRequestOtp = inviteId.trim().isNotBlank() && email.trim().contains("@") && !state.authInFlight
-        val canVerifyOtp = canRequestOtp && otpCode.trim().length >= 4 && state.authOtpRequested && !state.authInFlight
+        val canRequestOtp = inviteId.trim().isNotBlank() && email.trim().contains("@") && !authState.inFlight
+        val canVerifyOtp = canRequestOtp && otpCode.trim().length >= 4 && authState.otpRequested && !authState.inFlight
         AlertDialog(
             onDismissRequest = {},
             title = { Text("Sign in to BarkWise") },
@@ -647,24 +503,24 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                         onValueChange = { inviteId = it },
                         label = { Text("Invite ID") },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !state.authInFlight,
+                        enabled = !authState.inFlight,
                     )
                     OutlinedTextField(
                         value = email,
                         onValueChange = { email = it },
                         label = { Text("Email") },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !state.authInFlight,
+                        enabled = !authState.inFlight,
                     )
-                    if (state.authOtpRequested) {
+                    if (authState.otpRequested) {
                         OutlinedTextField(
                             value = otpCode,
                             onValueChange = { otpCode = it },
                             label = { Text("OTP code") },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = !state.authInFlight,
+                            enabled = !authState.inFlight,
                         )
-                        state.authOtpExpiresAt?.let { expiresAt ->
+                        authState.otpExpiresAt?.let { expiresAt ->
                             Text(
                                 text = "OTP expires at $expiresAt",
                                 style = MaterialTheme.typography.labelSmall,
@@ -672,7 +528,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                             )
                         }
                     }
-                    state.error?.takeIf { it.isNotBlank() }?.let { authError ->
+                    authState.error?.takeIf { it.isNotBlank() }?.let { authError ->
                         Text(
                             text = authError,
                             style = MaterialTheme.typography.bodySmall,
@@ -682,12 +538,12 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                 }
             },
             confirmButton = {
-                if (state.authOtpRequested) {
+                if (authState.otpRequested) {
                     Button(
                         enabled = canVerifyOtp,
                         onClick = { vm.verifyAuthOtp(otpCode = otpCode) },
                     ) {
-                        Text(if (state.authInFlight) "Verifying..." else "Verify OTP")
+                        Text(if (authState.inFlight) "Verifying..." else "Verify OTP")
                     }
                 } else {
                     Button(
@@ -699,14 +555,14 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                             )
                         },
                     ) {
-                        Text(if (state.authInFlight) "Requesting..." else "Request OTP")
+                        Text(if (authState.inFlight) "Requesting..." else "Request OTP")
                     }
                 }
             },
             dismissButton = {
-                if (state.authOtpRequested) {
+                if (authState.otpRequested) {
                     TextButton(
-                        enabled = !state.authInFlight,
+                        enabled = !authState.inFlight,
                         onClick = {
                             otpCode = ""
                             vm.resetAuthOtpRequest(
@@ -719,7 +575,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
                     }
                 } else if (BuildConfig.ALLOW_DEMO_LOGIN) {
                     TextButton(
-                        enabled = !state.authInFlight,
+                        enabled = !authState.inFlight,
                         onClick = { vm.switchAccount("user_2") },
                     ) {
                         Text("Use demo account")
@@ -729,7 +585,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
         )
     }
 
-    if (!state.authRequired) state.pendingInvite?.let { invite ->
+    if (!authState.isRequired) pendingInviteState.invite?.let { invite ->
         var ownerName by rememberSaveable(invite.token) { mutableStateOf("") }
         var dogName by rememberSaveable(invite.token) { mutableStateOf("") }
         var sharePhoto by rememberSaveable(invite.token) { mutableStateOf(true) }
@@ -785,7 +641,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
             },
             confirmButton = {
                 Button(
-                    enabled = ownerName.isNotBlank() && dogName.isNotBlank() && !state.loading,
+                    enabled = ownerName.isNotBlank() && dogName.isNotBlank() && !pendingInviteState.loading,
                     onClick = {
                         vm.completeInviteOnboarding(
                             ownerName = ownerName,
@@ -801,6 +657,240 @@ fun PetSocialApp(initialDeepLink: String? = null) {
             },
         )
     }
+}
+
+@Composable
+private fun ServicesTabRoute(vm: PetSocialViewModel) {
+    DebugRecomposeCounter(tag = "ServicesTabRoute")
+    val state by vm.servicesUiState.collectAsStateWithLifecycle()
+    ServicesScreen(
+        providers = state.providers,
+        nearbyPetBusinesses = state.nearbyPetBusinesses,
+        groomerPetRosters = state.groomerPetRosters,
+        recommendationSuburb = state.recommendationSuburb,
+        recommendationSource = state.recommendationSource,
+        selectedCategory = state.selectedCategory,
+        viewMode = state.viewMode,
+        searchQuery = state.searchQuery,
+        sortBy = state.sortBy,
+        loading = state.loading,
+        selectedDetails = state.selectedDetails,
+        availableSlots = state.availableSlots,
+        availabilityDate = state.availabilityDate,
+        minRating = state.minRating,
+        maxDistanceKm = state.maxDistanceKm,
+        onChangeViewMode = vm::setServicesViewMode,
+        onCategorySelect = vm::loadHomeData,
+        onSearchQueryChange = vm::updateServicesSearchQuery,
+        onSortByChange = vm::updateServicesSortBy,
+        onFilterChange = vm::updateServiceFilters,
+        onRequestQuote = vm::requestQuote,
+        onBook = vm::requestBooking,
+        onViewDetails = vm::loadProviderDetails,
+        onLoadAvailability = vm::loadAvailability,
+        onCloseDetails = vm::closeProviderDetails,
+    )
+}
+
+@Composable
+private fun BarkAiTabRoute(vm: PetSocialViewModel) {
+    DebugRecomposeCounter(tag = "BarkAiTabRoute")
+    val state by vm.barkAiUiState.collectAsStateWithLifecycle()
+    ChatScreen(
+        loading = state.loading,
+        chatResponse = state.chatResponse,
+        conversation = state.conversation,
+        streamingAssistantText = state.streamingAssistantText,
+        profileSuggestion = state.profileSuggestion,
+        a2uiProfileCard = state.a2uiProfileCard,
+        a2uiProviderCard = state.a2uiProviderCard,
+        barkThreads = state.barkThreads,
+        selectedBarkThreadId = state.selectedBarkThreadId,
+        onboardingMode = state.onboardingMode,
+        onboardingNeedsPhoto = state.onboardingNeedsPhoto,
+        onSelectBarkThread = vm::selectBarkThread,
+        onNewBarkThread = vm::startNewBarkThread,
+        onSend = vm::sendChat,
+        onOnboardingPhotoCaptured = { captured, photoUri ->
+            vm.submitOnboardingPhotoCapture(photoCaptured = captured, dogPhotoUri = photoUri)
+        },
+        onCtaClick = vm::handleCta,
+        onAcceptProfile = vm::acceptProfileCard,
+        onSubmitProvider = vm::submitProviderListing,
+    )
+}
+
+@Composable
+private fun CommunityTabRoute(vm: PetSocialViewModel) {
+    DebugRecomposeCounter(tag = "CommunityTabRoute")
+    val state by vm.communityUiState.collectAsStateWithLifecycle()
+    CommunityScreen(
+        activeUserId = state.activeUserId,
+        loading = state.loading,
+        suburb = state.suburb,
+        currentLocationSuburb = state.currentLocationSuburb,
+        currentLatitude = state.currentLatitude,
+        currentLongitude = state.currentLongitude,
+        postsSortBy = state.postsSortBy,
+        selectedGroupId = state.selectedGroupId,
+        groups = state.groups,
+        groupPetRosters = state.groupPetRosters,
+        latestGroupInvites = state.latestGroupInvites,
+        blockedUserIds = state.blockedUserIds,
+        savedPostIds = state.savedPostIds,
+        savedEventIds = state.savedEventIds,
+        mutedKeywords = state.mutedKeywords,
+        followedGroupIds = state.followedGroupIds,
+        communityWeather = state.communityWeather,
+        autoParkCheckInEnabled = state.autoParkCheckInEnabled,
+        autoParkCheckInRequireCrowd = state.autoParkCheckInRequireCrowd,
+        autoParkCheckInQuorumCount = state.autoParkCheckInQuorumCount,
+        autoParkCheckInQuorumThreshold = state.autoParkCheckInQuorumThreshold,
+        autoParkCheckInQuorumWindowMinutes = state.autoParkCheckInQuorumWindowMinutes,
+        posts = state.posts,
+        postCommentsByPostId = state.postCommentsByPostId,
+        loadingCommentPostIds = state.loadingCommentPostIds,
+        isCommunityModerator = state.isCommunityModerator,
+        events = state.events,
+        messageThreads = state.messageThreads,
+        onOpenGroup = vm::openCommunityGroup,
+        onOpenMessages = { participantUserId ->
+            vm.openMessages(
+                MessageTarget(
+                    userId = participantUserId,
+                    source = "community",
+                ),
+            )
+        },
+        onDismissSelectedGroup = vm::clearSelectedCommunityGroup,
+        onJoinGroup = vm::joinGroup,
+        onCreateGroupInvite = vm::createGroupInvite,
+        onClearGroupInvite = vm::clearGroupInvite,
+        onCreateGroup = { name, createSuburb -> vm.createCommunityGroup(name, createSuburb) },
+        onPostsSortChange = vm::updatePostsSortBy,
+        onCreateGroupPost = vm::createCommunityGroupPost,
+        onCreateLostFound = vm::createLostFoundAlert,
+        onCreateSharePoint = vm::createManualSharePoint,
+        onCreateEvent = vm::createCommunityEvent,
+        onUpdateEvent = vm::updateCommunityEvent,
+        onRsvpEvent = vm::rsvpEvent,
+        onApproveJoinRequest = vm::approveNextJoinRequest,
+        onRejectJoinRequest = vm::rejectNextJoinRequest,
+        onApproveEvent = vm::approveEvent,
+        onLogCleanupCheckIn = vm::logGroupCleanupCheckIn,
+        onResolveLostFound = vm::resolveLostFoundPost,
+        onLoadPostComments = vm::loadPostComments,
+        onCreatePostComment = vm::createPostComment,
+        onModeratePostComment = { commentId, action ->
+            vm.moderatePostComment(commentId = commentId, action = action)
+        },
+        onResolveInviteToken = vm::resolveInviteToken,
+        onTrackQrScanOutcome = vm::trackQrScannerOutcome,
+        onReportPost = vm::reportCommunityPost,
+        onReportEvent = vm::reportCommunityEvent,
+        onBlockUser = vm::blockCommunityUser,
+        onDeletePost = vm::deleteCommunityPost,
+        onToggleSavePost = vm::toggleSaveCommunityPost,
+        onToggleSaveEvent = vm::toggleSaveCommunityEvent,
+        onSetMutedKeywords = vm::setMutedCommunityKeywords,
+        onToggleFollowGroup = vm::toggleFollowGroup,
+        onRefreshWeather = vm::refreshCommunityWeather,
+        onSetAutoParkCheckInEnabled = vm::setAutoParkCheckInEnabled,
+        onSetAutoParkCheckInRequireCrowd = vm::setAutoParkCheckInRequireCrowd,
+        onSimulateParkArrival = vm::simulateParkArrivalCheckIn,
+    )
+}
+
+@Composable
+private fun MessagesTabRoute(vm: PetSocialViewModel) {
+    DebugRecomposeCounter(tag = "MessagesTabRoute")
+    val state by vm.messagesUiState.collectAsStateWithLifecycle()
+    MessagesScreen(
+        activeUserId = state.activeUserId,
+        threads = state.threads,
+        mutedThreadIds = state.mutedThreadIds,
+        pinnedThreadIds = state.pinnedThreadIds,
+        unreadNotificationCount = state.unreadNotificationCount,
+        selectedThreadId = state.selectedThreadId,
+        messages = state.messages,
+        onOpenNotifications = vm::openProfileNotifications,
+        onSelectThread = vm::selectMessageThread,
+        onBackToThreads = vm::clearMessageThreadSelection,
+        onMarkThreadRead = vm::markMessageThreadRead,
+        onToggleMuteThread = vm::toggleMuteMessageThread,
+        onTogglePinThread = vm::togglePinMessageThread,
+        onBlockParticipant = vm::blockCommunityUser,
+        onSend = vm::sendDirectMessage,
+    )
+}
+
+@Composable
+private fun ProfileTabRoute(vm: PetSocialViewModel) {
+    DebugRecomposeCounter(tag = "ProfileTabRoute")
+    val state by vm.profileUiState.collectAsStateWithLifecycle()
+    ProfileScreen(
+        profileInfo = state.profileInfo,
+        hasProviderListings = state.hasProviderListings,
+        canLoadProviderInbox = state.canLoadProviderInbox,
+        activeUserId = state.activeUserId,
+        friendProfiles = state.friendProfiles,
+        joinedEvents = state.joinedEvents,
+        ownerBookings = state.ownerBookings,
+        providerListings = state.providerListings,
+        providerBookings = state.providerBookings,
+        providerInboxItems = state.providerInboxItems,
+        loadingProviderInbox = state.loadingProviderInbox,
+        sendingQuoteOfferItemIds = state.sendingQuoteOfferItemIds,
+        isSubmittingProviderInboxAction = state.isSubmittingProviderInboxAction,
+        calendarEvents = state.calendarEvents,
+        notifications = state.notifications,
+        activationFunnelMetrics = state.activationFunnelMetrics,
+        notifyFollowedGroupAlerts = state.notifyFollowedGroupAlerts,
+        notifySavedPostUpdates = state.notifySavedPostUpdates,
+        notifySafetyAlerts = state.notifySafetyAlerts,
+        showIdentityHeader = state.showIdentityHeader,
+        friendQrPayload = state.friendQrPayload,
+        friendQrExpiresAt = state.friendQrExpiresAt,
+        friendQrLoading = state.friendQrLoading,
+        onRefreshFriendQrPayload = vm::refreshFriendQrPayload,
+        onResolveFriendQrToken = vm::resolveFriendQrToken,
+        onRemoveFriend = vm::removeFriend,
+        onOpenFriendMessages = { participantUserId ->
+            vm.openMessages(
+                MessageTarget(
+                    userId = participantUserId,
+                    source = "profile_friend",
+                ),
+            )
+        },
+        onOpenMessages = { participantUserId, threadId ->
+            vm.openMessages(
+                MessageTarget(
+                    userId = participantUserId,
+                    threadId = threadId,
+                    source = "profile",
+                ),
+            )
+        },
+        onSaveProfile = vm::saveProfileInfo,
+        onMarkNotificationRead = vm::markNotificationRead,
+        onMarkAllNotificationsRead = vm::markAllNotificationsRead,
+        onClearLocalNotifications = vm::clearLocalNotifications,
+        onOpenNotificationDeepLink = vm::openNotificationDeepLink,
+        onUpdateNotificationPreferences = vm::setNotificationPreferences,
+        onResetDeviceSignIn = vm::resetCurrentDeviceSignIn,
+        onRefreshActivationDashboard = vm::reloadHomeData,
+        onRefreshProviderInbox = vm::refreshProviderInbox,
+        onSendQuoteOffer = vm::sendQuoteOfferFromInbox,
+        onConfirmProviderBooking = vm::confirmProviderBooking,
+        onDeclineProviderBooking = vm::cancelProviderBooking,
+        onRescheduleProviderBooking = vm::rescheduleProviderBooking,
+        onCreateProviderListing = vm::createProviderListing,
+        onEditProviderListing = vm::editProviderListing,
+        onCancelProviderListing = vm::cancelProviderListing,
+        onRestoreProviderListing = vm::restoreProviderListing,
+        onCreateProviderBlackout = vm::createProviderBlackout,
+    )
 }
 
 @Composable
@@ -873,6 +963,16 @@ private fun HeroHeader(
                 HeaderRosterChip(pet = pet)
             }
         }
+    }
+}
+
+@Composable
+private fun DebugRecomposeCounter(tag: String) {
+    if (!BuildConfig.DEBUG) return
+    var recomposeCount by remember(tag) { mutableIntStateOf(0) }
+    SideEffect {
+        recomposeCount += 1
+        Log.d("BarkWiseCompose", "$tag recompositions=$recomposeCount")
     }
 }
 

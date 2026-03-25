@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,9 +27,16 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -75,6 +84,7 @@ fun ChatScreen(
 ) {
     var input by rememberSaveable { mutableStateOf("") }
     var inputFocused by rememberSaveable { mutableStateOf(false) }
+    var showThreadMenu by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     var launchCameraAfterPermission by rememberSaveable { mutableStateOf(false) }
     val conversationListState = rememberLazyListState()
@@ -111,6 +121,10 @@ fun ChatScreen(
         (if (hasProfileCard) 1 else 0) +
         (if (hasQuickActions) 1 else 0) +
         (if (conversation.isEmpty() && !loading) 1 else 0)
+    val composerEnabled = resolveBarkAiComposerEnabled(
+        loading = loading,
+        onboardingMode = onboardingMode,
+    )
 
     LaunchedEffect(
         listCount,
@@ -134,26 +148,54 @@ fun ChatScreen(
     ) {
         if (!onboardingMode) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                AssistChip(
-                    onClick = onNewBarkThread,
-                    label = { Text("New Thread", style = MaterialTheme.typography.labelMedium) },
-                )
-                barkThreads.forEach { thread ->
-                    AssistChip(
-                        onClick = { onSelectBarkThread(thread.id) },
-                        label = {
-                            Text(
-                                if (thread.id == selectedBarkThreadId) "• ${thread.title}" else thread.title,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                Box(modifier = Modifier.weight(1f)) {
+                    Button(
+                        onClick = { showThreadMenu = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 320.dp),
+                    ) {
+                        Text(
+                            barkThreads.firstOrNull { it.id == selectedBarkThreadId }?.title ?: "Select thread",
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = "Show older threads",
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showThreadMenu,
+                        onDismissRequest = { showThreadMenu = false },
+                    ) {
+                        barkThreads.forEach { thread ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (thread.id == selectedBarkThreadId) "Current: ${thread.title}" else thread.title,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                onClick = {
+                                    showThreadMenu = false
+                                    onSelectBarkThread(thread.id)
+                                },
                             )
-                        },
+                        }
+                    }
+                }
+                FilledIconButton(onClick = onNewBarkThread) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Start new BarkAI thread",
                     )
                 }
             }
@@ -284,7 +326,7 @@ fun ChatScreen(
                 )
                 if (onboardingMode && onboardingNeedsPhoto) {
                     Button(
-                        enabled = !loading,
+                        enabled = composerEnabled,
                         onClick = {
                             val permissionGranted = ContextCompat.checkSelfPermission(
                                 context,
@@ -304,7 +346,7 @@ fun ChatScreen(
                     }
                 }
                 Button(
-                    enabled = !loading,
+                    enabled = composerEnabled,
                     onClick = {
                         onSend(input)
                         input = ""
@@ -317,6 +359,11 @@ fun ChatScreen(
         }
     }
 }
+
+internal fun resolveBarkAiComposerEnabled(
+    loading: Boolean,
+    onboardingMode: Boolean,
+): Boolean = onboardingMode || !loading
 
 @Composable
 private fun MessageBubble(turn: ChatTurn) {

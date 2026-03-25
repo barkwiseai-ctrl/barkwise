@@ -33,6 +33,7 @@ from app.models import (
     VetGroomerVerificationResult,
     VetSpotlightActivationResult,
 )
+from app.services.mvp_bootstrap import mvp_bootstrap_enabled, seeded_providers, seeded_reviews
 
 
 BOOKING_ACTIVE_STATUSES = {
@@ -158,12 +159,62 @@ class ServiceStore:
         configured_vets = {value.strip() for value in os.getenv("VET_USER_IDS", "").split(",") if value.strip()}
         self._vet_user_ids: Set[str] = configured_vets or set(DEFAULT_VET_USERS)
         self._init_db()
-        self._remove_seeded_content()
+        if mvp_bootstrap_enabled():
+            self._seed_if_needed()
+        else:
+            self._remove_seeded_content()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @staticmethod
+    def _direct_message_thread_id(user_a: str, user_b: str) -> str:
+        first, second = sorted([user_a.strip(), user_b.strip()])
+        return f"dm_{first}_{second}"
+
+    def _provider_owner_user_id_with_conn(self, conn: sqlite3.Connection, provider_id: str) -> str:
+        owner = conn.execute(
+            "SELECT user_id FROM provider_owners WHERE provider_id = ? ORDER BY user_id ASC LIMIT 1",
+            (provider_id,),
+        ).fetchone()
+        return str(owner["user_id"]) if owner else ""
+
+    def _booking_from_row(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+        viewer_user_id: Optional[str] = None,
+    ) -> Booking:
+        owner_user_id = str(row["owner_user_id"])
+        provider_owner_user_id = self._provider_owner_user_id_with_conn(conn, str(row["provider_id"]))
+        counterparty_user_id = provider_owner_user_id
+        if viewer_user_id:
+            normalized_viewer = viewer_user_id.strip()
+            if normalized_viewer == provider_owner_user_id:
+                counterparty_user_id = owner_user_id
+            elif normalized_viewer == owner_user_id:
+                counterparty_user_id = provider_owner_user_id
+        thread_id = (
+            self._direct_message_thread_id(owner_user_id, provider_owner_user_id)
+            if provider_owner_user_id
+            else None
+        )
+        return Booking(
+            id=row["id"],
+            owner_user_id=owner_user_id,
+            provider_id=row["provider_id"],
+            provider_owner_user_id=provider_owner_user_id or None,
+            counterparty_user_id=counterparty_user_id or None,
+            thread_id=thread_id,
+            pet_name=row["pet_name"],
+            date=row["booking_date"],
+            time_slot=row["time_slot"],
+            note=row["note"],
+            status=row["status"],
+        )
 
     def _init_db(self) -> None:
         with self._lock:
@@ -412,8 +463,90 @@ class ServiceStore:
                 conn.commit()
 
     def _seed_if_needed(self) -> None:
-        # Production and shared backends should never auto-create fake service data.
-        return
+        seeded_provider_rows = seeded_providers()
+        seeded_review_rows = seeded_reviews()
+        review_ids_by_provider: Dict[str, List[str]] = {}
+        for review in seeded_review_rows:
+            review_ids_by_provider.setdefault(review.provider_id, []).append(review.id)
+
+        with self._lock:
+            with self._connect() as conn:
+                for provider in seeded_provider_rows:
+                    conn.execute(
+                        """
+                        INSERT INTO providers (
+                            id, name, category, suburb, rating, review_count, price_from,
+                            description, full_description, image_urls_json, latitude, longitude, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            name = excluded.name,
+                            category = excluded.category,
+                            suburb = excluded.suburb,
+                            rating = excluded.rating,
+                            review_count = excluded.review_count,
+                            price_from = excluded.price_from,
+                            description = excluded.description,
+                            full_description = excluded.full_description,
+                            image_urls_json = excluded.image_urls_json,
+                            latitude = excluded.latitude,
+                            longitude = excluded.longitude,
+                            status = excluded.status
+                        """,
+                        (
+                            provider.id,
+                            provider.name,
+                            provider.category,
+                            provider.suburb,
+                            provider.rating,
+                            provider.review_count,
+                            provider.price_from,
+                            provider.description,
+                            provider.full_description,
+                            json.dumps(list(provider.image_urls)),
+                            provider.latitude,
+                            provider.longitude,
+                            provider.status,
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO provider_owners (provider_id, user_id)
+                        VALUES (?, ?)
+                        ON CONFLICT(provider_id) DO UPDATE SET user_id = excluded.user_id
+                        """,
+                        (provider.id, provider.owner_user_id),
+                    )
+
+                for review in seeded_review_rows:
+                    conn.execute(
+                        """
+                        INSERT INTO reviews (id, provider_id, author, rating, comment)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            provider_id = excluded.provider_id,
+                            author = excluded.author,
+                            rating = excluded.rating,
+                            comment = excluded.comment
+                        """,
+                        (
+                            review.id,
+                            review.provider_id,
+                            review.author,
+                            review.rating,
+                            review.comment,
+                        ),
+                    )
+
+                for provider in seeded_provider_rows:
+                    review_count = len(review_ids_by_provider.get(provider.id, [])) or provider.review_count
+                    conn.execute(
+                        "UPDATE providers SET review_count = ? WHERE id = ?",
+                        (review_count, provider.id),
+                    )
+                conn.commit()
+
+        for provider in seeded_provider_rows:
+            self.ensure_availability(provider_id=provider.id, start_date=date.today(), days=21)
 
     def _row_to_provider(
         self,
@@ -767,7 +900,7 @@ class ServiceStore:
         user_lng: Optional[float] = None,
         q: Optional[str] = None,
         sort_by: str = "relevance",
-        limit: int = 200,
+        limit: int = 1000,
     ) -> List[ServiceProvider]:
         sort_key = (sort_by or "relevance").strip().lower()
         allowed_sorts = {"relevance", "distance", "rating", "price_low", "price_high"}
@@ -899,11 +1032,6 @@ class ServiceStore:
 
         cleaned_suburb = suburb.strip() if suburb and suburb.strip() else None
         suburb_source = "explicit_suburb" if cleaned_suburb else "none"
-        if not cleaned_suburb:
-            inferred_suburb, inferred_source = self._infer_user_focus_suburb(user_id=user_id)
-            cleaned_suburb = inferred_suburb
-            suburb_source = inferred_source
-
         providers = self.list_providers(
             category=category,
             suburb=cleaned_suburb,
@@ -1052,8 +1180,8 @@ class ServiceStore:
                       AND p.category = ?
                       AND p.suburb = ?
                       AND po.user_id != ?
-                    ORDER BY p.rating DESC, p.review_count DESC, p.rowid DESC
-                    LIMIT 20
+                    ORDER BY p.rowid DESC, p.rating DESC, p.review_count DESC
+                    LIMIT 50
                     """,
                     (category, cleaned_suburb, user_id),
                 ).fetchall()
@@ -1066,8 +1194,8 @@ class ServiceStore:
                         WHERE p.status = 'active'
                           AND p.category = ?
                           AND po.user_id != ?
-                        ORDER BY p.rating DESC, p.review_count DESC, p.rowid DESC
-                        LIMIT 20
+                        ORDER BY p.rowid DESC, p.rating DESC, p.review_count DESC
+                        LIMIT 50
                         """,
                         (category, user_id),
                     ).fetchall()
@@ -2036,16 +2164,7 @@ class ServiceStore:
                         f"Time slot unavailable ({reason}).{self._format_alternative_slots(alternatives)}"
                     )
 
-                booking = Booking(
-                    id=f"b_{uuid4().hex[:8]}",
-                    owner_user_id=request.user_id,
-                    provider_id=request.provider_id,
-                    pet_name=request.pet_name,
-                    date=request.date,
-                    time_slot=request.time_slot,
-                    note=request.note,
-                    status="requested",
-                )
+                booking_id = f"b_{uuid4().hex[:8]}"
 
                 conn.execute(
                     """
@@ -2053,14 +2172,14 @@ class ServiceStore:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        booking.id,
-                        booking.owner_user_id,
-                        booking.provider_id,
-                        booking.pet_name,
-                        booking.date,
-                        booking.time_slot,
-                        booking.note,
-                        booking.status,
+                        booking_id,
+                        request.user_id,
+                        request.provider_id,
+                        request.pet_name,
+                        request.date,
+                        request.time_slot,
+                        request.note,
+                        "requested",
                         datetime.utcnow().isoformat(),
                     ),
                 )
@@ -2071,17 +2190,19 @@ class ServiceStore:
                     """,
                     (
                         f"bsh_{uuid4().hex[:10]}",
-                        booking.id,
+                        booking_id,
                         request.user_id,
                         "none",
-                        booking.status,
+                        "requested",
                         "booking requested",
                         datetime.utcnow().isoformat(),
                     ),
                 )
                 conn.commit()
-
-        return booking
+                inserted = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+                if not inserted:
+                    raise ServiceStoreNotFoundError("Booking not found after creation")
+                return self._booking_from_row(conn=conn, row=inserted, viewer_user_id=request.user_id)
 
     def list_bookings(self, user_id: Optional[str] = None, role: Optional[str] = None) -> List[Booking]:
         allowed_roles = {None, "all", "owner", "provider"}
@@ -2111,19 +2232,12 @@ class ServiceStore:
                     query,
                     tuple(params),
                 ).fetchall()
-        return [
-            Booking(
-                id=row["id"],
-                owner_user_id=row["owner_user_id"],
-                provider_id=row["provider_id"],
-                pet_name=row["pet_name"],
-                date=row["booking_date"],
-                time_slot=row["time_slot"],
-                note=row["note"],
-                status=row["status"],
-            )
-            for row in rows
-        ]
+        with self._lock:
+            with self._connect() as conn:
+                return [
+                    self._booking_from_row(conn=conn, row=row, viewer_user_id=user_id)
+                    for row in rows
+                ]
 
     def list_booking_status_history(
         self,
@@ -2342,16 +2456,9 @@ class ServiceStore:
                 conn.commit()
 
                 updated = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
-                return Booking(
-                    id=updated["id"],
-                    owner_user_id=updated["owner_user_id"],
-                    provider_id=updated["provider_id"],
-                    pet_name=updated["pet_name"],
-                    date=updated["booking_date"],
-                    time_slot=updated["time_slot"],
-                    note=updated["note"],
-                    status=updated["status"],
-                )
+                if not updated:
+                    raise ServiceStoreNotFoundError("Booking not found after update")
+                return self._booking_from_row(conn=conn, row=updated, viewer_user_id=update.actor_user_id)
 
     def create_provider_blackout(self, provider_id: str, request: ProviderBlackoutRequest) -> ProviderBlackout:
         self._parse_slot_datetime(request.date, request.time_slot)

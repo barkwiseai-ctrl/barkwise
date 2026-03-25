@@ -1,19 +1,19 @@
 package com.petsocial.app.ui.screens
 
-import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.petsocial.app.testing.ComposeTestActivity
 import com.petsocial.app.data.ServiceProvider
 import org.junit.Rule
 import org.junit.Test
@@ -23,7 +23,7 @@ import org.junit.runner.RunWith
 class ServicesScreenRegressionTest {
 
     @get:Rule
-    val composeRule = createAndroidComposeRule<ComponentActivity>()
+    val composeRule = createAndroidComposeRule<ComposeTestActivity>()
 
     @Test
     fun servicesList_mapToggle_keepsListScrollable() {
@@ -69,7 +69,9 @@ class ServicesScreenRegressionTest {
         composeRule.onNodeWithTag("services_view_mode_list_chip").performClick()
         composeRule.onAllNodesWithTag("services_map_panel").assertCountEquals(0)
 
-        composeRule.onNodeWithText("Provider 24").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("services_results_list")
+            .performScrollToNode(hasText("Provider 24"))
+        composeRule.onNodeWithTag("services_results_list").assertIsDisplayed()
     }
 }
 

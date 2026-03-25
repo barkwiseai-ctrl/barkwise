@@ -1,0 +1,51 @@
+name: android-compose-smoke
+
+on:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android-compose-smoke.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - ".github/workflows/android-compose-smoke.yml"
+  workflow_dispatch:
+
+jobs:
+  managed-compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses >/dev/null
+
+      - name: Run staging unit tests
+        run: ./gradlew :app:testStagingDebugUnitTest
+
+      - name: Run managed Compose smoke tests
+        run: ./scripts/run_managed_compose_smoke.sh
+
+      - name: Upload Android test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-compose-smoke-reports
+          path: |
+            android/app/build/reports/androidTests/
+            android/app/build/outputs/androidTest-results/
+            android/app/build/reports/tests/

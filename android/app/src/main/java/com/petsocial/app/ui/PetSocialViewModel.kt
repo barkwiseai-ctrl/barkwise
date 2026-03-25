@@ -1,5 +1,7 @@
 package com.petsocial.app.ui
 
+import android.os.Trace
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -38,12 +40,18 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeParseException
 import kotlin.random.Random
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -65,6 +73,7 @@ data class MessageThread(
     val title: String,
     val participantUserId: String,
     val participantAccountLabel: String,
+    val participantAvatarUrl: String? = null,
     val participantPetNames: List<String> = emptyList(),
     val lastMessage: String,
     val unreadCount: Int = 0,
@@ -80,12 +89,204 @@ data class DirectMessage(
     val body: String,
 )
 
+data class MessageTarget(
+    val userId: String? = null,
+    val threadId: String? = null,
+    val source: String = "unknown",
+)
+
+internal sealed interface MessageOpenResolution {
+    data class SelectExistingThread(val threadId: String) : MessageOpenResolution
+    data class CreateSyntheticThread(
+        val selectedThreadId: String,
+        val messageThreads: List<MessageThread>,
+    ) : MessageOpenResolution
+    data object NoTarget : MessageOpenResolution
+}
+
+internal data class OnboardingCompletionResolution(
+    val selectedThreadId: String,
+    val barkThreads: List<BarkThread>,
+    val chat: ChatResponse?,
+    val conversation: List<ChatTurn>,
+)
+
+internal data class ProviderStateResolution(
+    val providerModeEnabled: Boolean,
+    val hasProviderListings: Boolean,
+    val canLoadProviderInbox: Boolean,
+)
+
+internal data class HomePayloadStateResolution(
+    val providerState: ProviderStateResolution,
+    val selectedMessageThreadId: String?,
+    val selectedCommunityGroupId: String?,
+)
+
+internal data class SessionResetResolution(
+    val navigation: NavigationState,
+    val providerModeEnabled: Boolean,
+    val hasProviderListings: Boolean,
+    val canLoadProviderInbox: Boolean,
+    val authRequired: Boolean,
+    val authOtpRequested: Boolean = false,
+    val authInviteId: String = "",
+    val authEmail: String = "",
+    val authOtpExpiresAt: String? = null,
+    val authInFlight: Boolean = false,
+    val providers: List<ServiceProvider> = emptyList(),
+    val nearbyPetBusinesses: List<NearbyPetBusiness> = emptyList(),
+    val groups: List<Group> = emptyList(),
+    val posts: List<CommunityPost> = emptyList(),
+    val communityCommentsByPostId: Map<String, List<CommunityComment>> = emptyMap(),
+    val communityEvents: List<CommunityEvent> = emptyList(),
+    val ownerBookings: List<OwnerBooking> = emptyList(),
+    val providerBookings: List<ProviderBooking> = emptyList(),
+    val calendarEvents: List<CalendarEvent> = emptyList(),
+    val messageThreads: List<MessageThread> = emptyList(),
+    val directMessages: List<DirectMessage> = emptyList(),
+    val readDirectMessageIds: Set<String> = emptySet(),
+    val savedCommunityPostIds: Set<String> = emptySet(),
+    val savedCommunityEventIds: Set<String> = emptySet(),
+    val latestGroupInvites: Map<String, GroupInvite> = emptyMap(),
+    val friendProfiles: List<FriendProfile> = emptyList(),
+    val notifications: List<AppNotification> = emptyList(),
+    val readLocalNotificationIds: Set<String> = emptySet(),
+    val acknowledgedCommunityNotificationIds: Set<String> = emptySet(),
+    val acknowledgedMessageNotificationIds: Set<String> = emptySet(),
+    val loading: Boolean = false,
+    val error: String? = null,
+    val isCommunityModerator: Boolean,
+    val toastMessage: String,
+)
+
+internal data class TabSwitchResolution(
+    val navigation: NavigationState,
+    val directMessages: List<DirectMessage>,
+    val acknowledgedCommunityNotificationIds: Set<String>,
+    val acknowledgedMessageNotificationIds: Set<String>,
+)
+
+internal sealed interface FriendQrTokenResolution {
+    data class Verify(val token: String) : FriendQrTokenResolution
+    data class Invalid(val toastMessage: String) : FriendQrTokenResolution
+}
+
+internal enum class FriendMutationAction {
+    AddOrUpdate,
+    Remove,
+}
+
+internal sealed interface FriendMutationResolution {
+    data object NoChange : FriendMutationResolution
+    data class ToastOnly(val toastMessage: String) : FriendMutationResolution
+    data class StateUpdate(
+        val friendProfiles: List<FriendProfile>,
+        val messageThreads: List<MessageThread>,
+        val toastMessage: String,
+    ) : FriendMutationResolution
+}
+
+internal sealed interface QuoteOfferSubmissionResolution {
+    data object Ignore : QuoteOfferSubmissionResolution
+    data class Toast(val toastMessage: String) : QuoteOfferSubmissionResolution
+    data class Submit(
+        val inboxItemId: String,
+        val quoteRequestId: String,
+        val providerId: String,
+        val providerName: String,
+        val priceCents: Int,
+        val proposedDate: String,
+        val proposedTimeSlot: String,
+        val expiresAt: String,
+        val note: String,
+    ) : QuoteOfferSubmissionResolution
+}
+
+internal sealed interface BookingRequestResolution {
+    data object Ignore : BookingRequestResolution
+    data class Toast(val toastMessage: String) : BookingRequestResolution
+    data class Submit(
+        val providerId: String,
+        val date: String,
+        val timeSlot: String,
+        val note: String,
+        val approvalHint: String,
+    ) : BookingRequestResolution
+}
+
+internal sealed interface ServiceQuoteRequestResolution {
+    data class Toast(val toastMessage: String) : ServiceQuoteRequestResolution
+    data class Submit(
+        val category: String,
+        val preferredWindow: String,
+        val petDetails: String,
+        val note: String,
+        val suburb: String?,
+    ) : ServiceQuoteRequestResolution
+}
+
+internal sealed interface BarkAiEntryResolution {
+    data class StayOnOnboarding(val selectedThreadId: String) : BarkAiEntryResolution
+    data class StartNewThread(
+        val selectedThreadId: String,
+        val barkThreads: List<BarkThread>,
+    ) : BarkAiEntryResolution
+}
+
+internal data class NotificationRoute(
+    val tab: AppTab,
+    val selectedCommunityGroupId: String? = null,
+    val providerId: String? = null,
+    val shouldReload: Boolean = false,
+)
+
+internal data class NotificationOpenResolution(
+    val route: NotificationRoute?,
+    val postsSortBy: String,
+    val shouldMarkRead: Boolean,
+    val shouldReloadHome: Boolean,
+    val providerIdToLoad: String? = null,
+)
+
+internal data class HomeLoadIndicatorState(
+    val loading: Boolean,
+    val loadingProviderInbox: Boolean,
+)
+
+enum class HomeRefreshScope {
+    Full,
+    ActiveTab,
+}
+
+internal data class HomeRefreshPlan(
+    val fetchServices: Boolean,
+    val fetchOwnerListings: Boolean,
+    val fetchCommunity: Boolean,
+    val fetchProfilePane: Boolean,
+    val fetchMessages: Boolean,
+    val fetchNotifications: Boolean,
+    val fetchProfileInfo: Boolean,
+    val fetchBlockedUsers: Boolean,
+    val fetchModerationReports: Boolean,
+    val fetchFunnels: Boolean,
+)
+
+internal data class LocalNotificationStateResolution(
+    val notifications: List<AppNotification>,
+    val readLocalNotificationIds: Set<String>,
+    val acknowledgedCommunityNotificationIds: Set<String>,
+    val acknowledgedMessageNotificationIds: Set<String>,
+    val toastMessage: String? = null,
+)
+
 data class ProfileInfo(
     val displayName: String = "Alex Wong",
     val email: String = "alex@example.com",
     val phone: String = "+61 412 345 678",
     val humanPronouns: String = "",
     val humanRoleLabel: String = "Member",
+    val serviceProviderMode: Boolean = false,
     val dogName: String = "Milo",
     val dogAgeMonths: Int = 24,
     val dogBreedMix: String = "",
@@ -130,6 +331,7 @@ data class OwnerBooking(
     val serviceName: String,
     val providerId: String = "",
     val providerUserId: String = "",
+    val threadId: String? = null,
     val providerAccountLabel: String = "",
     val date: String,
     val timeSlot: String,
@@ -159,6 +361,7 @@ data class ProviderBooking(
     val id: String,
     val petName: String,
     val ownerUserId: String = "",
+    val threadId: String? = null,
     val providerId: String = "",
     val serviceName: String,
     val date: String,
@@ -213,6 +416,18 @@ data class CommunityWeatherSnapshot(
     val updatedAtLabel: String,
 )
 
+data class NavigationState(
+    val selectedProviderDetails: ServiceProviderDetailsResponse? = null,
+    val selectedBarkThreadId: String = "bark_thread_1",
+    val onboardingActive: Boolean = false,
+    val onboardingStep: Int = 0,
+    val selectedMessageThreadId: String? = null,
+    val selectedTab: AppTab = AppTab.Profile,
+    val profileNotificationFilter: String = "all",
+    val selectedCommunityGroupId: String? = null,
+    val pendingInvite: GroupInvite? = null,
+)
+
 data class UiState(
     val providers: List<ServiceProvider> = emptyList(),
     val nearbyPetBusinesses: List<NearbyPetBusiness> = emptyList(),
@@ -221,7 +436,6 @@ data class UiState(
     val communityCommentsByPostId: Map<String, List<CommunityComment>> = emptyMap(),
     val loadingCommentPostIds: Set<String> = emptySet(),
     val communityEvents: List<CommunityEvent> = emptyList(),
-    val selectedProviderDetails: ServiceProviderDetailsResponse? = null,
     val availableSlots: List<ServiceAvailabilitySlot> = emptyList(),
     val availabilityDate: String? = null,
     val serviceMinRating: Float? = null,
@@ -239,11 +453,9 @@ data class UiState(
             title = "Thread 1",
         ),
     ),
-    val selectedBarkThreadId: String = "bark_thread_1",
-    val onboardingActive: Boolean = false,
-    val onboardingStep: Int = 0,
     val onboardingOwnerName: String = "",
     val onboardingDogName: String = "",
+    val onboardingSuburb: String = "",
     val onboardingPhotoCaptured: Boolean = false,
     val testProfileMode: String = TEST_PROFILE_MODE_READY,
     val profileIdentityHeaderVisible: Boolean = false,
@@ -252,14 +464,11 @@ data class UiState(
     val friendQrLoading: Boolean = false,
     val friendProfiles: List<FriendProfile> = emptyList(),
     val messageThreads: List<MessageThread> = emptyList(),
-    val selectedMessageThreadId: String? = null,
     val directMessages: List<DirectMessage> = emptyList(),
     val readDirectMessageIds: Set<String> = emptySet(),
     val mutedMessageThreadIds: Set<String> = emptySet(),
     val pinnedMessageThreadIds: Set<String> = emptySet(),
     val streamingAssistantText: String = "",
-    val selectedTab: AppTab = AppTab.Services,
-    val profileNotificationFilter: String = "all",
     val selectedCategory: String? = null,
     val servicesViewMode: String = "list",
     val servicesSearchQuery: String = "",
@@ -271,7 +480,6 @@ data class UiState(
     val savedCommunityEventIds: Set<String> = emptySet(),
     val mutedCommunityKeywords: Set<String> = emptySet(),
     val followedGroupIds: Set<String> = emptySet(),
-    val selectedCommunityGroupId: String? = null,
     val selectedSuburb: String = "Surry Hills",
     val selectedRangeCenter: String = "manual",
     val currentLocationSuburb: String? = null,
@@ -285,7 +493,9 @@ data class UiState(
     val authOtpExpiresAt: String? = null,
     val authInFlight: Boolean = false,
     val profileInfo: ProfileInfo = ProfileInfo(),
-    val isServiceProvider: Boolean = false,
+    val providerModeEnabled: Boolean = false,
+    val hasProviderListings: Boolean = false,
+    val canLoadProviderInbox: Boolean = false,
     val ownerBookings: List<OwnerBooking> = emptyList(),
     val joinedEvents: List<JoinedEvent> = emptyList(),
     val favoriteProviderIds: List<String> = emptyList(),
@@ -305,7 +515,7 @@ data class UiState(
     val groupPetRosters: Map<String, List<PetRosterItem>> = emptyMap(),
     val groomerPetRosters: Map<String, List<PetRosterItem>> = emptyMap(),
     val latestGroupInvites: Map<String, GroupInvite> = emptyMap(),
-    val pendingInvite: GroupInvite? = null,
+    val navigation: NavigationState = NavigationState(),
     val hasPendingSync: Boolean = false,
     val isOfflineMode: Boolean = false,
     val selectedCalendarRole: String = "all",
@@ -342,6 +552,309 @@ data class UiState(
     val autoParkCheckInQuorumCount: Int = 0,
     val lastAutoParkCheckInGroupId: String? = null,
     val lastAutoParkCheckInAt: String? = null,
+) {
+    val selectedProviderDetails: ServiceProviderDetailsResponse? get() = navigation.selectedProviderDetails
+    val selectedBarkThreadId: String get() = navigation.selectedBarkThreadId
+    val onboardingActive: Boolean get() = navigation.onboardingActive
+    val onboardingStep: Int get() = navigation.onboardingStep
+    val selectedMessageThreadId: String? get() = navigation.selectedMessageThreadId
+    val selectedTab: AppTab get() = navigation.selectedTab
+    val profileNotificationFilter: String get() = navigation.profileNotificationFilter
+    val selectedCommunityGroupId: String? get() = navigation.selectedCommunityGroupId
+    val pendingInvite: GroupInvite? get() = navigation.pendingInvite
+    val isServiceProvider: Boolean get() = providerModeEnabled
+}
+
+data class ShellUiState(
+    val activeUserId: String = "user_2",
+    val toastMessage: String? = null,
+    val selectedTab: AppTab = AppTab.Profile,
+    val selectedProviderDetails: ServiceProviderDetailsResponse? = null,
+    val selectedMessageThreadId: String? = null,
+    val headerRosterPet: PetRosterItem? = null,
+    val selectedSuburb: String = "Surry Hills",
+    val selectedRangeCenter: String = "manual",
+    val currentLocationSuburb: String? = null,
+    val serviceMaxDistanceKm: Int? = null,
+    val error: String? = null,
+    val loading: Boolean = false,
+    val hasPendingSync: Boolean = false,
+    val isOfflineMode: Boolean = false,
+    val unreadNotificationCount: Int = 0,
+    val unreadCommunityNotificationCount: Int = 0,
+    val unreadMessageNotificationCount: Int = 0,
+)
+
+data class ServicesTabUiState(
+    val providers: List<ServiceProvider> = emptyList(),
+    val nearbyPetBusinesses: List<NearbyPetBusiness> = emptyList(),
+    val groomerPetRosters: Map<String, List<PetRosterItem>> = emptyMap(),
+    val recommendationSuburb: String? = null,
+    val recommendationSource: String = "none",
+    val selectedCategory: String? = null,
+    val viewMode: String = "list",
+    val searchQuery: String = "",
+    val sortBy: String = "relevance",
+    val loading: Boolean = false,
+    val selectedDetails: ServiceProviderDetailsResponse? = null,
+    val availableSlots: List<ServiceAvailabilitySlot> = emptyList(),
+    val availabilityDate: String? = null,
+    val minRating: Float? = null,
+    val maxDistanceKm: Int? = null,
+)
+
+data class BarkAiTabUiState(
+    val loading: Boolean = false,
+    val chatResponse: ChatResponse? = null,
+    val conversation: List<ChatTurn> = emptyList(),
+    val streamingAssistantText: String = "",
+    val profileSuggestion: PetProfileSuggestion? = null,
+    val a2uiProfileCard: A2uiCardState? = null,
+    val a2uiProviderCard: A2uiCardState? = null,
+    val barkThreads: List<BarkThread> = emptyList(),
+    val selectedBarkThreadId: String = "bark_thread_1",
+    val onboardingMode: Boolean = false,
+    val onboardingNeedsPhoto: Boolean = false,
+)
+
+data class CommunityTabUiState(
+    val activeUserId: String = "user_2",
+    val loading: Boolean = false,
+    val suburb: String = "Surry Hills",
+    val currentLocationSuburb: String? = null,
+    val currentLatitude: Double? = null,
+    val currentLongitude: Double? = null,
+    val postsSortBy: String = "relevance",
+    val selectedGroupId: String? = null,
+    val groups: List<Group> = emptyList(),
+    val groupPetRosters: Map<String, List<PetRosterItem>> = emptyMap(),
+    val latestGroupInvites: Map<String, GroupInvite> = emptyMap(),
+    val blockedUserIds: List<String> = emptyList(),
+    val savedPostIds: Set<String> = emptySet(),
+    val savedEventIds: Set<String> = emptySet(),
+    val mutedKeywords: Set<String> = emptySet(),
+    val followedGroupIds: Set<String> = emptySet(),
+    val communityWeather: CommunityWeatherSnapshot = CommunityWeatherSnapshot(
+        suburb = "Surry Hills",
+        temperatureC = 22,
+        condition = "Partly cloudy",
+        rainChancePercent = 20,
+        windKph = 12,
+        updatedAtLabel = "Just now",
+    ),
+    val autoParkCheckInEnabled: Boolean = false,
+    val autoParkCheckInRequireCrowd: Boolean = true,
+    val autoParkCheckInQuorumCount: Int = 0,
+    val autoParkCheckInQuorumThreshold: Int = 3,
+    val autoParkCheckInQuorumWindowMinutes: Int = 20,
+    val posts: List<CommunityPost> = emptyList(),
+    val postCommentsByPostId: Map<String, List<CommunityComment>> = emptyMap(),
+    val loadingCommentPostIds: Set<String> = emptySet(),
+    val isCommunityModerator: Boolean = false,
+    val events: List<CommunityEvent> = emptyList(),
+    val messageThreads: List<MessageThread> = emptyList(),
+)
+
+data class MessagesTabUiState(
+    val activeUserId: String = "user_2",
+    val threads: List<MessageThread> = emptyList(),
+    val mutedThreadIds: Set<String> = emptySet(),
+    val pinnedThreadIds: Set<String> = emptySet(),
+    val unreadNotificationCount: Int = 0,
+    val selectedThreadId: String? = null,
+    val messages: List<DirectMessage> = emptyList(),
+)
+
+data class ProfileTabUiState(
+    val profileInfo: ProfileInfo = ProfileInfo(),
+    val providerModeEnabled: Boolean = false,
+    val hasProviderListings: Boolean = false,
+    val canLoadProviderInbox: Boolean = false,
+    val activeUserId: String = "user_2",
+    val friendProfiles: List<FriendProfile> = emptyList(),
+    val joinedEvents: List<JoinedEvent> = emptyList(),
+    val ownerBookings: List<OwnerBooking> = emptyList(),
+    val providerListings: List<ProviderListing> = emptyList(),
+    val providerBookings: List<ProviderBooking> = emptyList(),
+    val providerInboxItems: List<ProviderInboxItem> = emptyList(),
+    val loadingProviderInbox: Boolean = false,
+    val sendingQuoteOfferItemIds: Set<String> = emptySet(),
+    val isSubmittingProviderInboxAction: Boolean = false,
+    val calendarEvents: List<CalendarEvent> = emptyList(),
+    val notifications: List<AppNotification> = emptyList(),
+    val activationFunnelMetrics: CommunityActivationFunnel? = null,
+    val notifyFollowedGroupAlerts: Boolean = true,
+    val notifySavedPostUpdates: Boolean = true,
+    val notifySafetyAlerts: Boolean = true,
+    val showIdentityHeader: Boolean = false,
+    val friendQrPayload: String = "",
+    val friendQrExpiresAt: String? = null,
+    val friendQrLoading: Boolean = false,
+)
+
+data class AuthDialogUiState(
+    val isRequired: Boolean = false,
+    val inviteId: String = "",
+    val email: String = "",
+    val otpRequested: Boolean = false,
+    val otpExpiresAt: String? = null,
+    val inFlight: Boolean = false,
+    val error: String? = null,
+)
+
+data class PendingInviteUiState(
+    val invite: GroupInvite? = null,
+    val loading: Boolean = false,
+)
+
+private fun UiState.toShellUiState(): ShellUiState {
+    val unreadNotifications = notifications.count { notification -> !notification.read }
+    val unreadCommunityNotifications = notifications.count { notification ->
+        !notification.read &&
+            notification.id !in acknowledgedCommunityNotificationIds && (
+            notification.category.startsWith("community") ||
+                notification.category.contains("group")
+            )
+    }
+    val unreadMessageNotifications = notifications.count { notification ->
+        !notification.read &&
+            notification.id !in acknowledgedMessageNotificationIds &&
+            notification.category.contains("message")
+    }
+    return ShellUiState(
+        activeUserId = activeUserId,
+        toastMessage = toastMessage,
+        selectedTab = selectedTab,
+        selectedProviderDetails = selectedProviderDetails,
+        selectedMessageThreadId = selectedMessageThreadId,
+        headerRosterPet = headerRosterPet,
+        selectedSuburb = selectedSuburb,
+        selectedRangeCenter = selectedRangeCenter,
+        currentLocationSuburb = currentLocationSuburb,
+        serviceMaxDistanceKm = serviceMaxDistanceKm,
+        error = error,
+        loading = loading,
+        hasPendingSync = hasPendingSync,
+        isOfflineMode = isOfflineMode,
+        unreadNotificationCount = unreadNotifications,
+        unreadCommunityNotificationCount = unreadCommunityNotifications,
+        unreadMessageNotificationCount = unreadMessageNotifications,
+    )
+}
+
+private fun UiState.toServicesTabUiState(): ServicesTabUiState = ServicesTabUiState(
+    providers = providers,
+    nearbyPetBusinesses = nearbyPetBusinesses,
+    groomerPetRosters = groomerPetRosters,
+    recommendationSuburb = servicesRecommendationSuburb,
+    recommendationSource = servicesRecommendationSource,
+    selectedCategory = selectedCategory,
+    viewMode = servicesViewMode,
+    searchQuery = servicesSearchQuery,
+    sortBy = servicesSortBy,
+    loading = loading && (providers.isEmpty() || selectedProviderDetails != null),
+    selectedDetails = selectedProviderDetails,
+    availableSlots = availableSlots,
+    availabilityDate = availabilityDate,
+    minRating = serviceMinRating,
+    maxDistanceKm = serviceMaxDistanceKm,
+)
+
+private fun UiState.toBarkAiTabUiState(): BarkAiTabUiState = BarkAiTabUiState(
+    loading = loading,
+    chatResponse = chat,
+    conversation = conversation,
+    streamingAssistantText = streamingAssistantText,
+    profileSuggestion = profileSuggestion,
+    a2uiProfileCard = a2uiProfileCard,
+    a2uiProviderCard = a2uiProviderCard,
+    barkThreads = barkThreads,
+    selectedBarkThreadId = selectedBarkThreadId,
+    onboardingMode = onboardingActive,
+    onboardingNeedsPhoto = onboardingActive && onboardingStep >= 2 && !onboardingPhotoCaptured,
+)
+
+private fun UiState.toCommunityTabUiState(): CommunityTabUiState = CommunityTabUiState(
+    activeUserId = activeUserId,
+    loading = loading,
+    suburb = selectedSuburb,
+    currentLocationSuburb = currentLocationSuburb,
+    currentLatitude = currentLatitude,
+    currentLongitude = currentLongitude,
+    postsSortBy = postsSortBy,
+    selectedGroupId = selectedCommunityGroupId,
+    groups = groups,
+    groupPetRosters = groupPetRosters,
+    latestGroupInvites = latestGroupInvites,
+    blockedUserIds = blockedUserIds,
+    savedPostIds = savedCommunityPostIds,
+    savedEventIds = savedCommunityEventIds,
+    mutedKeywords = mutedCommunityKeywords,
+    followedGroupIds = followedGroupIds,
+    communityWeather = communityWeather,
+    autoParkCheckInEnabled = autoParkCheckInEnabled,
+    autoParkCheckInRequireCrowd = autoParkCheckInRequireCrowd,
+    autoParkCheckInQuorumCount = autoParkCheckInQuorumCount,
+    autoParkCheckInQuorumThreshold = autoParkCheckInQuorumThreshold,
+    autoParkCheckInQuorumWindowMinutes = autoParkCheckInQuorumWindowMinutes,
+    posts = posts,
+    postCommentsByPostId = communityCommentsByPostId,
+    loadingCommentPostIds = loadingCommentPostIds,
+    isCommunityModerator = isCommunityModerator,
+    events = communityEvents,
+    messageThreads = messageThreads,
+)
+
+private fun UiState.toMessagesTabUiState(): MessagesTabUiState = MessagesTabUiState(
+    activeUserId = activeUserId,
+    threads = messageThreads,
+    mutedThreadIds = mutedMessageThreadIds,
+    pinnedThreadIds = pinnedMessageThreadIds,
+    unreadNotificationCount = notifications.count { notification -> !notification.read },
+    selectedThreadId = selectedMessageThreadId,
+    messages = directMessages,
+)
+
+private fun UiState.toProfileTabUiState(): ProfileTabUiState = ProfileTabUiState(
+    profileInfo = profileInfo,
+    providerModeEnabled = providerModeEnabled,
+    hasProviderListings = hasProviderListings,
+    canLoadProviderInbox = canLoadProviderInbox,
+    activeUserId = activeUserId,
+    friendProfiles = friendProfiles,
+    joinedEvents = joinedEvents,
+    ownerBookings = ownerBookings,
+    providerListings = providerListings,
+    providerBookings = providerBookings,
+    providerInboxItems = providerInboxItems,
+    loadingProviderInbox = loadingProviderInbox,
+    sendingQuoteOfferItemIds = sendingQuoteOfferItemIds,
+    isSubmittingProviderInboxAction = loading,
+    calendarEvents = calendarEvents,
+    notifications = notifications,
+    activationFunnelMetrics = activationFunnelMetrics,
+    notifyFollowedGroupAlerts = notifyFollowedGroupAlerts,
+    notifySavedPostUpdates = notifySavedPostUpdates,
+    notifySafetyAlerts = notifySafetyAlerts,
+    showIdentityHeader = profileIdentityHeaderVisible,
+    friendQrPayload = friendQrPayload,
+    friendQrExpiresAt = friendQrExpiresAt,
+    friendQrLoading = friendQrLoading,
+)
+
+private fun UiState.toAuthDialogUiState(): AuthDialogUiState = AuthDialogUiState(
+    isRequired = authRequired,
+    inviteId = authInviteId,
+    email = authEmail,
+    otpRequested = authOtpRequested,
+    otpExpiresAt = authOtpExpiresAt,
+    inFlight = authInFlight,
+    error = error,
+)
+
+private fun UiState.toPendingInviteUiState(): PendingInviteUiState = PendingInviteUiState(
+    invite = pendingInvite,
+    loading = loading,
 )
 
 private fun accountLabel(userId: String): String = when (userId) {
@@ -359,7 +872,6 @@ private fun normalizeCommunitySort(sortBy: String): String = when (sortBy.trim()
 }
 
 private const val TEST_DOG_PARK_GROUP_ID = "g_user_dogpark_surry"
-private val ENABLE_TEST_SEED_DATA = BuildConfig.USE_MOCK_DATA
 private val IS_PROVIDER_OS_SURFACE = BuildConfig.APP_SURFACE.equals("provider", ignoreCase = true)
 private const val STAGING_TEST_SUBURB = "Sunshine West"
 private const val TEST_PROFILE_MODE_READY = "ready"
@@ -394,6 +906,16 @@ private val ONBOARD_DOG_NAME_QUESTIONS = listOf(
     "Cool, and your dog's name is?",
     "Brilliant. Who's your dog?",
 )
+private val ONBOARD_SUBURB_QUESTIONS = listOf(
+    "Which suburb are you in?",
+    "Nice. What suburb should I use for your local BarkWise activity?",
+    "Great. Which suburb are you based in?",
+    "Perfect. What suburb do you want on your profile?",
+    "Thanks. Which suburb should I set for you?",
+    "Awesome. What suburb are you and your dog usually in?",
+    "Sweet. Which local suburb should I save?",
+    "Great, what suburb are you in?",
+)
 private val ONBOARD_DOG_PHOTO_QUESTIONS = listOf(
     "Can I see your dog?",
     "Can you share a quick photo of your dog?",
@@ -405,30 +927,6 @@ private val ONBOARD_DOG_PHOTO_QUESTIONS = listOf(
     "Can we grab a photo of your dog?",
     "Ready for a dog pic? I'd love to see them.",
     "Last step, can I see your dog?",
-)
-private val ONBOARD_THANKS_VARIATIONS = listOf(
-    "Thanks so much for sharing that.",
-    "Thanks a lot, I really appreciate it.",
-    "Thank you, that helps a ton.",
-    "Amazing, thanks so much.",
-    "Perfect, thank you for sending it.",
-    "Legend, thanks for that.",
-    "You're the best, thanks so much.",
-    "Brilliant, thank you.",
-    "Nice one, thanks for sharing.",
-    "Great stuff, thanks a bunch.",
-)
-private val ONBOARD_CUTE_VARIATIONS = listOf(
-    "Oh he's cute.",
-    "Oh wow, your dog is adorable.",
-    "That pup is seriously cute.",
-    "What a cutie.",
-    "Absolutely adorable dog.",
-    "Your dog is so photogenic.",
-    "Okay, that is very cute.",
-    "Love that face, super cute.",
-    "Your pup is ridiculously cute.",
-    "That is one adorable dog.",
 )
 private val KNOWN_FRIEND_PROFILES = mapOf(
     "user_1" to ("Sesame" to ("Luna" to "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80")),
@@ -446,353 +944,54 @@ private fun nextActionSwitchHint(
     return " Switch to ${accountLabel(targetUserId)} to $actionText."
 }
 
-private fun ensureSeedDogParkGroup(
-    groups: List<Group>,
-    activeUserId: String,
-): List<Group> {
-    if (!ENABLE_TEST_SEED_DATA) return groups
-    val existing = groups.firstOrNull { it.id == TEST_DOG_PARK_GROUP_ID }
-    val seeded = Group(
-        id = TEST_DOG_PARK_GROUP_ID,
-        name = ONBOARD_GROUP_TITLE,
-        suburb = "Surry Hills",
-        memberCount = 34,
-        official = false,
-        ownerUserId = "user_3",
-        membershipStatus = when (activeUserId) {
-            "user_1", "user_2", "user_3" -> "member"
-            else -> existing?.membershipStatus ?: "none"
-        },
-        isAdmin = activeUserId == "user_3",
-        pendingRequestCount = if (activeUserId == "user_3") 1 else 0,
-        groupBadges = listOf("Pack Builder Lv2", "Clean Crew"),
-        cooperativeScore = 87,
-        myPackBuilderPoints = when (activeUserId) {
-            "user_1" -> 145
-            "user_2" -> 122
-            "user_3" -> 168
-            else -> 64
-        },
-        myCleanParkPoints = when (activeUserId) {
-            "user_1" -> 54
-            "user_2" -> 48
-            "user_3" -> 73
-            else -> 21
-        },
-    )
-    return if (existing == null) {
-        listOf(seeded) + groups
-    } else {
-        groups.map { group -> if (group.id == TEST_DOG_PARK_GROUP_ID) seeded else group }
-    }
-}
-
-private fun ensureSeedProviders(
-    providers: List<ServiceProvider>,
-    suburb: String,
-    category: String?,
-): List<ServiceProvider> {
-    if (!ENABLE_TEST_SEED_DATA) return providers
-    if (providers.isNotEmpty()) return providers
-
-    val base = listOf(
-        ServiceProvider(
-            id = "seed_svc_1",
-            name = "Neighborhood Paws Walkers",
-            category = "dog_walking",
-            suburb = suburb,
-            rating = 4.8,
-            reviewCount = 86,
-            priceFrom = 24,
-            description = "Friendly daily dog walks with photo updates.",
-            fullDescription = "Reliable local walkers for weekday and weekend sessions.",
-            imageUrls = fallbackPetPhotos.take(3),
-            latitude = -33.8889,
-            longitude = 151.2111,
-            ownerUserId = "user_1",
-            ownerLabel = "Sesame",
-            responseTimeMinutes = 16,
-            localBookersThisMonth = 12,
-            sharedGroupBookers = 4,
-            socialProof = listOf(
-                "Used by 12 pet owners in $suburb this month",
-                "4 members from your groups booked this provider",
-                "Typically responds in about 16 min",
-            ),
-        ),
-        ServiceProvider(
-            id = "seed_svc_2",
-            name = "Coat Care Groom Studio",
-            category = "grooming",
-            suburb = suburb,
-            rating = 4.9,
-            reviewCount = 63,
-            priceFrom = 48,
-            description = "Gentle grooming for sensitive and anxious pets.",
-            fullDescription = "Bath, nail trim, and breed-aware styling sessions.",
-            imageUrls = fallbackPetPhotos.drop(2).take(3),
-            latitude = -33.8928,
-            longitude = 151.2040,
-            ownerUserId = "user_3",
-            ownerLabel = "Anika",
-            responseTimeMinutes = 24,
-            localBookersThisMonth = 9,
-            sharedGroupBookers = 3,
-            socialProof = listOf(
-                "Used by 9 pet owners in $suburb this month",
-                "3 members from your groups booked this provider",
-                "Typically responds in about 24 min",
-            ),
-        ),
-        ServiceProvider(
-            id = "seed_svc_3",
-            name = "Parkside Groom & Go",
-            category = "grooming",
-            suburb = suburb,
-            rating = 4.6,
-            reviewCount = 41,
-            priceFrom = 44,
-            description = "Quick grooming sessions and coat tidy plans.",
-            fullDescription = "Practical recurring grooming packages for active dogs.",
-            imageUrls = fallbackPetPhotos.drop(4).take(3),
-            latitude = -33.8981,
-            longitude = 151.1742,
-            ownerUserId = "user_4",
-            ownerLabel = "Tommy",
-            responseTimeMinutes = 33,
-            localBookersThisMonth = 7,
-            sharedGroupBookers = 2,
-            socialProof = listOf(
-                "Used by 7 pet owners in $suburb this month",
-                "2 members from your groups booked this provider",
-                "Typically responds in about 33 min",
-            ),
-        ),
-    )
-    return if (category.isNullOrBlank()) {
-        base
-    } else {
-        base.filter { provider -> provider.category == category }
-    }
-}
-
-private fun ensureSeedDogParkPosts(posts: List<CommunityPost>): List<CommunityPost> {
-    if (!ENABLE_TEST_SEED_DATA) return posts
-    val seedIds = setOf(
-        "p_dogpark_seed_1",
-        "p_dogpark_seed_2",
-        "p_dogpark_seed_3",
-        "p_dogpark_seed_4",
-        "p_dogpark_seed_5",
-        "p_dogpark_seed_6",
-        "p_dogpark_seed_7",
-    )
-    if (seedIds.all { id -> posts.any { post -> post.id == id } }) return posts
-    val now = Instant.now()
-    val photoPool = fallbackPetPhotos.distinct()
-    val seeded = listOf(
-        CommunityPost(
-            id = "p_dogpark_seed_1",
-            type = "group_post",
-            title = "Photo drop: Sunrise zoomies at Surry Hills",
-            body = "Luna, Milo, and Maple just wrapped six rounds of fetch. Added a few happy faces from this morning run.",
-            suburb = "Surry Hills",
-            createdAt = now.minusSeconds(2_700).toString(),
-            photoUrls = listOf(
-                photoPool[0 % photoPool.size],
-                photoPool[1 % photoPool.size],
-                photoPool[2 % photoPool.size],
-            ),
-        ),
-        CommunityPost(
-            id = "p_dogpark_seed_2",
-            type = "group_post",
-            title = "Live thread: Water-bowl relay happening now",
-            body = "We are on the north lawn setting up shaded water bowls. Join in if you are nearby; extra bowls and poop bags ready.",
-            suburb = "Surry Hills",
-            createdAt = now.minusSeconds(5_400).toString(),
-            photoUrls = listOf(
-                photoPool[3 % photoPool.size],
-                photoPool[4 % photoPool.size],
-            ),
-        ),
-        CommunityPost(
-            id = "p_dogpark_seed_3",
-            type = "group_post",
-            title = "Then vs Now: Teddy's leash confidence",
-            body = "Six weeks ago Teddy froze near bikes. Tonight he stayed calm through the whole park loop with zero pulling.",
-            suburb = "Surry Hills",
-            createdAt = now.minusSeconds(86_400).toString(),
-            photoUrls = listOf(
-                photoPool[5 % photoPool.size],
-                photoPool[6 % photoPool.size],
-            ),
-        ),
-        CommunityPost(
-            id = "p_dogpark_seed_4",
-            type = "group_post",
-            title = "Pupcake birthday recap for Nala",
-            body = "Small-dog circle brought pupcakes, bubble machine, and a calm sniff walk. Thanks everyone for keeping it gentle.",
-            suburb = "Surry Hills",
-            createdAt = now.minusSeconds(129_600).toString(),
-            photoUrls = listOf(
-                photoPool[7 % photoPool.size],
-                photoPool[8 % photoPool.size],
-                photoPool[9 % photoPool.size],
-            ),
-        ),
-        CommunityPost(
-            id = "p_dogpark_seed_5",
-            type = "group_post",
-            title = "Cleanup crew check-in: 11 bags collected",
-            body = "Quick thank-you to everyone who did the post-play cleanup loop around the south fence and cafe entrance.",
-            suburb = "Surry Hills",
-            createdAt = now.minusSeconds(176_400).toString(),
-            photoUrls = listOf(photoPool[10 % photoPool.size]),
-        ),
-        CommunityPost(
-            id = "p_dogpark_seed_6",
-            type = "group_post",
-            title = "Agility mini-course highlights",
-            body = "Archie and Poppy flew through the tunnel and pause platform. Sharing a few shots for anyone who missed Sunday drills.",
-            suburb = "Surry Hills",
-            createdAt = now.minusSeconds(223_200).toString(),
-            photoUrls = listOf(
-                photoPool[11 % photoPool.size],
-                photoPool[12 % photoPool.size],
-            ),
-        ),
-        CommunityPost(
-            id = "p_dogpark_seed_7",
-            type = "group_post",
-            title = "Looking for tomorrow's dawn walk crew",
-            body = "Meeting 6:45am at the fountain entrance for a calm 30-minute loop before work. Reply if your pup is joining.",
-            suburb = "Surry Hills",
-            createdAt = now.minusSeconds(309_600).toString(),
-            photoUrls = listOf(
-                photoPool[2 % photoPool.size],
-                photoPool[5 % photoPool.size],
-            ),
-        ),
-    )
-    val existingById = posts.associateBy { it.id }
-    val mergedSeeds = seeded.map { seed -> existingById[seed.id] ?: seed }
-    val remainingPosts = posts.filterNot { post -> post.id in seedIds }
-    return mergedSeeds + remainingPosts
-}
-
-private fun ensureSeedDogParkEvents(
-    events: List<CommunityEvent>,
-    activeUserId: String,
-): List<CommunityEvent> {
-    if (!ENABLE_TEST_SEED_DATA) return events
-    val seedIds = setOf(
-        "event_dogpark_seed_live",
-        "event_dogpark_seed_past_1",
-        "event_dogpark_seed_past_2",
-        "event_dogpark_seed_past_3",
-    )
-    if (seedIds.all { id -> events.any { event -> event.id == id } }) return events
-    val now = Instant.now()
-    val attendingByDefault = setOf("user_1", "user_2", "user_3")
-    val seeded = listOf(
-        CommunityEvent(
-            id = "event_dogpark_seed_live",
-            title = ONBOARD_EVENT_TITLE,
-            description = "Happening now on the north lawn: splash pool lane, shaded water station, and relaxed social play.",
-            suburb = "Surry Hills",
-            date = now.plusSeconds(900).toString(),
-            groupId = TEST_DOG_PARK_GROUP_ID,
-            attendeeCount = 19,
-            createdBy = "user_3",
-            rsvpStatus = if (activeUserId in attendingByDefault) "attending" else "none",
-            status = "approved",
-        ),
-        CommunityEvent(
-            id = "event_dogpark_seed_past_1",
-            title = "Sunset Recall Ladder",
-            description = "Focused recall drills in three short rounds. Dogs with anxious greetings got a separate calm lane.",
-            suburb = "Surry Hills",
-            date = now.minusSeconds(60_000).toString(),
-            groupId = TEST_DOG_PARK_GROUP_ID,
-            attendeeCount = 14,
-            createdBy = "user_3",
-            status = "approved",
-        ),
-        CommunityEvent(
-            id = "event_dogpark_seed_past_2",
-            title = "Paws & Pastries Morning Walk",
-            description = "Easy 35-minute park loop followed by coffee and water-bowl refills outside the corner bakery.",
-            suburb = "Surry Hills",
-            date = now.minusSeconds(170_000).toString(),
-            groupId = TEST_DOG_PARK_GROUP_ID,
-            attendeeCount = 11,
-            createdBy = "user_1",
-            status = "approved",
-        ),
-        CommunityEvent(
-            id = "event_dogpark_seed_past_3",
-            title = "Then vs Now Demo Night",
-            description = "Members shared progress clips and practical training notes from the past month.",
-            suburb = "Surry Hills",
-            date = now.minusSeconds(300_000).toString(),
-            groupId = TEST_DOG_PARK_GROUP_ID,
-            attendeeCount = 17,
-            createdBy = "user_2",
-            status = "approved",
-        ),
-    )
-    val existingById = events.associateBy { it.id }
-    val mergedSeeds = seeded.map { seed -> existingById[seed.id] ?: seed }
-    val remainingEvents = events.filterNot { event -> event.id in seedIds }
-    return mergedSeeds + remainingEvents
-}
-
-private fun buildSeedDogParkRoster(
-    today: LocalDate,
-    photoPool: List<String>,
-): List<PetRosterItem> {
-    if (!ENABLE_TEST_SEED_DATA) return emptyList()
-    val photos = photoPool.distinct().ifEmpty { fallbackPetPhotos }
-    val names = listOf(
-        "Luna",
-        "Milo",
-        "Maple",
-        "Teddy",
-        "Nala",
-        "Archie",
-        "Poppy",
-        "Biscuit",
-        "Coco",
-        "Scout",
-        "Blue",
-        "Pepper",
-    )
-    return names.mapIndexed { index, name ->
-        PetRosterItem(
-            id = "dogpark_roster_$index",
-            petName = name,
-            photoUrl = photos[index % photos.size],
-            addedDate = today.minusDays((index % 7).toLong()),
-            suburb = "Surry Hills",
-        )
-    }.dailyShuffle(seed = TEST_DOG_PARK_GROUP_ID, today = today)
-}
-
 class PetSocialViewModel(
     private val repository: PetSocialRepository,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+    val shellUiState: StateFlow<ShellUiState> = _uiState
+        .map { state -> state.toShellUiState() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toShellUiState())
+    val servicesUiState: StateFlow<ServicesTabUiState> = _uiState
+        .map { state -> state.toServicesTabUiState() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toServicesTabUiState())
+    val barkAiUiState: StateFlow<BarkAiTabUiState> = _uiState
+        .map { state -> state.toBarkAiTabUiState() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toBarkAiTabUiState())
+    val communityUiState: StateFlow<CommunityTabUiState> = _uiState
+        .map { state -> state.toCommunityTabUiState() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toCommunityTabUiState())
+    val messagesUiState: StateFlow<MessagesTabUiState> = _uiState
+        .map { state -> state.toMessagesTabUiState() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toMessagesTabUiState())
+    val profileUiState: StateFlow<ProfileTabUiState> = _uiState
+        .map { state -> state.toProfileTabUiState() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toProfileTabUiState())
+    val authDialogUiState: StateFlow<AuthDialogUiState> = _uiState
+        .map { state -> state.toAuthDialogUiState() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toAuthDialogUiState())
+    val pendingInviteUiState: StateFlow<PendingInviteUiState> = _uiState
+        .map { state -> state.toPendingInviteUiState() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toPendingInviteUiState())
     private var servicesSearchJob: Job? = null
     private var weatherTickerJob: Job? = null
+    private var messageRefreshJob: Job? = null
     private val recentParkPresenceSignals = mutableMapOf<String, MutableList<ParkPresenceSignal>>()
 
     init {
         if (IS_PROVIDER_OS_SURFACE) {
-            _uiState.value = _uiState.value.copy(
-                isServiceProvider = true,
-                selectedTab = AppTab.Profile,
+            val state = _uiState.value
+            _uiState.value = state.withNavigation { copy(selectedTab = AppTab.Profile) }.copy(
+                providerModeEnabled = true,
+                canLoadProviderInbox = true,
             )
         }
         if (isStagingTestBuild()) {
@@ -809,9 +1008,10 @@ class PetSocialViewModel(
             activeUserId = persistedUserId,
             testProfileMode = persistedTestProfileMode,
             profileIdentityHeaderVisible = persistedProfileHeaderVisible,
-            isServiceProvider = IS_PROVIDER_OS_SURFACE || _uiState.value.isServiceProvider,
+            providerModeEnabled = IS_PROVIDER_OS_SURFACE || _uiState.value.providerModeEnabled,
+            canLoadProviderInbox = IS_PROVIDER_OS_SURFACE || _uiState.value.canLoadProviderInbox,
             isCommunityModerator = persistedUserId in COMMUNITY_MODERATOR_IDS,
-            authRequired = requiresOtpAuth() && repository.currentAuthToken().isBlank(),
+            authRequired = false,
         )
         repository.setActiveUser(persistedUserId)
         applyTestProfileMode(
@@ -823,6 +1023,40 @@ class PetSocialViewModel(
         initializeOnboardingFlowIfNeeded()
         refreshMockCommunityWeather()
         startMockWeatherTicker()
+        startMessageRefreshTicker()
+        if (requiresOtpAuth() && repository.currentAuthToken().isBlank()) {
+            attemptTrustedDeviceSignIn()
+        } else {
+            _uiState.value = _uiState.value.copy(
+                authRequired = requiresOtpAuth() && repository.currentAuthToken().isBlank(),
+            )
+        }
+    }
+
+    private fun attemptTrustedDeviceSignIn() {
+        viewModelScope.launch {
+            runCatching { repository.tryTrustedDeviceLogin() }
+                .onSuccess { response ->
+                    repository.setActiveUser(response.userId)
+                    _uiState.value = _uiState.value.copy(
+                        activeUserId = response.userId,
+                        authRequired = false,
+                        authOtpRequested = false,
+                        authInviteId = "",
+                        authEmail = "",
+                        authOtpExpiresAt = null,
+                        authInFlight = false,
+                        isCommunityModerator = response.userId in COMMUNITY_MODERATOR_IDS,
+                    )
+                    loadHomeData(_uiState.value.selectedCategory, allowAuthRetry = false)
+                }
+                .onFailure {
+                    _uiState.value = _uiState.value.copy(
+                        authRequired = requiresOtpAuth(),
+                        authInFlight = false,
+                    )
+                }
+        }
     }
 
     private fun initializeOnboardingFlowIfNeeded() {
@@ -836,8 +1070,14 @@ class PetSocialViewModel(
             answer = firstPrompt,
             conversation = introConversation,
         )
-        _uiState.value = state.copy(
-            selectedTab = AppTab.BarkAI,
+        _uiState.value = state.withNavigation {
+            copy(
+                selectedTab = AppTab.BarkAI,
+                selectedBarkThreadId = ONBOARD_THREAD_ID,
+                onboardingActive = true,
+                onboardingStep = 0,
+            )
+        }.copy(
             barkThreads = listOf(
                 BarkThread(
                     id = ONBOARD_THREAD_ID,
@@ -847,13 +1087,11 @@ class PetSocialViewModel(
                     updatedAt = System.currentTimeMillis(),
                 ),
             ),
-            selectedBarkThreadId = ONBOARD_THREAD_ID,
             chat = introResponse,
             conversation = introConversation,
-            onboardingActive = true,
-            onboardingStep = 0,
             onboardingOwnerName = "",
             onboardingDogName = "",
+            onboardingSuburb = "",
             onboardingPhotoCaptured = false,
             authRequired = false,
             authOtpRequested = false,
@@ -913,10 +1151,9 @@ class PetSocialViewModel(
             profileInfo = seededProfile,
             selectedSuburb = if (isStagingTestBuild()) STAGING_TEST_SUBURB else seededProfile.suburb,
             selectedRangeCenter = if (isStagingTestBuild()) "manual" else current.selectedRangeCenter,
-            onboardingActive = false,
-            onboardingStep = 0,
             onboardingOwnerName = "",
             onboardingDogName = "",
+            onboardingSuburb = "",
             onboardingPhotoCaptured = false,
             toastMessage = if (showToast) {
                 if (normalizedMode == TEST_PROFILE_MODE_ONBOARDING) {
@@ -927,7 +1164,12 @@ class PetSocialViewModel(
             } else {
                 current.toastMessage
             },
-        )
+        ).withNavigation {
+            copy(
+                onboardingActive = false,
+                onboardingStep = 0,
+            )
+        }
         _uiState.value = nextState
         if (normalizedMode == TEST_PROFILE_MODE_ONBOARDING) {
             initializeOnboardingFlowIfNeeded()
@@ -940,6 +1182,8 @@ class PetSocialViewModel(
     fun loadHomeData(
         category: String? = _uiState.value.selectedCategory,
         allowAuthRetry: Boolean = true,
+        showLoadingIndicators: Boolean = true,
+        scope: HomeRefreshScope = HomeRefreshScope.Full,
     ) {
         val state = _uiState.value
         if (requiresOtpAuth() && repository.currentAuthToken().isBlank()) {
@@ -956,188 +1200,39 @@ class PetSocialViewModel(
         val useCurrentLocation = state.selectedRangeCenter == "current" &&
             state.currentLatitude != null &&
             state.currentLongitude != null
-        val shouldLoadProviderInbox = IS_PROVIDER_OS_SURFACE || state.isServiceProvider
+        val shouldLoadProviderInbox = state.canLoadProviderInbox
+        val indicatorState = resolveHomeLoadIndicatorState(
+            showLoadingIndicators = showLoadingIndicators,
+            shouldLoadProviderInbox = shouldLoadProviderInbox,
+            currentLoading = state.loading,
+            currentLoadingProviderInbox = state.loadingProviderInbox,
+        )
+        val refreshPlan = resolveHomeRefreshPlan(
+            selectedTab = state.selectedTab,
+            scope = scope,
+        )
         viewModelScope.launch {
+            Trace.beginSection("loadHomeData")
             val totalStartNs = System.nanoTime()
             _uiState.value = _uiState.value.copy(
-                loading = true,
-                loadingProviderInbox = shouldLoadProviderInbox,
+                loading = indicatorState.loading,
+                loadingProviderInbox = indicatorState.loadingProviderInbox,
                 error = null,
                 selectedCategory = resolvedCategory,
             )
             val fetchStartNs = System.nanoTime()
             runCatching {
-                val shouldUseRecommendations = state.servicesSearchQuery.isBlank() && state.servicesSortBy == "relevance"
-                val recommendations = if (shouldUseRecommendations) {
-                    runCatching {
-                        repository.loadRecommendedProviders(
-                            category = resolvedCategory,
-                            suburb = if (isStagingTestBuild()) suburb else null,
-                            minRating = state.serviceMinRating?.toDouble(),
-                            maxDistanceKm = state.serviceMaxDistanceKm?.toDouble(),
-                            userLat = if (useCurrentLocation) state.currentLatitude else null,
-                            userLng = if (useCurrentLocation) state.currentLongitude else null,
-                        )
-                    }.getOrNull()
-                } else {
-                    null
-                }
-                val primaryProviders = recommendations?.providers ?: repository.loadProviders(
+                val currentPayload = currentHomePayload(state = state, suburb = suburb)
+                loadHomePayload(
+                    repository = repository,
+                    state = state,
+                    currentPayload = currentPayload,
+                    refreshPlan = refreshPlan,
                     category = resolvedCategory,
                     suburb = suburb,
-                    includeInactive = false,
-                    minRating = state.serviceMinRating?.toDouble(),
-                    maxDistanceKm = state.serviceMaxDistanceKm?.toDouble(),
-                    userLat = if (useCurrentLocation) state.currentLatitude else null,
-                    userLng = if (useCurrentLocation) state.currentLongitude else null,
-                    query = state.servicesSearchQuery.ifBlank { null },
-                    sortBy = state.servicesSortBy,
-                )
-                val providers = if (primaryProviders.isNotEmpty()) {
-                    primaryProviders
-                } else {
-                    // Keep Listings usable when strict local filters return no rows.
-                    val relaxedLocalProviders = repository.loadProviders(
-                        category = resolvedCategory,
-                        suburb = suburb,
-                        includeInactive = false,
-                        minRating = null,
-                        maxDistanceKm = null,
-                        userLat = null,
-                        userLng = null,
-                        query = state.servicesSearchQuery.ifBlank { null },
-                        sortBy = "relevance",
-                    )
-                    if (relaxedLocalProviders.isNotEmpty()) {
-                        relaxedLocalProviders
-                    } else {
-                        repository.loadProviders(
-                            category = resolvedCategory,
-                            suburb = null,
-                            includeInactive = false,
-                            minRating = null,
-                            maxDistanceKm = null,
-                            userLat = null,
-                            userLng = null,
-                            query = state.servicesSearchQuery.ifBlank { null },
-                            sortBy = "relevance",
-                        )
-                    }
-                }
-                val ownerListingProviders = repository.loadProviders(
-                    userId = state.activeUserId,
-                    includeInactive = true,
-                )
-                val localGroups = repository.loadGroups(suburb = suburb)
-                val groups = if (localGroups.isNotEmpty()) localGroups else repository.loadGroups(suburb = null)
-                val normalizedCommunitySort = normalizeCommunitySort(state.postsSortBy)
-                val localPosts = repository.loadPosts(
-                    suburb = suburb,
-                    postType = null,
-                    sortBy = normalizedCommunitySort,
-                    openOnly = null,
-                    recentHours = null,
-                    centerLat = null,
-                    centerLng = null,
-                    maxDistanceKm = null,
-                )
-                val posts = if (localPosts.isNotEmpty()) {
-                    localPosts
-                } else {
-                    repository.loadPosts(
-                        suburb = null,
-                        postType = null,
-                        sortBy = normalizedCommunitySort,
-                        openOnly = null,
-                        recentHours = null,
-                        centerLat = null,
-                        centerLng = null,
-                        maxDistanceKm = null,
-                    )
-                }
-                val localEvents = repository.loadEvents(suburb = suburb)
-                val events = if (localEvents.isNotEmpty()) localEvents else repository.loadEvents(suburb = null)
-                val ownerBookings = repository.loadOwnerBookings()
-                val providerBookings = repository.loadProviderBookings()
-                val providerInboxItems = if (shouldLoadProviderInbox) {
-                    runCatching {
-                        repository.loadProviderInbox(
-                            includeResolved = false,
-                            limit = 50,
-                        ).items
-                    }.getOrDefault(emptyList())
-                } else {
-                    emptyList()
-                }
-                val calendarEvents = repository.loadCalendarEvents(role = state.selectedCalendarRole)
-                val apiMessageThreads = runCatching { repository.loadMessageThreads(limit = 50) }
-                    .getOrElse {
-                        state.messageThreads.map { thread ->
-                            ApiMessageThread(
-                                id = thread.id,
-                                participantUserId = thread.participantUserId,
-                                lastMessage = thread.lastMessage,
-                                lastMessageAt = Instant.now().toString(),
-                                unreadCount = thread.unreadCount,
-                            )
-                        }
-                    }
-                val selectedMessageThreadId = state.selectedMessageThreadId
-                    ?.takeIf { selectedThreadId -> apiMessageThreads.any { thread -> thread.id == selectedThreadId } }
-                val selectedThreadMessages = if (selectedMessageThreadId.isNullOrBlank()) {
-                    emptyList()
-                } else {
-                    runCatching {
-                        repository.loadThreadMessages(
-                            threadId = selectedMessageThreadId,
-                            limit = 200,
-                        )
-                    }.getOrDefault(emptyList())
-                }
-                val notifications = repository.loadNotifications(unreadOnly = false)
-                val persistedProfile = runCatching { repository.loadUserProfile() }
-                    .map { response ->
-                        response.toProfileInfo(
-                            activeUserId = state.activeUserId,
-                            fallbackProfile = state.profileInfo,
-                            fallbackSuburb = suburb,
-                        )
-                    }
-                    .getOrElse { state.profileInfo.copy(suburb = if (isStagingTestBuild()) STAGING_TEST_SUBURB else suburb) }
-                val blockedUsers = runCatching { repository.loadBlockedUsers().blockedUserIds }.getOrDefault(emptyList())
-                val moderationReports = runCatching { repository.loadModerationReports(includeResolved = false) }.getOrDefault(emptyList())
-                val communityFunnel = runCatching { repository.loadCommunityFunnel(windowHours = 168) }.getOrNull()
-                val activationFunnel = runCatching { repository.loadCommunityActivationFunnel(windowHours = 72) }.getOrNull()
-                val nearbyPetBusinesses = if (useCurrentLocation) {
-                    repository.loadNearbyPetBusinesses(
-                        latitude = state.currentLatitude ?: 0.0,
-                        longitude = state.currentLongitude ?: 0.0,
-                    )
-                } else {
-                    emptyList()
-                }
-                HomePayload(
-                    providers = providers,
-                    ownerListingProviders = ownerListingProviders,
-                    recommendationSuburb = recommendations?.inferredSuburb,
-                    recommendationSource = recommendations?.suburbSource ?: "none",
-                    nearbyPetBusinesses = nearbyPetBusinesses,
-                    groups = groups,
-                    posts = posts,
-                    events = events,
-                    ownerBookings = ownerBookings,
-                    providerBookings = providerBookings,
-                    providerInboxItems = providerInboxItems,
-                    calendarEvents = calendarEvents,
-                    messageThreads = apiMessageThreads,
-                    selectedMessageThreadId = selectedMessageThreadId,
-                    selectedThreadMessages = selectedThreadMessages,
-                    notifications = notifications,
-                    profileInfo = persistedProfile,
-                    blockedUserIds = blockedUsers,
-                    moderationReports = moderationReports,
-                    communityFunnelMetrics = communityFunnel,
-                    activationFunnelMetrics = activationFunnel,
+                    isStagingTestBuild = isStagingTestBuild(),
+                    useCurrentLocation = useCurrentLocation,
+                    shouldLoadProviderInbox = shouldLoadProviderInbox,
                 )
             }.onSuccess { payload ->
                 val fetchMs = elapsedMs(fetchStartNs)
@@ -1168,21 +1263,25 @@ class PetSocialViewModel(
                         totalMs = elapsedMs(totalStartNs),
                     ),
                 )
-                recordHomeLoadMetrics(
-                    HomeLoadMetrics(
+                    val metrics = HomeLoadMetrics(
                         source = "network",
                         fetchMs = fetchMs,
                         applyMs = elapsedMs(applyStartNs),
                         totalMs = elapsedMs(totalStartNs),
-                    ),
-                )
+                    )
+                    logHomeLoadMetrics(metrics)
+                    recordHomeLoadMetrics(metrics)
             }.onFailure { error ->
                 val statusCode = (error as? HttpException)?.code()
                 if (allowAuthRetry && (statusCode == 401 || statusCode == 403)) {
                     if (allowsDemoLoginFallback()) {
                         val reAuthOk = repository.authenticateAsUser(_uiState.value.activeUserId)
                         if (reAuthOk) {
-                            loadHomeData(category = resolvedCategory, allowAuthRetry = false)
+                            loadHomeData(
+                                category = resolvedCategory,
+                                allowAuthRetry = false,
+                                scope = scope,
+                            )
                             return@onFailure
                         }
                     }
@@ -1233,14 +1332,14 @@ class PetSocialViewModel(
                             totalMs = elapsedMs(totalStartNs),
                         ),
                     )
-                    recordHomeLoadMetrics(
-                        HomeLoadMetrics(
-                            source = "cache",
-                            fetchMs = fetchMs,
-                            applyMs = elapsedMs(applyStartNs),
-                            totalMs = elapsedMs(totalStartNs),
-                        ),
+                    val metrics = HomeLoadMetrics(
+                        source = "cache",
+                        fetchMs = fetchMs,
+                        applyMs = elapsedMs(applyStartNs),
+                        totalMs = elapsedMs(totalStartNs),
                     )
+                    logHomeLoadMetrics(metrics)
+                    recordHomeLoadMetrics(metrics)
                 } else {
                     val metrics = HomeLoadMetrics(
                         source = "error",
@@ -1256,9 +1355,11 @@ class PetSocialViewModel(
                         hasPendingSync = true,
                         latestHomeLoadMetrics = metrics,
                     )
+                    logHomeLoadMetrics(metrics)
                     recordHomeLoadMetrics(metrics)
                 }
             }
+            Trace.endSection()
         }
     }
 
@@ -1271,243 +1372,26 @@ class PetSocialViewModel(
         metrics: HomeLoadMetrics? = null,
     ) {
         val current = _uiState.value
-        val providers = ensureSeedProviders(
-            providers = payload.providers,
+        val applySnapshot = buildHomeApplySnapshot(
+            current = current,
+            payload = payload,
             suburb = suburb,
-            category = current.selectedCategory,
+            isStagingTestBuild = isStagingTestBuild(),
         )
-        val groups = ensureSeedDogParkGroup(
-            groups = payload.groups,
-            activeUserId = current.activeUserId,
-        )
-        val posts = ensureSeedDogParkPosts(payload.posts)
-        val events = ensureSeedDogParkEvents(
-            events = payload.events,
-            activeUserId = current.activeUserId,
-        )
-        val providerById = providers.associateBy { it.id }
-        val existingFavoriteIds = current.favoriteProviderIds
-        val syncedFavorites = if (existingFavoriteIds.isEmpty()) {
-            providers.take(3).map { it.id }
-        } else {
-            existingFavoriteIds.filter { id -> providers.any { provider -> provider.id == id } }
-        }
-        val syncedListings = payload.ownerListingProviders
-            .filter { provider -> provider.ownerUserId == current.activeUserId }
-            .map { provider ->
-                ProviderListing(
-                    id = provider.id,
-                    title = provider.name,
-                    category = provider.category.replace("_", " "),
-                    status = provider.status,
-                    priceFrom = provider.priceFrom,
-                    description = provider.description,
-                    suburb = provider.suburb,
-                    imageUrls = provider.imageUrls,
-                )
-            }
-        val joinedEvents = events
-            .filter { event -> event.rsvpStatus == "attending" }
-            .map { event ->
-                JoinedEvent(
-                    id = event.id,
-                    title = event.title,
-                    date = event.date,
-                    suburb = event.suburb,
-                )
-            }
-        val ownerBookings = payload.ownerBookings.map { booking ->
-            val provider = providerById[booking.providerId]
-            OwnerBooking(
-                id = booking.id,
-                serviceName = provider?.name ?: booking.providerId,
-                providerId = booking.providerId,
-                providerUserId = provider?.ownerUserId.orEmpty(),
-                providerAccountLabel = provider?.ownerLabel
-                    ?: provider?.ownerUserId?.let(::accountLabel)
-                    ?: "Unknown owner",
-                date = booking.date,
-                timeSlot = booking.timeSlot,
-                status = booking.status,
-                note = booking.note,
-            )
-        }
-        val providerBookings = payload.providerBookings.map { booking ->
-            ProviderBooking(
-                id = booking.id,
-                petName = booking.petName,
-                ownerUserId = booking.ownerUserId,
-                providerId = booking.providerId,
-                serviceName = providerById[booking.providerId]?.name ?: booking.providerId,
-                date = booking.date,
-                timeSlot = booking.timeSlot,
-                status = booking.status,
-            )
-        }
-        val selectedThreadId = payload.selectedMessageThreadId
-            ?.takeIf { candidate -> payload.messageThreads.any { thread -> thread.id == candidate } }
-        val selectedThreadMessages = if (selectedThreadId.isNullOrBlank()) {
-            emptyList()
-        } else {
-            payload.selectedThreadMessages.map { message -> message.toDirectMessage() }
-        }
-        val validReadMessageIds = selectedThreadMessages.map { message -> message.id }.toSet()
-        val localNotifications = buildLocalCommunityNotifications(
-            activeUserId = current.activeUserId,
-            followedGroupIds = current.followedGroupIds,
-            savedPostIds = current.savedCommunityPostIds,
-            groups = groups,
-            events = events,
-            posts = posts,
-            moderationReports = payload.moderationReports,
-            includeFollowedGroupAlerts = current.notifyFollowedGroupAlerts,
-            includeSavedPostUpdates = current.notifySavedPostUpdates,
-            includeSafetyAlerts = current.notifySafetyAlerts,
-        )
-        val validLocalReadIds = current.readLocalNotificationIds.intersect(localNotifications.map { it.id }.toSet())
-        val mergedNotifications = mergeNotifications(
-            remoteNotifications = payload.notifications,
-            localNotifications = localNotifications,
-            localReadIds = validLocalReadIds,
-        )
-        val messageThreads = buildMessageThreadsFromApi(
-            activeUserId = _uiState.value.activeUserId,
-            apiThreads = payload.messageThreads,
-            providers = providers,
-            groups = groups,
-            posts = posts,
-            ownerBookings = ownerBookings,
-            providerBookings = providerBookings,
-            mutedThreadIds = current.mutedMessageThreadIds,
-            pinnedThreadIds = current.pinnedMessageThreadIds,
-            blockedParticipantIds = current.blockedUserIds.toSet(),
-        )
-        val friendProfiles = buildFriendProfiles(
-            activeUserId = current.activeUserId,
-            messageThreads = messageThreads,
-            existingProfiles = current.friendProfiles,
-        )
-        val validSavedPostIds = current.savedCommunityPostIds.intersect(posts.map { it.id }.toSet())
-        val validSavedEventIds = current.savedCommunityEventIds.intersect(events.map { it.id }.toSet())
-        val validFollowedGroupIds = current.followedGroupIds.intersect(groups.map { it.id }.toSet())
-        val groupRosters = buildGroupRosters(
-            groups = groups,
-            posts = posts,
-            providers = providers,
-            today = LocalDate.now(),
-        )
-        val boostedGroupRosters = if (ENABLE_TEST_SEED_DATA) {
-            buildMap {
-                putAll(groupRosters)
-                put(
-                    TEST_DOG_PARK_GROUP_ID,
-                    buildSeedDogParkRoster(
-                        today = LocalDate.now(),
-                        photoPool = providers.flatMap { it.imageUrls } + fallbackPetPhotos,
-                    ),
-                )
-            }
-        } else {
-            groupRosters
-        }
-        val groomerRosters = buildGroomerRosters(
-            providers = providers,
-            today = LocalDate.now(),
-        )
-        val providerIdsInScope = buildSet {
-            providerBookings
-                .map { booking -> booking.providerId }
-                .filter { id -> id.isNotBlank() }
-                .forEach { id -> add(id) }
-            syncedListings
-                .map { listing -> listing.id }
-                .filter { id -> id.isNotBlank() }
-                .forEach { id -> add(id) }
-        }
-        _uiState.value = current.copy(
-            providers = reuseIfEquivalent(current.providers, providers),
-            nearbyPetBusinesses = reuseIfEquivalent(current.nearbyPetBusinesses, payload.nearbyPetBusinesses),
-            groups = reuseIfEquivalent(current.groups, groups),
-            posts = reuseIfEquivalent(current.posts, posts),
-            communityCommentsByPostId = current.communityCommentsByPostId.filterKeys { postId ->
-                posts.any { post -> post.id == postId }
-            },
-            loadingCommentPostIds = current.loadingCommentPostIds.filter { postId ->
-                posts.any { post -> post.id == postId }
-            }.toSet(),
-            communityEvents = reuseIfEquivalent(current.communityEvents, events),
-            ownerBookings = reuseIfEquivalent(current.ownerBookings, ownerBookings),
-            providerBookings = reuseIfEquivalent(current.providerBookings, providerBookings),
-            providerInboxItems = reuseIfEquivalent(current.providerInboxItems, payload.providerInboxItems),
-            loadingProviderInbox = false,
-            calendarEvents = reuseIfEquivalent(current.calendarEvents, payload.calendarEvents),
-            messageThreads = reuseIfEquivalent(current.messageThreads, messageThreads),
-            friendProfiles = reuseIfEquivalent(current.friendProfiles, friendProfiles),
-            selectedMessageThreadId = selectedThreadId,
-            directMessages = reuseIfEquivalent(current.directMessages, selectedThreadMessages),
-            readDirectMessageIds = validReadMessageIds,
-            savedCommunityPostIds = validSavedPostIds,
-            savedCommunityEventIds = validSavedEventIds,
-            mutedCommunityKeywords = current.mutedCommunityKeywords,
-            followedGroupIds = validFollowedGroupIds,
-            joinedEvents = reuseIfEquivalent(current.joinedEvents, joinedEvents),
-            favoriteProviderIds = reuseIfEquivalent(current.favoriteProviderIds, syncedFavorites),
-            providerListings = reuseIfEquivalent(current.providerListings, syncedListings),
-            providerBlackoutsByProvider = current.providerBlackoutsByProvider.filterKeys { providerId ->
-                syncedListings.any { listing -> listing.id == providerId }
-            },
-            bookingHistoryByBookingId = current.bookingHistoryByBookingId.filterKeys { bookingId ->
-                ownerBookings.any { booking -> booking.id == bookingId } ||
-                    providerBookings.any { booking -> booking.id == bookingId }
-            },
-            loadingBookingHistoryIds = current.loadingBookingHistoryIds.filter { bookingId ->
-                ownerBookings.any { booking -> booking.id == bookingId } ||
-                    providerBookings.any { booking -> booking.id == bookingId }
-            }.toSet(),
-            providerRescheduleSlotsByKey = current.providerRescheduleSlotsByKey.filterKeys { key ->
-                providerIdsInScope.any { providerId -> key.startsWith("$providerId|") }
-            },
-            loadingProviderRescheduleKeys = current.loadingProviderRescheduleKeys.filter { key ->
-                providerIdsInScope.any { providerId -> key.startsWith("$providerId|") }
-            }.toSet(),
-            headerRosterPet = boostedGroupRosters.values
-                .flatten()
-                .dailyShuffle("header", LocalDate.now())
-                .firstOrNull(),
-            groupPetRosters = reuseIfEquivalent(current.groupPetRosters, boostedGroupRosters),
-            groomerPetRosters = reuseIfEquivalent(current.groomerPetRosters, groomerRosters),
-            servicesRecommendationSuburb = payload.recommendationSuburb,
-            servicesRecommendationSource = payload.recommendationSource,
-            profileInfo = payload.profileInfo.copy(
-                suburb = if (isStagingTestBuild()) STAGING_TEST_SUBURB else payload.profileInfo.suburb.ifBlank { suburb },
-            ),
-            loading = false,
-            error = errorMessage,
-            authRequired = false,
-            authInFlight = false,
-            latestHomeLoadMetrics = metrics ?: current.latestHomeLoadMetrics,
+        _uiState.value = current.applyHomePayloadSnapshot(
+            payload = payload,
+            snapshot = applySnapshot,
+            errorMessage = errorMessage,
             isOfflineMode = isOfflineMode,
             hasPendingSync = hasPendingSync,
-            notifications = reuseIfEquivalent(current.notifications, mergedNotifications),
-            readLocalNotificationIds = validLocalReadIds,
-            acknowledgedCommunityNotificationIds = current.acknowledgedCommunityNotificationIds
-                .intersect(mergedNotifications.map { notification -> notification.id }.toSet()),
-            acknowledgedMessageNotificationIds = current.acknowledgedMessageNotificationIds
-                .intersect(mergedNotifications.map { notification -> notification.id }.toSet()),
-            blockedUserIds = reuseIfEquivalent(current.blockedUserIds, payload.blockedUserIds),
-            moderationReports = reuseIfEquivalent(current.moderationReports, payload.moderationReports),
-            communityFunnelMetrics = payload.communityFunnelMetrics,
-            activationFunnelMetrics = payload.activationFunnelMetrics ?: current.activationFunnelMetrics,
-            isCommunityModerator = current.activeUserId in COMMUNITY_MODERATOR_IDS,
-            selectedCommunityGroupId = current.selectedCommunityGroupId
-                ?.takeIf { selectedId -> groups.any { group -> group.id == selectedId } },
+            metrics = metrics,
         )
         maybeRunAutoParkCheckIn(reason = "home_payload_applied")
     }
 
     fun refreshProviderInbox(includeResolved: Boolean = false) {
         val state = _uiState.value
-        if (!(IS_PROVIDER_OS_SURFACE || state.isServiceProvider)) return
+        if (!shouldRefreshProviderInbox(state.canLoadProviderInbox)) return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(loadingProviderInbox = true, error = null)
             runCatching {
@@ -1551,112 +1435,112 @@ class PetSocialViewModel(
         expiresAt: String,
         note: String = "",
     ) {
-        val normalizedId = inboxItemId.trim()
-        if (normalizedId.isBlank()) return
-        if (priceCents <= 0) {
-            _uiState.value = _uiState.value.copy(toastMessage = "Offer price must be greater than zero")
-            return
-        }
-        val cleanedDate = proposedDate.trim()
-        val cleanedTimeSlot = proposedTimeSlot.trim()
-        val cleanedExpiresAt = expiresAt.trim()
-        if (cleanedDate.isBlank() || cleanedTimeSlot.isBlank() || cleanedExpiresAt.isBlank()) {
-            _uiState.value = _uiState.value.copy(toastMessage = "Offer date, time, and expiry are required")
-            return
-        }
         val state = _uiState.value
-        val item = state.providerInboxItems.firstOrNull { inboxItem -> inboxItem.id == normalizedId }
-            ?: run {
-                _uiState.value = state.copy(toastMessage = "Inbox item not found")
+        when (
+            val resolution = resolveQuoteOfferSubmission(
+                providerInboxItems = state.providerInboxItems,
+                sendingQuoteOfferItemIds = state.sendingQuoteOfferItemIds,
+                inboxItemId = inboxItemId,
+                priceCents = priceCents,
+                proposedDate = proposedDate,
+                proposedTimeSlot = proposedTimeSlot,
+                expiresAt = expiresAt,
+                note = note,
+            )
+        ) {
+            QuoteOfferSubmissionResolution.Ignore -> return
+            is QuoteOfferSubmissionResolution.Toast -> {
+                _uiState.value = state.copy(toastMessage = resolution.toastMessage)
                 return
             }
-        val quoteRequestId = item.quoteRequestId?.trim().orEmpty()
-        if (item.itemType != "quote_request" || quoteRequestId.isBlank()) {
-            _uiState.value = state.copy(toastMessage = "Only quote requests can receive offers")
-            return
-        }
-        if (normalizedId in state.sendingQuoteOfferItemIds) return
-
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                sendingQuoteOfferItemIds = _uiState.value.sendingQuoteOfferItemIds + normalizedId,
-                error = null,
-            )
-            runCatching {
-                repository.createServiceQuoteOffer(
-                    quoteRequestId = quoteRequestId,
-                    providerId = item.providerId,
-                    priceCents = priceCents,
-                    proposedDate = cleanedDate,
-                    proposedTimeSlot = cleanedTimeSlot,
-                    expiresAt = cleanedExpiresAt,
-                    note = note.trim(),
-                )
-            }.onSuccess {
+            is QuoteOfferSubmissionResolution.Submit -> viewModelScope.launch {
                 _uiState.value = _uiState.value.copy(
-                    sendingQuoteOfferItemIds = _uiState.value.sendingQuoteOfferItemIds - normalizedId,
-                    toastMessage = "Offer sent for ${item.providerName} (AUD ${formatAudCents(priceCents)})",
+                    sendingQuoteOfferItemIds = _uiState.value.sendingQuoteOfferItemIds + resolution.inboxItemId,
+                    error = null,
                 )
-                refreshProviderInbox(includeResolved = false)
-            }.onFailure { error ->
-                _uiState.value = _uiState.value.copy(
-                    sendingQuoteOfferItemIds = _uiState.value.sendingQuoteOfferItemIds - normalizedId,
-                    error = error.message,
-                )
+                runCatching {
+                    repository.createServiceQuoteOffer(
+                        quoteRequestId = resolution.quoteRequestId,
+                        providerId = resolution.providerId,
+                        priceCents = resolution.priceCents,
+                        proposedDate = resolution.proposedDate,
+                        proposedTimeSlot = resolution.proposedTimeSlot,
+                        expiresAt = resolution.expiresAt,
+                        note = resolution.note,
+                    )
+                }.onSuccess {
+                    _uiState.value = _uiState.value.copy(
+                        sendingQuoteOfferItemIds = _uiState.value.sendingQuoteOfferItemIds - resolution.inboxItemId,
+                        toastMessage = "Offer sent for ${resolution.providerName} (AUD ${formatAudCents(resolution.priceCents)})",
+                    )
+                    refreshProviderInbox(includeResolved = false)
+                }.onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        sendingQuoteOfferItemIds = _uiState.value.sendingQuoteOfferItemIds - resolution.inboxItemId,
+                        error = error.message,
+                    )
+                }
             }
         }
     }
 
     fun switchTab(tab: AppTab) {
         val current = _uiState.value
-        _uiState.value = current.copy(
-            selectedTab = tab,
-            selectedCommunityGroupId = if (tab == AppTab.Community) {
-                current.selectedCommunityGroupId
-            } else {
-                null
-            },
-            profileNotificationFilter = if (tab == AppTab.Profile) current.profileNotificationFilter else "all",
-            acknowledgedCommunityNotificationIds = when (tab) {
-                AppTab.Community -> current.acknowledgedCommunityNotificationIds + current.notifications
-                    .asSequence()
-                    .filter { notification -> isCommunityNotification(notification.category) }
-                    .map { notification -> notification.id }
-                    .toSet()
-                else -> current.acknowledgedCommunityNotificationIds
-            },
-            acknowledgedMessageNotificationIds = when (tab) {
-                AppTab.Messages -> current.acknowledgedMessageNotificationIds + current.notifications
-                    .asSequence()
-                    .filter { notification -> isMessageNotification(notification.category) }
-                    .map { notification -> notification.id }
-                    .toSet()
-                else -> current.acknowledgedMessageNotificationIds
-            },
+        val resolution = resolveTabSwitchState(
+            navigation = current.navigation,
+            tab = tab,
+            directMessages = current.directMessages,
+            notifications = current.notifications,
+            acknowledgedCommunityNotificationIds = current.acknowledgedCommunityNotificationIds,
+            acknowledgedMessageNotificationIds = current.acknowledgedMessageNotificationIds,
         )
+        _uiState.value = current.copy(
+            navigation = resolution.navigation,
+            directMessages = resolution.directMessages,
+            acknowledgedCommunityNotificationIds = resolution.acknowledgedCommunityNotificationIds,
+            acknowledgedMessageNotificationIds = resolution.acknowledgedMessageNotificationIds,
+        )
+        startMessageRefreshTicker()
+    }
+
+    fun openBarkAiTab() {
+        val state = _uiState.value
+        when (val resolution = resolveBarkAiEntry(
+            onboardingActive = isOnboardingScriptEnabled() && state.onboardingActive,
+            selectedBarkThreadId = state.selectedBarkThreadId,
+            barkThreads = state.barkThreads,
+            newThreadId = "bark_thread_${System.currentTimeMillis()}",
+            updatedAt = System.currentTimeMillis(),
+        )) {
+            is BarkAiEntryResolution.StayOnOnboarding -> {
+                _uiState.value = _uiState.value.withNavigation {
+                    copy(
+                        selectedTab = AppTab.BarkAI,
+                        selectedBarkThreadId = resolution.selectedThreadId,
+                    )
+                }
+            }
+            is BarkAiEntryResolution.StartNewThread -> {
+                applyBarkAiNewThreadState(state = state, resolution = resolution)
+            }
+        }
     }
 
     fun openProfileNotifications(filter: String = "all") {
-        val normalized = when (filter.lowercase()) {
-            "community", "messages", "safety" -> filter.lowercase()
-            else -> "all"
-        }
         _uiState.value = _uiState.value.copy(
-            selectedTab = AppTab.Profile,
-            profileNotificationFilter = normalized,
+            navigation = resolveProfileNotificationNavigation(_uiState.value.navigation, filter),
         )
     }
 
     fun openCommunityGroup(groupId: String) {
-        if (groupId.isBlank()) return
-        _uiState.value = _uiState.value.copy(
-            selectedTab = AppTab.Community,
-            selectedCommunityGroupId = groupId,
-        )
+        val resolution = resolveCommunityGroupNavigation(_uiState.value.navigation, groupId) ?: return
+        _uiState.value = _uiState.value.copy(navigation = resolution)
     }
 
     fun clearSelectedCommunityGroup() {
-        _uiState.value = _uiState.value.copy(selectedCommunityGroupId = null)
+        _uiState.value = _uiState.value.copy(
+            navigation = clearSelectedCommunityGroupNavigation(_uiState.value.navigation),
+        )
     }
 
     fun refreshFriendQrPayload() {
@@ -1682,13 +1566,13 @@ class PetSocialViewModel(
     }
 
     fun resolveFriendQrToken(friendToken: String) {
-        val cleanToken = friendToken.trim()
-        if (cleanToken.isBlank()) {
-            _uiState.value = _uiState.value.copy(toastMessage = "Invalid friend QR")
-            return
-        }
-        viewModelScope.launch {
-            runCatching { repository.verifyFriendQr(cleanToken) }
+        when (val resolution = resolveFriendQrTokenInput(friendToken)) {
+            is FriendQrTokenResolution.Invalid -> {
+                _uiState.value = _uiState.value.copy(toastMessage = resolution.toastMessage)
+                return
+            }
+            is FriendQrTokenResolution.Verify -> viewModelScope.launch {
+                runCatching { repository.verifyFriendQr(resolution.token) }
                 .onSuccess { response ->
                     addFriendFromQr(
                         userId = response.userId,
@@ -1697,13 +1581,11 @@ class PetSocialViewModel(
                     )
                 }
                 .onFailure { error ->
-                    val message = when ((error as? HttpException)?.code()) {
-                        401 -> "Friend QR expired. Ask for a new one."
-                        409 -> "This is your profile QR"
-                        else -> "Unable to verify friend QR"
-                    }
-                    _uiState.value = _uiState.value.copy(toastMessage = message)
+                    _uiState.value = _uiState.value.copy(
+                        toastMessage = resolveFriendQrVerificationFailure((error as? HttpException)?.code()),
+                    )
                 }
+            }
         }
     }
 
@@ -1716,121 +1598,137 @@ class PetSocialViewModel(
         humanName: String? = null,
         dogName: String? = null,
     ) {
-        val normalized = userId.trim()
-        if (normalized.isBlank()) return
         val state = _uiState.value
-        if (normalized == state.activeUserId) {
-            _uiState.value = state.copy(toastMessage = "This is your profile QR")
-            return
-        }
-        val incomingHumanName = humanName?.trim().orEmpty()
-        val incomingDogName = dogName?.trim().orEmpty()
-        val existing = state.friendProfiles.firstOrNull { profile -> profile.userId == normalized }
-        val wasAlreadyFriend = existing?.isFriend == true
-        val updatedProfiles = if (existing != null) {
-            state.friendProfiles.map { profile ->
-                if (profile.userId != normalized) {
-                    profile
-                } else {
-                    profile.copy(
-                        humanName = if (incomingHumanName.isNotBlank()) incomingHumanName else profile.humanName,
-                        dogName = if (incomingDogName.isNotBlank()) incomingDogName else profile.dogName,
-                        isFriend = true,
-                    )
-                }
+        when (
+            val resolution = resolveFriendMutation(
+                state = state,
+                action = FriendMutationAction.AddOrUpdate,
+                userId = userId,
+                humanName = humanName,
+                dogName = dogName,
+            )
+        ) {
+            FriendMutationResolution.NoChange -> return
+            is FriendMutationResolution.ToastOnly -> {
+                _uiState.value = state.copy(toastMessage = resolution.toastMessage)
             }
-        } else {
-            val inserted = FriendProfile(
-                userId = normalized,
-                humanName = incomingHumanName.ifBlank { accountLabel(normalized) },
-                dogName = incomingDogName.ifBlank { "Dog" },
-                dogPhotoUrl = "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
-                isFriend = true,
-            )
-            (state.friendProfiles + inserted).sortedWith(
-                compareByDescending<FriendProfile> { profile -> profile.isFriend }
-                    .thenBy { profile -> profile.humanName.lowercase() },
-            )
+            is FriendMutationResolution.StateUpdate -> {
+                _uiState.value = state.copy(
+                    messageThreads = resolution.messageThreads,
+                    friendProfiles = resolution.friendProfiles,
+                    toastMessage = resolution.toastMessage,
+                )
+            }
         }
-        _uiState.value = state.copy(
-            friendProfiles = updatedProfiles,
-            toastMessage = if (wasAlreadyFriend) "Already friends" else "Friend added",
-        )
     }
 
     fun removeFriend(userId: String) {
-        val normalized = userId.trim()
-        if (normalized.isBlank()) return
         val state = _uiState.value
-        val updatedProfiles = state.friendProfiles.map { profile ->
-            if (profile.userId == normalized) profile.copy(isFriend = false) else profile
+        when (
+            val resolution = resolveFriendMutation(
+                state = state,
+                action = FriendMutationAction.Remove,
+                userId = userId,
+            )
+        ) {
+            FriendMutationResolution.NoChange -> return
+            is FriendMutationResolution.ToastOnly -> {
+                _uiState.value = state.copy(toastMessage = resolution.toastMessage)
+            }
+            is FriendMutationResolution.StateUpdate -> {
+                _uiState.value = state.copy(
+                    friendProfiles = resolution.friendProfiles,
+                    messageThreads = resolution.messageThreads,
+                    toastMessage = resolution.toastMessage,
+                )
+            }
         }
-        _uiState.value = state.copy(
-            friendProfiles = updatedProfiles,
-            toastMessage = "Friend removed",
-        )
     }
 
-    fun openMessagesForUser(userId: String) {
-        val normalized = userId.trim()
-        if (normalized.isBlank()) return
+    fun openMessages(target: MessageTarget) {
         val state = _uiState.value
+        val normalizedThreadId = target.threadId?.trim().orEmpty()
+        val normalizedUserId = target.userId?.trim().orEmpty()
         trackActivationEventAsync(
             step = "message_handoff",
             status = "attempted",
             metadata = mapOf(
-                "source" to "profile_social",
-                "target_present" to "true",
+                "source" to target.source,
+                "target_present" to (normalizedThreadId.isNotBlank() || normalizedUserId.isNotBlank()).toString(),
             ),
         )
-        val thread = state.messageThreads.firstOrNull { candidate -> candidate.participantUserId == normalized }
-        if (thread == null) {
-            trackActivationFailureAsync(
-                step = "message_handoff",
-                message = "thread_not_found",
-                metadata = mapOf(
-                    "source" to "profile_social",
-                    "target_present" to "true",
-                ),
-            )
-            _uiState.value = state.copy(
-                selectedTab = AppTab.Messages,
-                toastMessage = "Friend added. Start chat from Messages list.",
-            )
-            return
+        when (val resolution = resolveMessageOpen(state, target)) {
+            is MessageOpenResolution.SelectExistingThread -> {
+                selectMessageThread(resolution.threadId)
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Messages) }
+                trackActivationEventAsync(
+                    step = "message_handoff",
+                    status = "succeeded",
+                    metadata = mapOf(
+                        "source" to target.source,
+                        "target_present" to "true",
+                    ),
+                )
+            }
+            is MessageOpenResolution.CreateSyntheticThread -> {
+                _uiState.value = state.withNavigation {
+                    copy(
+                        selectedTab = AppTab.Messages,
+                        selectedMessageThreadId = resolution.selectedThreadId,
+                    )
+                }.copy(
+                    messageThreads = resolution.messageThreads,
+                    directMessages = emptyList(),
+                )
+            }
+            MessageOpenResolution.NoTarget -> {
+                _uiState.value = state.withNavigation { copy(selectedTab = AppTab.Messages) }.copy(
+                    toastMessage = "No message target available yet",
+                )
+            }
         }
-        selectMessageThread(thread.id)
-        _uiState.value = _uiState.value.copy(selectedTab = AppTab.Messages)
-        trackActivationEventAsync(
-            step = "message_handoff",
-            status = "succeeded",
-            metadata = mapOf(
-                "source" to "profile_social",
-                "target_present" to "true",
-            ),
-        )
+    }
+
+    fun openMessagesForUser(userId: String) {
+        openMessages(resolveProfileSocialMessageTarget(userId))
     }
 
     fun startNewBarkThread() {
-        if (isOnboardingScriptEnabled() && _uiState.value.onboardingActive) {
-            _uiState.value = _uiState.value.copy(
-                selectedTab = AppTab.BarkAI,
-                toastMessage = "Finish onboarding first",
-            )
-            return
+        val state = _uiState.value
+        when (val resolution = resolveBarkAiEntry(
+            onboardingActive = isOnboardingScriptEnabled() && state.onboardingActive,
+            selectedBarkThreadId = state.selectedBarkThreadId,
+            barkThreads = state.barkThreads,
+            newThreadId = "bark_thread_${System.currentTimeMillis()}",
+            updatedAt = System.currentTimeMillis(),
+        )) {
+            is BarkAiEntryResolution.StayOnOnboarding -> {
+                _uiState.value = _uiState.value.withNavigation {
+                    copy(
+                        selectedTab = AppTab.BarkAI,
+                        selectedBarkThreadId = resolution.selectedThreadId,
+                    )
+                }.copy(
+                    toastMessage = "Finish onboarding first",
+                )
+            }
+            is BarkAiEntryResolution.StartNewThread -> {
+                applyBarkAiNewThreadState(state = state, resolution = resolution)
+            }
         }
-        val now = System.currentTimeMillis()
-        val newId = "bark_thread_$now"
-        val newThread = BarkThread(
-            id = newId,
-            title = "New thread",
-            updatedAt = now,
-        )
-        val existing = _uiState.value.barkThreads.filterNot { it.id == newId }
-        _uiState.value = _uiState.value.copy(
-            selectedTab = AppTab.BarkAI,
-            selectedBarkThreadId = newId,
-            barkThreads = (listOf(newThread) + existing).take(20),
+    }
+
+    private fun applyBarkAiNewThreadState(
+        state: UiState,
+        resolution: BarkAiEntryResolution.StartNewThread,
+    ) {
+        _uiState.value = state.withNavigation {
+            copy(
+                selectedTab = AppTab.BarkAI,
+                selectedBarkThreadId = resolution.selectedThreadId,
+            )
+        }.copy(
+            barkThreads = resolution.barkThreads,
             chat = null,
             conversation = emptyList(),
             profileSuggestion = null,
@@ -1843,17 +1741,19 @@ class PetSocialViewModel(
 
     fun selectBarkThread(threadId: String) {
         if (isOnboardingScriptEnabled() && _uiState.value.onboardingActive) {
-            _uiState.value = _uiState.value.copy(
-                selectedTab = AppTab.BarkAI,
+            _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.BarkAI) }.copy(
                 toastMessage = "Finish onboarding first",
             )
             return
         }
         val state = _uiState.value
         val selected = state.barkThreads.firstOrNull { it.id == threadId } ?: return
-        _uiState.value = state.copy(
-            selectedTab = AppTab.BarkAI,
-            selectedBarkThreadId = threadId,
+        _uiState.value = state.withNavigation {
+            copy(
+                selectedTab = AppTab.BarkAI,
+                selectedBarkThreadId = threadId,
+            )
+        }.copy(
             chat = selected.chat,
             conversation = selected.conversation,
             profileSuggestion = selected.profileSuggestion,
@@ -1938,10 +1838,13 @@ class PetSocialViewModel(
                         ),
                         durationMs = elapsedMs(startedAtNs).toInt(),
                     )
-                    _uiState.value = _uiState.value.copy(
-                        pendingInvite = invite,
+                    _uiState.value = _uiState.value.withNavigation {
+                        copy(
+                            pendingInvite = invite,
+                            selectedTab = AppTab.Community,
+                        )
+                    }.copy(
                         selectedSuburb = invite.suburb,
-                        selectedTab = AppTab.Community,
                     )
                     loadHomeData(_uiState.value.selectedCategory)
                 }
@@ -1961,7 +1864,7 @@ class PetSocialViewModel(
     }
 
     fun dismissPendingInvite() {
-        _uiState.value = _uiState.value.copy(pendingInvite = null)
+        _uiState.value = _uiState.value.withNavigation { copy(pendingInvite = null) }
     }
 
     fun requestAuthOtp(inviteId: String, email: String) {
@@ -2080,15 +1983,17 @@ class PetSocialViewModel(
                     durationMs = elapsedMs(startedAtNs).toInt(),
                 )
                 repository.setActiveUser(response.userId)
-                _uiState.value = _uiState.value.copy(
+                _uiState.value = _uiState.value.withNavigation { copy(selectedMessageThreadId = null) }.copy(
                     activeUserId = response.userId,
+                    providerModeEnabled = IS_PROVIDER_OS_SURFACE,
+                    hasProviderListings = false,
+                    canLoadProviderInbox = IS_PROVIDER_OS_SURFACE,
                     authRequired = false,
                     authOtpRequested = false,
                     authInviteId = "",
                     authEmail = "",
                     authOtpExpiresAt = null,
                     authInFlight = false,
-                    selectedMessageThreadId = null,
                     readDirectMessageIds = emptySet(),
                     mutedMessageThreadIds = emptySet(),
                     pinnedMessageThreadIds = emptySet(),
@@ -2108,7 +2013,17 @@ class PetSocialViewModel(
                     isCommunityModerator = response.userId in COMMUNITY_MODERATOR_IDS,
                     toastMessage = "Signed in as ${response.userId}",
                 )
-                loadHomeData(_uiState.value.selectedCategory, allowAuthRetry = false)
+                if (isOnboardingScriptEnabled()) {
+                    repository.setTestProfileMode(TEST_PROFILE_MODE_ONBOARDING)
+                    applyTestProfileMode(
+                        mode = TEST_PROFILE_MODE_ONBOARDING,
+                        persist = false,
+                        triggerHomeReload = false,
+                        showToast = false,
+                    )
+                } else {
+                    loadHomeData(_uiState.value.selectedCategory, allowAuthRetry = false)
+                }
             }.onFailure { error ->
                 trackActivationFailure(
                     step = "otp_verify",
@@ -2174,11 +2089,17 @@ class PetSocialViewModel(
                     durationMs = elapsedMs(startedAtNs).toInt(),
                 )
                 repository.setActiveUser(response.userId)
-                _uiState.value = _uiState.value.copy(
+                _uiState.value = _uiState.value.withNavigation {
+                    copy(
+                        pendingInvite = null,
+                        selectedTab = AppTab.Community,
+                    )
+                }.copy(
                     activeUserId = response.userId,
-                    pendingInvite = null,
+                    providerModeEnabled = IS_PROVIDER_OS_SURFACE,
+                    hasProviderListings = false,
+                    canLoadProviderInbox = IS_PROVIDER_OS_SURFACE,
                     selectedSuburb = invite.suburb,
-                    selectedTab = AppTab.Community,
                     loading = false,
                     toastMessage = "Joined ${invite.groupName} as ${response.userId}",
                 )
@@ -2201,7 +2122,22 @@ class PetSocialViewModel(
 
     fun retrySync() {
         if (_uiState.value.loading) return
-        loadHomeData(_uiState.value.selectedCategory)
+        loadHomeData(
+            category = _uiState.value.selectedCategory,
+            scope = HomeRefreshScope.ActiveTab,
+        )
+    }
+
+    fun reloadHomeData(
+        showLoadingIndicators: Boolean = true,
+        scope: HomeRefreshScope = HomeRefreshScope.ActiveTab,
+    ) {
+        if (_uiState.value.loading && showLoadingIndicators) return
+        loadHomeData(
+            category = _uiState.value.selectedCategory,
+            showLoadingIndicators = showLoadingIndicators,
+            scope = scope,
+        )
     }
 
     fun setServicesViewMode(mode: String) {
@@ -2309,7 +2245,9 @@ class PetSocialViewModel(
 
     fun selectMessageThread(threadId: String) {
         if (threadId.isBlank()) return
-        _uiState.value = _uiState.value.copy(selectedMessageThreadId = threadId)
+        val state = _uiState.value
+        _uiState.value = state.withNavigation { copy(selectedMessageThreadId = threadId) }
+        startMessageRefreshTicker()
         viewModelScope.launch {
             runCatching { repository.markThreadRead(threadId) }
             val messages = runCatching {
@@ -2317,15 +2255,18 @@ class PetSocialViewModel(
                     threadId = threadId,
                     limit = 200,
                 ).map { message -> message.toDirectMessage() }
-            }.getOrDefault(emptyList())
+            }.getOrElse {
+                state.directMessages.filter { message -> message.threadId == threadId }
+            }
             val refreshedThreads = runCatching {
                 buildMessageThreadsForState(
                     state = _uiState.value,
                     apiThreads = repository.loadMessageThreads(limit = 50),
                 )
             }.getOrElse { _uiState.value.messageThreads }
-            _uiState.value = _uiState.value.copy(
-                selectedMessageThreadId = threadId.takeIf { id -> refreshedThreads.any { thread -> thread.id == id } },
+            _uiState.value = _uiState.value.withNavigation {
+                copy(selectedMessageThreadId = threadId.takeIf { id -> refreshedThreads.any { thread -> thread.id == id } })
+            }.copy(
                 directMessages = messages,
                 readDirectMessageIds = messages.map { message -> message.id }.toSet(),
                 messageThreads = refreshedThreads,
@@ -2351,7 +2292,7 @@ class PetSocialViewModel(
             _uiState.value = _uiState.value.copy(
                 readDirectMessageIds = readIds,
                 messageThreads = refreshedThreads,
-                toastMessage = if (markedRead) "Thread marked read" else "Unable to update read state",
+                toastMessage = if (markedRead) "Thread marked read" else null,
             )
         }
     }
@@ -2398,21 +2339,49 @@ class PetSocialViewModel(
 
     fun clearMessageThreadSelection() {
         val state = _uiState.value
-        _uiState.value = state.copy(
-            selectedMessageThreadId = null,
+        _uiState.value = state.withNavigation {
+            copy(selectedMessageThreadId = null)
+        }.copy(
             readDirectMessageIds = state.readDirectMessageIds + state.directMessages.map { message -> message.id },
             directMessages = emptyList(),
         )
+        startMessageRefreshTicker()
     }
 
     fun sendDirectMessage(threadId: String, body: String) {
         val trimmed = body.trim()
         if (trimmed.isBlank()) return
         val state = _uiState.value
-        val recipientUserId = state.messageThreads
+        val existingThread = state.messageThreads
             .firstOrNull { it.id == threadId }
+            ?: return
+        val recipientUserId = existingThread
             ?.participantUserId
             ?: return
+        val optimisticMessage = DirectMessage(
+            id = "local_${System.currentTimeMillis()}",
+            threadId = threadId,
+            senderUserId = state.activeUserId,
+            recipientUserId = recipientUserId,
+            body = trimmed,
+        )
+        val previousThread = existingThread
+        val optimisticThreads = state.messageThreads.map { thread ->
+            if (thread.id == threadId) {
+                thread.copy(
+                    lastMessage = trimmed,
+                    unreadCount = 0,
+                )
+            } else {
+                thread
+            }
+        }
+        _uiState.value = state.copy(
+            messageThreads = optimisticThreads,
+            directMessages = state.directMessages + optimisticMessage,
+            readDirectMessageIds = state.readDirectMessageIds + optimisticMessage.id,
+            error = null,
+        )
         viewModelScope.launch {
             runCatching {
                 repository.sendThreadMessage(
@@ -2421,26 +2390,15 @@ class PetSocialViewModel(
                     body = trimmed,
                 )
             }.onSuccess {
-                val messages = runCatching {
-                    repository.loadThreadMessages(
-                        threadId = threadId,
-                        limit = 200,
-                    ).map { message -> message.toDirectMessage() }
-                }.getOrDefault(_uiState.value.directMessages.filter { message -> message.threadId == threadId })
-                val refreshedThreads = runCatching {
-                    buildMessageThreadsForState(
-                        state = _uiState.value,
-                        apiThreads = repository.loadMessageThreads(limit = 50),
-                    )
-                }.getOrElse { _uiState.value.messageThreads }
-                _uiState.value = _uiState.value.copy(
-                    selectedMessageThreadId = threadId.takeIf { id -> refreshedThreads.any { thread -> thread.id == id } },
-                    directMessages = messages,
-                    readDirectMessageIds = messages.map { message -> message.id }.toSet(),
-                    messageThreads = refreshedThreads,
-                )
+                refreshMessageState(threadId = threadId)
             }.onFailure { error ->
-                _uiState.value = _uiState.value.copy(error = error.message)
+                _uiState.value = _uiState.value.copy(
+                    messageThreads = _uiState.value.messageThreads.map { thread ->
+                        if (thread.id == threadId) previousThread else thread
+                    },
+                    directMessages = _uiState.value.directMessages.filterNot { message -> message.id == optimisticMessage.id },
+                    error = error.message,
+                )
             }
         }
     }
@@ -2452,18 +2410,27 @@ class PetSocialViewModel(
             repository.setActiveUser(userId)
             val persistedTestProfileMode = normalizeTestProfileMode(repository.testProfileMode())
             val persistedProfileHeaderVisible = repository.isTestProfileHeaderVisible()
-            _uiState.value = _uiState.value.copy(
+            val (providerModeEnabled, hasProviderListings, canLoadProviderInbox) = clearedProviderState(
+                providerOsSurface = IS_PROVIDER_OS_SURFACE,
+            )
+            _uiState.value = _uiState.value.withNavigation {
+                copy(
+                    selectedMessageThreadId = null,
+                    profileNotificationFilter = "all",
+                )
+            }.copy(
                 activeUserId = userId,
                 testProfileMode = persistedTestProfileMode,
                 profileIdentityHeaderVisible = persistedProfileHeaderVisible,
+                providerModeEnabled = providerModeEnabled,
+                hasProviderListings = hasProviderListings,
+                canLoadProviderInbox = canLoadProviderInbox,
                 authRequired = false,
                 authOtpRequested = false,
                 authInviteId = "",
                 authEmail = "",
                 authOtpExpiresAt = null,
                 authInFlight = false,
-                selectedMessageThreadId = null,
-                profileNotificationFilter = "all",
                 readDirectMessageIds = emptySet(),
                 latestHomeLoadMetrics = null,
                 homeLoadHistory = emptyList(),
@@ -2497,42 +2464,32 @@ class PetSocialViewModel(
         viewModelScope.launch {
             val success = repository.logout()
             val state = _uiState.value
-            _uiState.value = state.copy(
+            val reset = resolveSessionResetState(
+                state = state,
+                providerOsSurface = IS_PROVIDER_OS_SURFACE,
                 authRequired = requiresOtpAuth(),
-                authOtpRequested = false,
-                authInviteId = "",
-                authEmail = "",
-                authOtpExpiresAt = null,
-                authInFlight = false,
-                providers = emptyList(),
-                nearbyPetBusinesses = emptyList(),
-                groups = emptyList(),
-                posts = emptyList(),
-                communityCommentsByPostId = emptyMap(),
-                communityEvents = emptyList(),
-                ownerBookings = emptyList(),
-                providerBookings = emptyList(),
-                calendarEvents = emptyList(),
-                messageThreads = emptyList(),
-                selectedMessageThreadId = null,
-                directMessages = emptyList(),
-                readDirectMessageIds = emptySet(),
-                savedCommunityPostIds = emptySet(),
-                savedCommunityEventIds = emptySet(),
-                pendingInvite = null,
-                latestGroupInvites = emptyMap(),
-                friendProfiles = emptyList(),
-                notifications = emptyList(),
-                readLocalNotificationIds = emptySet(),
-                acknowledgedCommunityNotificationIds = emptySet(),
-                acknowledgedMessageNotificationIds = emptySet(),
-                loading = false,
-                error = null,
+                activeUserId = state.activeUserId,
                 toastMessage = if (success) "Signed out" else "Signed out locally",
             )
+            _uiState.value = applySessionResetResolution(state, reset)
             if (!requiresOtpAuth()) {
                 loadHomeData(_uiState.value.selectedCategory)
             }
+        }
+    }
+
+    fun resetCurrentDeviceSignIn() {
+        viewModelScope.launch {
+            val success = repository.resetTrustedDevice()
+            val state = _uiState.value
+            val reset = resolveSessionResetState(
+                state = state,
+                providerOsSurface = IS_PROVIDER_OS_SURFACE,
+                authRequired = requiresOtpAuth(),
+                activeUserId = state.activeUserId,
+                toastMessage = if (success) "Device sign-in reset" else "Signed out locally",
+            )
+            _uiState.value = applySessionResetResolution(state, reset)
         }
     }
 
@@ -2548,41 +2505,14 @@ class PetSocialViewModel(
                         repository.setActiveUser(fallbackUserId)
                         runCatching { repository.authenticateAsUser(fallbackUserId) }
                     }
-                    _uiState.value = state.copy(
-                        activeUserId = fallbackUserId,
+                    val reset = resolveSessionResetState(
+                        state = state,
+                        providerOsSurface = IS_PROVIDER_OS_SURFACE,
                         authRequired = requiresOtpAuth(),
-                        authOtpRequested = false,
-                        authInviteId = "",
-                        authEmail = "",
-                        authOtpExpiresAt = null,
-                        authInFlight = false,
-                        providers = emptyList(),
-                        nearbyPetBusinesses = emptyList(),
-                        groups = emptyList(),
-                        posts = emptyList(),
-                        communityCommentsByPostId = emptyMap(),
-                        communityEvents = emptyList(),
-                        ownerBookings = emptyList(),
-                        providerBookings = emptyList(),
-                        calendarEvents = emptyList(),
-                        messageThreads = emptyList(),
-                        selectedMessageThreadId = null,
-                        directMessages = emptyList(),
-                        readDirectMessageIds = emptySet(),
-                        savedCommunityPostIds = emptySet(),
-                        savedCommunityEventIds = emptySet(),
-                        pendingInvite = null,
-                        latestGroupInvites = emptyMap(),
-                        friendProfiles = emptyList(),
-                        notifications = emptyList(),
-                        readLocalNotificationIds = emptySet(),
-                        acknowledgedCommunityNotificationIds = emptySet(),
-                        acknowledgedMessageNotificationIds = emptySet(),
-                        loading = false,
-                        error = null,
-                        isCommunityModerator = fallbackUserId in COMMUNITY_MODERATOR_IDS,
+                        activeUserId = fallbackUserId,
                         toastMessage = "Account deleted",
                     )
+                    _uiState.value = applySessionResetResolution(state.copy(activeUserId = fallbackUserId), reset)
                     if (!requiresOtpAuth()) {
                         loadHomeData(_uiState.value.selectedCategory)
                     }
@@ -2610,6 +2540,11 @@ class PetSocialViewModel(
             selectedRangeCenter = "manual",
             profileInfo = _uiState.value.profileInfo.copy(suburb = suburb),
         )
+    }
+
+    fun applyManualSuburb(suburb: String) {
+        updateSuburb(suburb)
+        reloadHomeData(scope = HomeRefreshScope.ActiveTab)
     }
 
     fun setDetectedLocation(snapshot: LocationSnapshot, applyAsSelected: Boolean) {
@@ -2732,6 +2667,7 @@ class PetSocialViewModel(
                     phone = normalized.phone,
                     humanPronouns = normalized.humanPronouns,
                     humanRoleLabel = normalized.humanRoleLabel,
+                    serviceProviderMode = normalized.serviceProviderMode,
                     dogName = normalized.dogName,
                     dogAgeMonths = normalized.dogAgeMonths,
                     dogBreedMix = normalized.dogBreedMix,
@@ -2764,13 +2700,22 @@ class PetSocialViewModel(
                     fieldVisibility = normalized.fieldVisibility,
                 )
             }.onSuccess { response ->
+                val savedProfile = response.toProfileInfo(
+                    activeUserId = _uiState.value.activeUserId,
+                    fallbackProfile = normalized,
+                    fallbackSuburb = normalized.suburb,
+                )
+                val providerState = deriveProviderState(
+                    providerOsSurface = IS_PROVIDER_OS_SURFACE,
+                    profileProviderMode = savedProfile.serviceProviderMode,
+                    hasProviderListings = _uiState.value.hasProviderListings,
+                )
                 _uiState.value = _uiState.value.copy(
                     loading = false,
-                    profileInfo = response.toProfileInfo(
-                        activeUserId = _uiState.value.activeUserId,
-                        fallbackProfile = normalized,
-                        fallbackSuburb = normalized.suburb,
-                    ),
+                    profileInfo = savedProfile,
+                    providerModeEnabled = providerState.providerModeEnabled,
+                    hasProviderListings = providerState.hasProviderListings,
+                    canLoadProviderInbox = providerState.canLoadProviderInbox,
                     selectedSuburb = if (isStagingTestBuild()) STAGING_TEST_SUBURB else normalized.suburb,
                     selectedRangeCenter = if (isStagingTestBuild()) "manual" else _uiState.value.selectedRangeCenter,
                     toastMessage = "Profile updated",
@@ -2798,10 +2743,89 @@ class PetSocialViewModel(
     }
 
     fun setServiceProviderMode(enabled: Boolean) {
-        _uiState.value = _uiState.value.copy(
-            isServiceProvider = enabled,
-            toastMessage = if (enabled) "Listing profile enabled" else "Listing profile disabled",
-        )
+        viewModelScope.launch {
+            val current = _uiState.value
+            val normalized = current.profileInfo.copy(serviceProviderMode = enabled)
+            val optimisticProviderState = deriveProviderState(
+                providerOsSurface = IS_PROVIDER_OS_SURFACE,
+                profileProviderMode = enabled,
+                hasProviderListings = current.hasProviderListings,
+            )
+            _uiState.value = current.copy(
+                loading = true,
+                error = null,
+                providerModeEnabled = optimisticProviderState.providerModeEnabled,
+                hasProviderListings = optimisticProviderState.hasProviderListings,
+                canLoadProviderInbox = optimisticProviderState.canLoadProviderInbox,
+                profileInfo = normalized,
+            )
+            runCatching {
+                repository.saveUserProfile(
+                    displayName = normalized.displayName,
+                    email = normalized.email,
+                    phone = normalized.phone,
+                    humanPronouns = normalized.humanPronouns,
+                    humanRoleLabel = normalized.humanRoleLabel,
+                    serviceProviderMode = normalized.serviceProviderMode,
+                    dogName = normalized.dogName,
+                    dogAgeMonths = normalized.dogAgeMonths,
+                    dogBreedMix = normalized.dogBreedMix,
+                    dogSexNeuter = normalized.dogGender,
+                    dogWeightClass = normalized.dogWeightKg,
+                    dogPhotoUrls = normalized.dogPhotoUrls,
+                    secondaryDogName = normalized.secondaryDogName,
+                    secondaryDogAgeMonths = normalized.secondaryDogAgeMonths,
+                    secondaryDogPhotoUrl = "",
+                    secondaryDogGender = normalized.secondaryDogGender,
+                    secondaryDogWeightKg = normalized.secondaryDogWeightKg,
+                    bio = normalized.bio,
+                    suburb = normalized.suburb,
+                    favoriteSuburbs = normalized.favoriteSuburbs,
+                    playEnergyLevel = normalized.playEnergyLevel,
+                    playStyle = normalized.playStyle,
+                    socialConfidence = normalized.socialConfidence,
+                    triggerNotes = normalized.triggerNotes,
+                    idealMatch = normalized.idealMatch,
+                    walkPreferences = normalized.walkPreferences,
+                    trainingStyle = normalized.trainingStyle,
+                    feedingRules = normalized.feedingRules,
+                    consentBoundaries = normalized.consentBoundaries,
+                    vaccinationStatus = normalized.vaccinationStatus,
+                    microchipped = normalized.microchipped,
+                    recallTrained = normalized.recallTrained,
+                    leashReliability = normalized.leashReliability,
+                    emergencyContactName = normalized.emergencyContactName,
+                    emergencyContactPhone = normalized.emergencyContactPhone,
+                    fieldVisibility = normalized.fieldVisibility,
+                )
+            }.onSuccess { response ->
+                val savedProfile = response.toProfileInfo(
+                    activeUserId = _uiState.value.activeUserId,
+                    fallbackProfile = normalized,
+                    fallbackSuburb = normalized.suburb,
+                )
+                val providerState = deriveProviderState(
+                    providerOsSurface = IS_PROVIDER_OS_SURFACE,
+                    profileProviderMode = savedProfile.serviceProviderMode,
+                    hasProviderListings = _uiState.value.hasProviderListings,
+                )
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    providerModeEnabled = providerState.providerModeEnabled,
+                    hasProviderListings = providerState.hasProviderListings,
+                    canLoadProviderInbox = providerState.canLoadProviderInbox,
+                    profileInfo = savedProfile,
+                    toastMessage = if (enabled) "Provider mode on" else "Provider mode off",
+                )
+                loadHomeData(_uiState.value.selectedCategory)
+            }.onFailure { error ->
+                _uiState.value = current.copy(
+                    loading = false,
+                    error = error.message ?: "Unable to update provider mode",
+                    toastMessage = "Could not update provider mode",
+                )
+            }
+        }
     }
 
     fun requestBookingEdit(bookingId: String) {
@@ -2868,6 +2892,7 @@ class PetSocialViewModel(
     fun editProviderListing(
         listingId: String,
         name: String,
+        suburb: String,
         description: String,
         priceFrom: Int,
         imageUrls: List<String> = emptyList(),
@@ -2879,6 +2904,7 @@ class PetSocialViewModel(
                 repository.updateServiceProvider(
                     providerId = listingId,
                     name = name,
+                    suburb = suburb,
                     description = description,
                     priceFrom = priceFrom,
                     fullDescription = description,
@@ -2949,9 +2975,8 @@ class PetSocialViewModel(
                     longitude = state.currentLongitude,
                 )
             }.onSuccess {
-                _uiState.value = _uiState.value.copy(
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Services) }.copy(
                     loading = false,
-                    selectedTab = AppTab.Services,
                     toastMessage = "Listing created",
                 )
                 loadHomeData(_uiState.value.selectedCategory)
@@ -2993,12 +3018,12 @@ class PetSocialViewModel(
                             imageUrls = localProvider.imageUrls,
                         ),
                     ) + state.providerListings
-                    _uiState.value = state.copy(
+                    _uiState.value = state.withNavigation { copy(selectedTab = AppTab.Services) }.copy(
                         loading = false,
-                        selectedTab = AppTab.Services,
                         providers = updatedProviders,
                         providerListings = updatedListings,
-                        isServiceProvider = true,
+                        hasProviderListings = true,
+                        canLoadProviderInbox = true,
                         hasPendingSync = true,
                         toastMessage = "Listing created locally (sync pending)",
                         error = null,
@@ -3224,8 +3249,7 @@ class PetSocialViewModel(
                     repository.loadProviderAvailability(providerId, today),
                 )
             }.onSuccess { (details, slots) ->
-                    _uiState.value = _uiState.value.copy(
-                        selectedProviderDetails = details,
+                    _uiState.value = _uiState.value.withNavigation { copy(selectedProviderDetails = details) }.copy(
                         availableSlots = slots,
                         availabilityDate = today,
                         loading = false,
@@ -3257,9 +3281,15 @@ class PetSocialViewModel(
         loadHomeData(_uiState.value.selectedCategory)
     }
 
+    fun updateServiceRange(maxDistanceKm: Int?) {
+        updateServiceFilters(
+            minRating = _uiState.value.serviceMinRating,
+            maxDistanceKm = maxDistanceKm,
+        )
+    }
+
     fun closeProviderDetails() {
-        _uiState.value = _uiState.value.copy(
-            selectedProviderDetails = null,
+        _uiState.value = _uiState.value.withNavigation { copy(selectedProviderDetails = null) }.copy(
             availableSlots = emptyList(),
             availabilityDate = null,
         )
@@ -3285,12 +3315,15 @@ class PetSocialViewModel(
         )
         val nextThreads = upsertBarkThread(state.barkThreads, nextThread)
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
+            _uiState.value = _uiState.value.withNavigation {
+                copy(
+                    selectedTab = AppTab.BarkAI,
+                    selectedBarkThreadId = nextThread.id,
+                )
+            }.copy(
                 loading = true,
                 error = null,
-                selectedTab = AppTab.BarkAI,
                 streamingAssistantText = "",
-                selectedBarkThreadId = nextThread.id,
                 barkThreads = nextThreads,
                 conversation = nextConversation,
             )
@@ -3320,7 +3353,7 @@ class PetSocialViewModel(
 
     fun submitOnboardingPhotoCapture(photoCaptured: Boolean, dogPhotoUri: String? = null) {
         val state = _uiState.value
-        if (!isOnboardingScriptEnabled() || !state.onboardingActive || state.onboardingStep < 2) return
+        if (!isOnboardingScriptEnabled() || !state.onboardingActive || state.onboardingStep < 3) return
 
         val userTurn = ChatTurn(
             role = "user",
@@ -3331,31 +3364,63 @@ class PetSocialViewModel(
             applyOnboardingConversationUpdate(
                 conversation = state.conversation + userTurn + onboardingAssistantTurn(retryPrompt),
                 latestAssistantAnswer = retryPrompt,
-                onboardingStep = 2,
+                onboardingStep = 3,
                 onboardingActive = true,
                 ownerName = state.onboardingOwnerName,
                 dogName = state.onboardingDogName,
+                suburb = state.onboardingSuburb,
                 photoCaptured = false,
                 dogPhotoUri = null,
             )
             return
         }
 
-        val cuteLine = pickOnboardingVariation(ONBOARD_CUTE_VARIATIONS)
-        val thanksLine = pickOnboardingVariation(ONBOARD_THANKS_VARIATIONS)
-        val completion = "$cuteLine $thanksLine You're all set."
-        applyOnboardingConversationUpdate(
-            conversation = state.conversation + userTurn + onboardingAssistantTurn(completion),
-            latestAssistantAnswer = completion,
-            onboardingStep = 3,
-            onboardingActive = false,
+        val completedProfile = updateOnboardingProfileInfo(
+            profile = state.profileInfo,
             ownerName = state.onboardingOwnerName,
             dogName = state.onboardingDogName,
-            photoCaptured = true,
+            suburb = state.onboardingSuburb,
             dogPhotoUri = dogPhotoUri,
-            toastMessage = "Onboarding complete",
         )
-        loadHomeData(_uiState.value.selectedCategory, allowAuthRetry = false)
+        val completionResolution = resolveOnboardingCompletion(
+            barkThreads = state.barkThreads,
+            fallbackThreadId = "bark_thread_${System.currentTimeMillis()}",
+            fallbackUpdatedAt = System.currentTimeMillis(),
+        )
+        _uiState.value = state.withNavigation {
+            copy(
+                selectedTab = AppTab.Profile,
+                selectedBarkThreadId = completionResolution.selectedThreadId,
+                onboardingStep = 3,
+                onboardingActive = false,
+            )
+        }.copy(
+            chat = completionResolution.chat,
+            conversation = completionResolution.conversation,
+            barkThreads = completionResolution.barkThreads,
+            profileInfo = completedProfile,
+            onboardingOwnerName = state.onboardingOwnerName,
+            onboardingDogName = state.onboardingDogName,
+            onboardingSuburb = state.onboardingSuburb,
+            onboardingPhotoCaptured = true,
+            selectedSuburb = state.onboardingSuburb.trim().ifBlank { state.selectedSuburb },
+            authRequired = false,
+            authOtpRequested = false,
+            authInviteId = "",
+            authEmail = "",
+            authOtpExpiresAt = null,
+            authInFlight = false,
+            loading = false,
+            streamingAssistantText = "",
+            error = null,
+            toastMessage = "You're all set. Home is on the far right if you want to review or edit your profile.",
+        )
+        repository.setTestProfileMode(TEST_PROFILE_MODE_READY)
+        _uiState.value = _uiState.value.copy(testProfileMode = TEST_PROFILE_MODE_READY)
+        viewModelScope.launch {
+            persistProfileInfoSilently(completedProfile)
+            loadHomeData(_uiState.value.selectedCategory, allowAuthRetry = false)
+        }
     }
 
     private fun handleOnboardingTextReply(message: String) {
@@ -3371,19 +3436,35 @@ class PetSocialViewModel(
                     onboardingActive = true,
                     ownerName = message,
                     dogName = "",
+                    suburb = "",
                     photoCaptured = false,
                     dogPhotoUri = null,
                 )
             }
             1 -> {
-                val photoQuestion = pickOnboardingVariation(ONBOARD_DOG_PHOTO_QUESTIONS)
+                val suburbQuestion = pickOnboardingVariation(ONBOARD_SUBURB_QUESTIONS)
                 applyOnboardingConversationUpdate(
-                    conversation = state.conversation + userTurn + onboardingAssistantTurn(photoQuestion),
-                    latestAssistantAnswer = photoQuestion,
+                    conversation = state.conversation + userTurn + onboardingAssistantTurn(suburbQuestion),
+                    latestAssistantAnswer = suburbQuestion,
                     onboardingStep = 2,
                     onboardingActive = true,
                     ownerName = state.onboardingOwnerName,
                     dogName = message,
+                    suburb = "",
+                    photoCaptured = false,
+                    dogPhotoUri = null,
+                )
+            }
+            2 -> {
+                val photoQuestion = pickOnboardingVariation(ONBOARD_DOG_PHOTO_QUESTIONS)
+                applyOnboardingConversationUpdate(
+                    conversation = state.conversation + userTurn + onboardingAssistantTurn(photoQuestion),
+                    latestAssistantAnswer = photoQuestion,
+                    onboardingStep = 3,
+                    onboardingActive = true,
+                    ownerName = state.onboardingOwnerName,
+                    dogName = state.onboardingDogName,
+                    suburb = message,
                     photoCaptured = false,
                     dogPhotoUri = null,
                 )
@@ -3393,10 +3474,11 @@ class PetSocialViewModel(
                 applyOnboardingConversationUpdate(
                     conversation = state.conversation + userTurn + onboardingAssistantTurn(cameraReminder),
                     latestAssistantAnswer = cameraReminder,
-                    onboardingStep = 2,
+                    onboardingStep = 3,
                     onboardingActive = true,
                     ownerName = state.onboardingOwnerName,
                     dogName = state.onboardingDogName,
+                    suburb = state.onboardingSuburb,
                     photoCaptured = false,
                     dogPhotoUri = null,
                 )
@@ -3411,6 +3493,7 @@ class PetSocialViewModel(
         onboardingActive: Boolean,
         ownerName: String,
         dogName: String,
+        suburb: String,
         photoCaptured: Boolean,
         dogPhotoUri: String? = null,
         toastMessage: String? = null,
@@ -3430,23 +3513,29 @@ class PetSocialViewModel(
             chat = response,
             updatedAt = System.currentTimeMillis(),
         )
-        _uiState.value = state.copy(
-            selectedTab = AppTab.BarkAI,
+        _uiState.value = state.withNavigation {
+            copy(
+                selectedTab = AppTab.BarkAI,
+                selectedBarkThreadId = updatedThread.id,
+                onboardingStep = onboardingStep,
+                onboardingActive = onboardingActive,
+            )
+        }.copy(
             chat = response,
             conversation = conversation,
             barkThreads = upsertBarkThread(state.barkThreads, updatedThread),
-            selectedBarkThreadId = updatedThread.id,
             profileInfo = updateOnboardingProfileInfo(
                 profile = state.profileInfo,
                 ownerName = ownerName,
                 dogName = dogName,
+                suburb = suburb,
                 dogPhotoUri = dogPhotoUri,
             ),
-            onboardingStep = onboardingStep,
-            onboardingActive = onboardingActive,
             onboardingOwnerName = ownerName,
             onboardingDogName = dogName,
+            onboardingSuburb = suburb,
             onboardingPhotoCaptured = photoCaptured,
+            selectedSuburb = suburb.trim().ifBlank { state.selectedSuburb },
             authRequired = false,
             authOtpRequested = false,
             authInviteId = "",
@@ -3503,8 +3592,7 @@ class PetSocialViewModel(
             ?.toIntOrNull()
             ?.coerceIn(1, 50)
 
-        _uiState.value = _uiState.value.copy(
-            selectedTab = AppTab.Services,
+        _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Services) }.copy(
             selectedCategory = category,
             serviceMaxDistanceKm = distanceKm ?: _uiState.value.serviceMaxDistanceKm,
             servicesViewMode = "list",
@@ -3526,48 +3614,84 @@ class PetSocialViewModel(
 
     fun requestBooking(providerId: String, date: String, timeSlot: String, note: String) {
         val state = _uiState.value
-        val providerOwnerUserId = state.providers.firstOrNull { it.id == providerId }?.ownerUserId
-        val approvalHint = nextActionSwitchHint(
-            targetUserId = providerOwnerUserId,
-            activeUserId = state.activeUserId,
-            actionText = "approve this booking",
-        )
+        when (
+            val resolution = resolveBookingRequest(
+                state = state,
+                providerId = providerId,
+                date = date,
+                timeSlot = timeSlot,
+                note = note,
+            )
+        ) {
+            BookingRequestResolution.Ignore -> return
+            is BookingRequestResolution.Toast -> {
+                _uiState.value = state.copy(toastMessage = resolution.toastMessage)
+                return
+            }
+            is BookingRequestResolution.Submit -> {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(loading = true, error = null)
             runCatching {
-                repository.createBookingHold(providerId = providerId, date = date, timeSlot = timeSlot)
-                repository.requestBooking(providerId, date, timeSlot, note)
+                        repository.createBookingHold(
+                            providerId = resolution.providerId,
+                            date = resolution.date,
+                            timeSlot = resolution.timeSlot,
+                        )
+                        repository.requestBooking(
+                            resolution.providerId,
+                            resolution.date,
+                            resolution.timeSlot,
+                            resolution.note,
+                        )
             }
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
                         loading = false,
-                        toastMessage = "Booking requested: ${it.id}.$approvalHint",
+                                toastMessage = "Booking requested: ${it.id}.${resolution.approvalHint}",
                     )
                     loadHomeData(_uiState.value.selectedCategory)
-                    loadAvailability(providerId, date)
+                            loadAvailability(resolution.providerId, resolution.date)
                 }
                 .onFailure { error -> _uiState.value = _uiState.value.copy(error = error.message, loading = false) }
+        }
+            }
         }
     }
 
     fun requestQuote(category: String, preferredWindow: String, petDetails: String, note: String) {
         val state = _uiState.value
-        val cleanedCategory = category.trim()
-        val cleanedWindow = preferredWindow.trim()
-        val cleanedPetDetails = petDetails.trim()
-        if (cleanedCategory.isBlank() || cleanedWindow.isBlank() || cleanedPetDetails.isBlank()) {
-            _uiState.value = _uiState.value.copy(toastMessage = "Complete category, preferred window, and pet details")
-            return
-        }
+        val resolvedSuburb = resolveServiceQuoteSuburb(
+            selectedSuburb = state.selectedSuburb,
+            currentLocationSuburb = state.currentLocationSuburb,
+            profileSuburb = state.profileInfo.suburb,
+            recommendationSuburb = state.servicesRecommendationSuburb,
+            providers = state.providers,
+            category = category,
+        )
+        when (
+            val resolution = resolveServiceQuoteRequest(
+                selectedSuburb = resolvedSuburb.orEmpty(),
+                stagingTestBuild = isStagingTestBuild(),
+                category = category,
+                preferredWindow = preferredWindow,
+                petDetails = petDetails,
+                note = note,
+            )
+        ) {
+            is ServiceQuoteRequestResolution.Toast -> {
+                _uiState.value = state.copy(toastMessage = resolution.toastMessage)
+                return
+            }
+            is ServiceQuoteRequestResolution.Submit -> {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(loading = true, error = null)
             runCatching {
                 repository.requestServiceQuote(
-                    category = cleanedCategory,
-                    suburb = if (isStagingTestBuild()) state.selectedSuburb else null,
-                    preferredWindow = cleanedWindow,
-                    petDetails = cleanedPetDetails,
-                    note = note.trim(),
+                            category = resolution.category,
+                            suburb = resolution.suburb,
+                            preferredWindow = resolution.preferredWindow,
+                            petDetails = resolution.petDetails,
+                            note = resolution.note,
                 )
             }.onSuccess { result ->
                 val targetCount = result.targets.size
@@ -3575,9 +3699,21 @@ class PetSocialViewModel(
                     loading = false,
                     toastMessage = "Quote sent to $targetCount provider(s). +1 Local Scout XP",
                 )
-                loadHomeData(_uiState.value.selectedCategory)
+                loadHomeData(
+                    category = _uiState.value.selectedCategory,
+                    showLoadingIndicators = false,
+                )
             }.onFailure { error ->
-                _uiState.value = _uiState.value.copy(loading = false, error = error.message)
+                val httpCode = (error as? HttpException)?.code()
+                val friendlyError = when {
+                    httpCode == 404 && error.message?.contains("No matching providers found", ignoreCase = true) == true ->
+                        "No matching providers found right now. Try another category or suburb."
+                    httpCode == 404 -> "No eligible providers found for this quote right now. Try another category or suburb."
+                    else -> error.message
+                }
+                _uiState.value = _uiState.value.copy(loading = false, error = friendlyError)
+            }
+        }
             }
         }
     }
@@ -3825,23 +3961,28 @@ class PetSocialViewModel(
     fun handleCta(cta: ChatCta) {
         when (cta.action) {
             "find_dog_walkers" -> {
-                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Services)
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Services) }
                 loadHomeData(category = "dog_walking")
             }
 
             "find_groomers" -> {
-                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Services)
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Services) }
                 loadHomeData(category = "grooming")
             }
 
             "open_services" -> {
                 val category = cta.payload.readString("category")
-                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Services)
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Services) }
                 loadHomeData(category)
             }
 
             "open_community" -> {
-                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Community)
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Community) }
+                loadHomeData(_uiState.value.selectedCategory)
+            }
+
+            "open_home" -> {
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Profile) }
                 loadHomeData(_uiState.value.selectedCategory)
             }
 
@@ -3853,6 +3994,25 @@ class PetSocialViewModel(
             }
 
             "new_bark_thread" -> startNewBarkThread()
+            "urgent_vet_steps" -> {
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.BarkAI) }.copy(
+                    toastMessage = "Share timing, breathing, weakness, and what changed so BarkWiseAI can help you triage.",
+                )
+            }
+
+            "what_to_monitor" -> {
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.BarkAI) }.copy(
+                    toastMessage = "Tell BarkWiseAI what changed next so it can help you monitor symptoms.",
+                )
+            }
+
+            "prepare_vet_summary" -> {
+                startNewBarkThread()
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = "Start a fresh BarkWiseAI thread with symptom timing, frequency, appetite, and any exposures.",
+                )
+            }
+
             "accept_profile_card" -> acceptProfileCard()
             "submit_provider_listing" -> submitProviderListing()
             "join_group" -> {
@@ -3880,7 +4040,7 @@ class PetSocialViewModel(
                         .firstOrNull { cta -> cta.action == "open_services" }
                         ?.payload
                         .readString("category")
-                    _uiState.value = _uiState.value.copy(selectedTab = AppTab.Services, selectedCategory = category)
+                    _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Services) }.copy(selectedCategory = category)
                     loadHomeData(category)
                 }
                 .onFailure { error -> _uiState.value = _uiState.value.copy(error = error.message, loading = false) }
@@ -3904,9 +4064,8 @@ class PetSocialViewModel(
             runCatching {
                 repository.createLostFoundPost(payload)
             }.onSuccess {
-                _uiState.value = _uiState.value.copy(
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Community) }.copy(
                     loading = false,
-                    selectedTab = AppTab.Community,
                     postsSortBy = "relevance",
                     toastMessage = "Lost/found post created",
                 )
@@ -3929,9 +4088,8 @@ class PetSocialViewModel(
                     ),
                 )
             }.onSuccess {
-                _uiState.value = _uiState.value.copy(
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Community) }.copy(
                     loading = false,
-                    selectedTab = AppTab.Community,
                     postsSortBy = "latest",
                     toastMessage = "Location share posted",
                 )
@@ -3954,9 +4112,8 @@ class PetSocialViewModel(
                         "expired" -> "Marked as no longer active"
                         else -> "Lost/found alert updated"
                     }
-                    _uiState.value = _uiState.value.copy(
+                    _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Community) }.copy(
                         loading = false,
-                        selectedTab = AppTab.Community,
                         postsSortBy = "relevance",
                         toastMessage = toast,
                     )
@@ -3974,9 +4131,8 @@ class PetSocialViewModel(
             _uiState.value = _uiState.value.copy(loading = true, error = null)
             runCatching { repository.deleteCommunityPost(postId) }
                 .onSuccess {
-                    _uiState.value = _uiState.value.copy(
+                    _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Community) }.copy(
                         loading = false,
-                        selectedTab = AppTab.Community,
                         toastMessage = "Share stopped",
                     )
                     loadHomeData(_uiState.value.selectedCategory)
@@ -4198,9 +4354,8 @@ class PetSocialViewModel(
                     suburb = suburb,
                 )
             }.onSuccess {
-                _uiState.value = _uiState.value.copy(
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Community) }.copy(
                     loading = false,
-                    selectedTab = AppTab.Community,
                     toastMessage = "Community post created",
                 )
                 loadHomeData(_uiState.value.selectedCategory)
@@ -4222,6 +4377,77 @@ class PetSocialViewModel(
                 refreshMockCommunityWeather()
             }
         }
+    }
+
+    private fun startMessageRefreshTicker() {
+        messageRefreshJob?.cancel()
+        messageRefreshJob = viewModelScope.launch {
+            while (true) {
+                val intervalMs = if (_uiState.value.selectedTab == AppTab.Messages) 2_000L else 6_000L
+                delay(intervalMs)
+                if (_uiState.value.authRequired || repository.currentAuthToken().isBlank()) {
+                    continue
+                }
+                refreshMessageState(threadId = _uiState.value.selectedMessageThreadId, silent = true)
+            }
+        }
+    }
+
+    private suspend fun refreshMessageState(threadId: String?, silent: Boolean = false) {
+        val current = _uiState.value
+        val refreshedThreads = runCatching {
+            buildMessageThreadsForState(
+                state = current,
+                apiThreads = repository.loadMessageThreads(limit = 50),
+            )
+        }.getOrElse {
+            if (!silent) {
+                _uiState.value = _uiState.value.copy(error = it.message)
+            }
+            current.messageThreads
+        }
+        val resolvedThreadId = threadId?.takeIf { id ->
+            refreshedThreads.any { thread -> thread.id == id }
+        }
+        val refreshedMessages = if (resolvedThreadId.isNullOrBlank()) {
+            if (current.selectedMessageThreadId == threadId) current.directMessages else emptyList()
+        } else {
+            runCatching {
+                repository.loadThreadMessages(
+                    threadId = resolvedThreadId,
+                    limit = 200,
+                ).map { message -> message.toDirectMessage() }
+            }.map { fetched ->
+                if (fetched.isEmpty()) {
+                    current.directMessages.filter { message -> message.threadId == resolvedThreadId }
+                } else {
+                    fetched
+                }
+            }.getOrElse {
+                if (!silent) {
+                    _uiState.value = _uiState.value.copy(error = it.message)
+                }
+                current.directMessages.filter { message -> message.threadId == resolvedThreadId }
+            }
+        }
+        val friendProfiles = buildFriendProfiles(
+            activeUserId = current.activeUserId,
+            messageThreads = refreshedThreads,
+            existingProfiles = current.friendProfiles,
+        )
+        _uiState.value = _uiState.value.withNavigation { copy(selectedMessageThreadId = resolvedThreadId) }.copy(
+            messageThreads = applyFriendProfileAvatars(
+                threads = refreshedThreads,
+                friendProfiles = friendProfiles,
+            ),
+            directMessages = refreshedMessages,
+            readDirectMessageIds = if (resolvedThreadId.isNullOrBlank()) {
+                current.readDirectMessageIds
+            } else {
+                refreshedMessages.map { message -> message.id }.toSet()
+            },
+            friendProfiles = reuseIfEquivalent(current.friendProfiles, friendProfiles),
+        )
     }
 
     private fun refreshMockCommunityWeather() {
@@ -4352,6 +4578,7 @@ class PetSocialViewModel(
 
     override fun onCleared() {
         weatherTickerJob?.cancel()
+        messageRefreshJob?.cancel()
         super.onCleared()
     }
 
@@ -4363,13 +4590,25 @@ class PetSocialViewModel(
         )
     }
 
+    private fun logHomeLoadMetrics(metrics: HomeLoadMetrics) {
+        if (!BuildConfig.DEBUG) return
+        Log.d(
+            "BarkWisePerf",
+            "loadHomeData source=${metrics.source} fetchMs=${metrics.fetchMs} " +
+                "applyMs=${metrics.applyMs} totalMs=${metrics.totalMs}",
+        )
+    }
+
     fun markNotificationRead(notificationId: String) {
         if (notificationId.startsWith("local:")) {
+            val resolution = resolveLocalNotificationRead(
+                notifications = _uiState.value.notifications,
+                readLocalNotificationIds = _uiState.value.readLocalNotificationIds,
+                notificationId = notificationId,
+            )
             _uiState.value = _uiState.value.copy(
-                readLocalNotificationIds = _uiState.value.readLocalNotificationIds + notificationId,
-                notifications = _uiState.value.notifications.map { existing ->
-                    if (existing.id == notificationId) existing.copy(read = true) else existing
-                },
+                notifications = resolution.notifications,
+                readLocalNotificationIds = resolution.readLocalNotificationIds,
             )
             return
         }
@@ -4394,11 +4633,14 @@ class PetSocialViewModel(
 
         val localIds = ids.filter { id -> id.startsWith("local:") }.toSet()
         if (localIds.isNotEmpty()) {
+            val resolution = resolveLocalNotificationIdsRead(
+                notifications = _uiState.value.notifications,
+                readLocalNotificationIds = _uiState.value.readLocalNotificationIds,
+                notificationIds = localIds,
+            )
             _uiState.value = _uiState.value.copy(
-                readLocalNotificationIds = _uiState.value.readLocalNotificationIds + localIds,
-                notifications = _uiState.value.notifications.map { notification ->
-                    if (notification.id in localIds) notification.copy(read = true) else notification
-                },
+                notifications = resolution.notifications,
+                readLocalNotificationIds = resolution.readLocalNotificationIds,
             )
         }
 
@@ -4429,38 +4671,54 @@ class PetSocialViewModel(
             .map { notification -> notification.id }
             .toSet()
         if (localUnreadIds.isNotEmpty()) {
-            _uiState.value = state.copy(
-                readLocalNotificationIds = state.readLocalNotificationIds + localUnreadIds,
-                notifications = state.notifications.map { notification ->
-                    if (notification.id in localUnreadIds) notification.copy(read = true) else notification
-                },
+            val resolution = resolveLocalNotificationIdsRead(
+                notifications = state.notifications,
+                readLocalNotificationIds = state.readLocalNotificationIds,
+                notificationIds = localUnreadIds,
                 toastMessage = "Local notifications marked read",
+            )
+            _uiState.value = state.copy(
+                notifications = resolution.notifications,
+                readLocalNotificationIds = resolution.readLocalNotificationIds,
+                toastMessage = resolution.toastMessage,
             )
         }
     }
 
     fun clearLocalNotifications() {
         val state = _uiState.value
-        val remaining = state.notifications.filterNot { notification -> notification.id.startsWith("local:") }
-        _uiState.value = state.copy(
-            notifications = remaining,
-            readLocalNotificationIds = emptySet(),
+        val resolution = resolveClearAllLocalNotifications(
+            notifications = state.notifications,
             toastMessage = "Local notifications cleared",
+        )
+        _uiState.value = state.copy(
+            notifications = resolution.notifications,
+            readLocalNotificationIds = resolution.readLocalNotificationIds,
+            toastMessage = resolution.toastMessage,
         )
     }
 
     fun clearLocalNotificationIds(notificationIds: List<String>) {
-        val localIds = notificationIds
-            .map { id -> id.trim() }
-            .filter { id -> id.startsWith("local:") }
-            .toSet()
-        if (localIds.isEmpty()) return
+        val resolution = resolveClearLocalNotificationIds(
+            notifications = _uiState.value.notifications,
+            readLocalNotificationIds = _uiState.value.readLocalNotificationIds,
+            acknowledgedCommunityNotificationIds = _uiState.value.acknowledgedCommunityNotificationIds,
+            acknowledgedMessageNotificationIds = _uiState.value.acknowledgedMessageNotificationIds,
+            notificationIds = notificationIds,
+        )
+        if (
+            resolution.notifications == _uiState.value.notifications &&
+            resolution.readLocalNotificationIds == _uiState.value.readLocalNotificationIds &&
+            resolution.acknowledgedCommunityNotificationIds == _uiState.value.acknowledgedCommunityNotificationIds &&
+            resolution.acknowledgedMessageNotificationIds == _uiState.value.acknowledgedMessageNotificationIds &&
+            resolution.toastMessage == null
+        ) return
         _uiState.value = _uiState.value.copy(
-            notifications = _uiState.value.notifications.filterNot { notification -> notification.id in localIds },
-            readLocalNotificationIds = _uiState.value.readLocalNotificationIds - localIds,
-            acknowledgedCommunityNotificationIds = _uiState.value.acknowledgedCommunityNotificationIds - localIds,
-            acknowledgedMessageNotificationIds = _uiState.value.acknowledgedMessageNotificationIds - localIds,
-            toastMessage = "Local notifications cleared",
+            notifications = resolution.notifications,
+            readLocalNotificationIds = resolution.readLocalNotificationIds,
+            acknowledgedCommunityNotificationIds = resolution.acknowledgedCommunityNotificationIds,
+            acknowledgedMessageNotificationIds = resolution.acknowledgedMessageNotificationIds,
+            toastMessage = resolution.toastMessage,
         )
     }
 
@@ -4486,40 +4744,25 @@ class PetSocialViewModel(
                 "deep_link_kind" to deepLinkKind,
             ),
         )
-        when {
-            deepLink.startsWith("group:") -> {
-                val groupId = deepLink.removePrefix("group:").trim()
-                _uiState.value = _uiState.value.copy(
-                    selectedTab = AppTab.Community,
-                    selectedCommunityGroupId = groupId.ifBlank { null },
-                )
-            }
-            deepLink.startsWith("event:") || deepLink.startsWith("post:") -> {
-                _uiState.value = _uiState.value.copy(
-                    selectedTab = AppTab.Community,
-                    postsSortBy = "relevance",
-                )
-                loadHomeData(_uiState.value.selectedCategory)
-            }
-            deepLink.startsWith("provider:") -> {
-                val providerId = deepLink.removePrefix("provider:").trim()
-                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Services)
-                if (providerId.isNotBlank()) {
-                    loadProviderDetails(providerId)
-                }
-            }
-            deepLink.startsWith("booking:") || deepLink.startsWith("quote:") -> {
-                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Services)
-            }
-            deepLink.startsWith("message:") -> {
-                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Messages)
-            }
-            deepLink == "profile" -> {
-                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Profile)
-            }
-            else -> {
-                _uiState.value = _uiState.value.copy(selectedTab = AppTab.Community)
-            }
+        val resolution = resolveNotificationOpen(
+            deepLink = deepLink,
+            currentPostsSortBy = _uiState.value.postsSortBy,
+            notificationRead = notification.read,
+        )
+        val route = resolution.route ?: return
+        _uiState.value = _uiState.value.withNavigation {
+            copy(
+                selectedTab = route.tab,
+                selectedCommunityGroupId = route.selectedCommunityGroupId,
+            )
+        }.copy(
+            postsSortBy = resolution.postsSortBy,
+        )
+        resolution.providerIdToLoad?.let { providerId ->
+            if (providerId.isNotBlank()) loadProviderDetails(providerId)
+        }
+        if (resolution.shouldReloadHome) {
+            loadHomeData(_uiState.value.selectedCategory)
         }
         trackActivationEventAsync(
             step = "notification_open",
@@ -4529,7 +4772,7 @@ class PetSocialViewModel(
                 "deep_link_kind" to deepLinkKind,
             ),
         )
-        if (!notification.read) {
+        if (resolution.shouldMarkRead) {
             markNotificationRead(notification.id)
         }
     }
@@ -4677,19 +4920,28 @@ class PetSocialViewModel(
         profile: ProfileInfo,
         ownerName: String,
         dogName: String,
+        suburb: String,
         dogPhotoUri: String? = null,
     ): ProfileInfo {
         val normalizedOwner = ownerName.trim()
         val normalizedDog = dogName.trim()
+        val normalizedSuburb = suburb.trim()
         val normalizedPhoto = dogPhotoUri?.trim().orEmpty()
         var next = profile
         if (normalizedOwner.isNotBlank()) {
             next = next.copy(displayName = normalizedOwner)
         }
+        if (normalizedSuburb.isNotBlank()) {
+            next = next.copy(
+                suburb = normalizedSuburb,
+                favoriteSuburbs = listOf(normalizedSuburb) + next.favoriteSuburbs.filterNot { value ->
+                    value.equals(normalizedSuburb, ignoreCase = true)
+                },
+            )
+        }
         if (normalizedOwner.isNotBlank() && normalizedDog.isNotBlank()) {
             next = next.copy(
                 dogName = normalizedDog,
-                bio = "$normalizedOwner's dog: $normalizedDog",
             )
         }
         if (normalizedPhoto.isNotBlank()) {
@@ -4705,6 +4957,54 @@ class PetSocialViewModel(
             next = next.copy(dogPhotoUrls = mergedPhotos)
         }
         return next
+    }
+
+    private suspend fun persistProfileInfoSilently(profileInfo: ProfileInfo) {
+        val normalized = if (isStagingTestBuild()) {
+            profileInfo.copy(suburb = STAGING_TEST_SUBURB)
+        } else {
+            profileInfo
+        }
+        runCatching {
+            repository.saveUserProfile(
+                displayName = normalized.displayName,
+                email = normalized.email,
+                phone = normalized.phone,
+                humanPronouns = normalized.humanPronouns,
+                humanRoleLabel = normalized.humanRoleLabel,
+                serviceProviderMode = normalized.serviceProviderMode,
+                dogName = normalized.dogName,
+                dogAgeMonths = normalized.dogAgeMonths,
+                dogBreedMix = normalized.dogBreedMix,
+                dogSexNeuter = normalized.dogGender,
+                dogWeightClass = normalized.dogWeightKg,
+                dogPhotoUrls = normalized.dogPhotoUrls,
+                secondaryDogName = normalized.secondaryDogName,
+                secondaryDogAgeMonths = normalized.secondaryDogAgeMonths,
+                secondaryDogPhotoUrl = "",
+                secondaryDogGender = normalized.secondaryDogGender,
+                secondaryDogWeightKg = normalized.secondaryDogWeightKg,
+                bio = normalized.bio,
+                suburb = normalized.suburb,
+                favoriteSuburbs = normalized.favoriteSuburbs,
+                playEnergyLevel = normalized.playEnergyLevel,
+                playStyle = normalized.playStyle,
+                socialConfidence = normalized.socialConfidence,
+                triggerNotes = normalized.triggerNotes,
+                idealMatch = normalized.idealMatch,
+                walkPreferences = normalized.walkPreferences,
+                trainingStyle = normalized.trainingStyle,
+                feedingRules = normalized.feedingRules,
+                consentBoundaries = normalized.consentBoundaries,
+                vaccinationStatus = normalized.vaccinationStatus,
+                microchipped = normalized.microchipped,
+                recallTrained = normalized.recallTrained,
+                leashReliability = normalized.leashReliability,
+                emergencyContactName = normalized.emergencyContactName,
+                emergencyContactPhone = normalized.emergencyContactPhone,
+                fieldVisibility = normalized.fieldVisibility,
+            )
+        }
     }
 
     private fun normalizeTestProfileMode(raw: String): String {
@@ -4757,7 +5057,7 @@ class PetSocialViewModel(
             dogGender = "male",
             dogWeightKg = "12.5",
             dogPhotoUrls = listOf(dogPhoto),
-            bio = "Pet parent of $dogName. Loves social dog walks and local events.",
+            bio = "",
             suburb = suburb,
             favoriteSuburbs = listOf(suburb, "Surry Hills", "Newtown").distinct().take(3),
             playEnergyLevel = "Medium",
@@ -4791,6 +5091,8 @@ class PetSocialViewModel(
     private fun applyChatResponse(response: ChatResponse, toast: String? = null) {
         val state = _uiState.value
         val parsed = parseA2uiMessages(response.a2uiMessages)
+        val mergedProfile = mergeProfileInfoFromAiResponse(state.profileInfo, response)
+        val mergedSuburb = mergedProfile.suburb.trim().ifBlank { state.selectedSuburb }
         val selectedThreadId = state.selectedBarkThreadId
         val activeThread = state.barkThreads.firstOrNull { it.id == selectedThreadId } ?: state.barkThreads.first()
         val responseConversation = response.conversation.toMutableList()
@@ -4818,16 +5120,17 @@ class PetSocialViewModel(
             a2uiProviderCard = parsed.second,
             updatedAt = System.currentTimeMillis(),
         )
-        _uiState.value = state.copy(
+        _uiState.value = state.withNavigation { copy(selectedTab = AppTab.BarkAI) }.copy(
             chat = response,
             conversation = hydratedConversation,
             profileSuggestion = response.profileSuggestion,
             a2uiProfileCard = parsed.first,
             a2uiProviderCard = parsed.second,
             barkThreads = upsertBarkThread(state.barkThreads, updatedThread),
+            profileInfo = mergedProfile,
+            selectedSuburb = mergedSuburb,
             loading = false,
             streamingAssistantText = "",
-            selectedTab = AppTab.BarkAI,
             toastMessage = toast,
         )
     }
@@ -4873,6 +5176,31 @@ class PetSocialViewModel(
     }
 }
 
+private fun mergeProfileInfoFromAiResponse(profile: ProfileInfo, response: ChatResponse): ProfileInfo {
+    val ownerName = response.profileSuggestion?.ownerName
+        ?.trim()
+        ?.ifBlank { null }
+        ?: response.suggestedProfile.readString("owner_name")?.trim()?.ifBlank { null }
+    val suburb = response.profileSuggestion?.suburb
+        ?.trim()
+        ?.ifBlank { null }
+        ?: response.suggestedProfile.readString("suburb")?.trim()?.ifBlank { null }
+
+    var next = profile
+    if (ownerName != null) {
+        next = next.copy(displayName = ownerName)
+    }
+    if (suburb != null) {
+        next = next.copy(
+            suburb = suburb,
+            favoriteSuburbs = listOf(suburb) + next.favoriteSuburbs.filterNot { value ->
+                value.equals(suburb, ignoreCase = true)
+            },
+        )
+    }
+    return next
+}
+
 private fun upsertBarkThread(threads: List<BarkThread>, updated: BarkThread): List<BarkThread> {
     val filtered = threads.filterNot { it.id == updated.id }
     return (listOf(updated) + filtered)
@@ -4884,6 +5212,10 @@ private fun <T> reuseIfEquivalent(current: T, candidate: T): T {
     return if (current == candidate) current else candidate
 }
 
+private inline fun UiState.withNavigation(
+    update: NavigationState.() -> NavigationState,
+): UiState = copy(navigation = navigation.update())
+
 private fun elapsedMs(startNs: Long): Long = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(0L)
 
 private fun resolveBarkThreadTitle(existingTitle: String, conversation: List<ChatTurn>): String {
@@ -4893,7 +5225,7 @@ private fun resolveBarkThreadTitle(existingTitle: String, conversation: List<Cha
     return if (firstUser.length <= 36) firstUser else firstUser.take(33).trimEnd() + "..."
 }
 
-private fun buildFriendProfiles(
+internal fun buildFriendProfiles(
     activeUserId: String,
     messageThreads: List<MessageThread>,
     existingProfiles: List<FriendProfile>,
@@ -4904,15 +5236,11 @@ private fun buildFriendProfiles(
         .filter { profile -> profile.isFriend }
         .map { profile -> profile.userId }
         .toSet()
-    val defaultFriendIds = if (existingFriendIds.isNotEmpty()) {
-        existingFriendIds
-    } else {
-        messageThreads
-            .asSequence()
-            .map { thread -> thread.participantUserId }
-            .filter { userId -> userId.isNotBlank() }
-            .toSet()
-    }
+    val defaultFriendIds = existingFriendIds + messageThreads
+        .asSequence()
+        .map { thread -> thread.participantUserId }
+        .filter { userId -> userId.isNotBlank() }
+        .toSet()
 
     val candidateUserIds = buildSet {
         addAll(KNOWN_FRIEND_PROFILES.keys)
@@ -4962,6 +5290,682 @@ private fun buildFriendProfiles(
     )
 }
 
+private fun directMessageThreadId(userA: String, userB: String): String {
+    val ordered = listOf(userA.trim(), userB.trim()).sorted()
+    return "dm_${ordered[0]}_${ordered[1]}"
+}
+
+internal fun resolveMessageOpen(
+    state: UiState,
+    target: MessageTarget,
+): MessageOpenResolution {
+    val normalizedThreadId = target.threadId?.trim().orEmpty()
+    val normalizedUserId = target.userId?.trim().orEmpty()
+    if (normalizedThreadId.isNotBlank()) {
+        val thread = state.messageThreads.firstOrNull { candidate -> candidate.id == normalizedThreadId }
+        if (thread != null) {
+            return MessageOpenResolution.SelectExistingThread(thread.id)
+        }
+    }
+    if (normalizedUserId.isBlank()) {
+        return MessageOpenResolution.NoTarget
+    }
+    val thread = state.messageThreads.firstOrNull { candidate -> candidate.participantUserId == normalizedUserId }
+    if (thread != null) {
+        return MessageOpenResolution.SelectExistingThread(thread.id)
+    }
+    val friend = state.friendProfiles.firstOrNull { profile -> profile.userId == normalizedUserId }
+    val (syntheticThread, updatedThreads) = ensureMessageThreadForUser(
+        state = state,
+        userId = normalizedUserId,
+        humanName = friend?.humanName.orEmpty(),
+        dogName = friend?.dogName.orEmpty(),
+        avatarUrl = friend?.dogPhotoUrl,
+    )
+    return MessageOpenResolution.CreateSyntheticThread(
+        selectedThreadId = syntheticThread.id,
+        messageThreads = updatedThreads,
+    )
+}
+
+private fun ensureMessageThreadForUser(
+    state: UiState,
+    userId: String,
+    humanName: String,
+    dogName: String,
+    avatarUrl: String? = null,
+): Pair<MessageThread, List<MessageThread>> {
+    val existing = state.messageThreads.firstOrNull { thread -> thread.participantUserId == userId }
+    if (existing != null) {
+        return existing to state.messageThreads
+    }
+    val inserted = MessageThread(
+        id = directMessageThreadId(state.activeUserId, userId),
+        title = humanName.ifBlank { accountLabel(userId) },
+        participantUserId = userId,
+        participantAccountLabel = humanName.ifBlank { accountLabel(userId) },
+        participantAvatarUrl = avatarUrl?.takeIf { it.isNotBlank() } ?: KNOWN_FRIEND_PROFILES[userId]?.second?.second,
+        participantPetNames = listOfNotNull(dogName.takeIf { it.isNotBlank() }),
+        lastMessage = "Say hi to start chatting",
+        unreadCount = 0,
+    )
+    val updatedThreads = (state.messageThreads + inserted).sortedWith(
+        compareByDescending<MessageThread> { thread -> thread.isPinned }
+            .thenByDescending { thread -> thread.unreadCount > 0 }
+            .thenBy { thread -> thread.title.lowercase() },
+    )
+    return inserted to updatedThreads
+}
+
+internal fun mergeLocalMessageThreads(
+    currentThreads: List<MessageThread>,
+    refreshedThreads: List<MessageThread>,
+): List<MessageThread> {
+    if (currentThreads.isEmpty()) return refreshedThreads
+    val refreshedByParticipant = refreshedThreads.associateBy { thread -> thread.participantUserId }
+    val preservedLocalThreads = currentThreads.filter { thread ->
+        thread.participantUserId.isNotBlank() &&
+            thread.participantUserId !in refreshedByParticipant &&
+            thread.unreadCount == 0 &&
+            thread.lastMessage == "Say hi to start chatting"
+    }
+    if (preservedLocalThreads.isEmpty()) return refreshedThreads
+    return (refreshedThreads + preservedLocalThreads)
+        .distinctBy { thread -> thread.id }
+}
+
+internal fun clearedProviderState(
+    providerOsSurface: Boolean,
+): Triple<Boolean, Boolean, Boolean> {
+    return Triple(
+        providerOsSurface,
+        false,
+        providerOsSurface,
+    )
+}
+
+internal fun deriveProviderState(
+    providerOsSurface: Boolean,
+    profileProviderMode: Boolean,
+    hasProviderListings: Boolean,
+): ProviderStateResolution {
+    return ProviderStateResolution(
+        providerModeEnabled = providerOsSurface || profileProviderMode,
+        hasProviderListings = hasProviderListings,
+        canLoadProviderInbox = providerOsSurface || profileProviderMode || hasProviderListings,
+    )
+}
+
+internal fun resolveHomePayloadState(
+    selectedMessageThreadId: String?,
+    validMessageThreadIds: List<String>,
+    selectedCommunityGroupId: String?,
+    validGroupIds: List<String>,
+    providerOsSurface: Boolean,
+    profileProviderMode: Boolean,
+    hasProviderListings: Boolean,
+): HomePayloadStateResolution {
+    return HomePayloadStateResolution(
+        providerState = deriveProviderState(
+            providerOsSurface = providerOsSurface,
+            profileProviderMode = profileProviderMode,
+            hasProviderListings = hasProviderListings,
+        ),
+        selectedMessageThreadId = selectedMessageThreadId?.takeIf { candidate -> candidate in validMessageThreadIds },
+        selectedCommunityGroupId = selectedCommunityGroupId?.takeIf { candidate -> candidate in validGroupIds },
+    )
+}
+
+internal fun resolveBarkAiEntry(
+    onboardingActive: Boolean,
+    selectedBarkThreadId: String,
+    barkThreads: List<BarkThread>,
+    newThreadId: String,
+    updatedAt: Long,
+): BarkAiEntryResolution {
+    if (onboardingActive) {
+        return BarkAiEntryResolution.StayOnOnboarding(
+            selectedThreadId = barkThreads.firstOrNull { thread -> thread.id == selectedBarkThreadId }?.id ?: ONBOARD_THREAD_ID,
+        )
+    }
+    val newThread = BarkThread(
+        id = newThreadId,
+        title = "New thread",
+        updatedAt = updatedAt,
+    )
+    val nextThreads = (listOf(newThread) + barkThreads.filterNot { thread -> thread.id == newThreadId })
+        .take(20)
+    return BarkAiEntryResolution.StartNewThread(
+        selectedThreadId = newThread.id,
+        barkThreads = nextThreads,
+    )
+}
+
+internal fun resolveNotificationRoute(deepLink: String): NotificationRoute {
+    val normalized = deepLink.trim()
+    return when {
+        normalized.startsWith("group:") -> NotificationRoute(
+            tab = AppTab.Community,
+            selectedCommunityGroupId = normalized.removePrefix("group:").trim().ifBlank { null },
+        )
+        normalized.startsWith("event:") || normalized.startsWith("post:") -> NotificationRoute(
+            tab = AppTab.Community,
+            shouldReload = true,
+        )
+        normalized.startsWith("provider:") -> NotificationRoute(
+            tab = AppTab.Services,
+            providerId = normalized.removePrefix("provider:").trim().ifBlank { null },
+        )
+        normalized.startsWith("booking:") || normalized.startsWith("quote:") -> NotificationRoute(
+            tab = AppTab.Services,
+        )
+        normalized.startsWith("message:") -> NotificationRoute(
+            tab = AppTab.Messages,
+        )
+        normalized == "profile" -> NotificationRoute(
+            tab = AppTab.Profile,
+        )
+        else -> NotificationRoute(
+            tab = AppTab.Community,
+        )
+    }
+}
+
+internal fun resolveNotificationOpen(
+    deepLink: String,
+    currentPostsSortBy: String,
+    notificationRead: Boolean,
+): NotificationOpenResolution {
+    val normalized = deepLink.trim()
+    if (normalized.isBlank()) {
+        return NotificationOpenResolution(
+            route = null,
+            postsSortBy = currentPostsSortBy,
+            shouldMarkRead = false,
+            shouldReloadHome = false,
+        )
+    }
+    val route = resolveNotificationRoute(normalized)
+    return NotificationOpenResolution(
+        route = route,
+        postsSortBy = if (route.shouldReload && route.tab == AppTab.Community) "relevance" else currentPostsSortBy,
+        shouldMarkRead = !notificationRead,
+        shouldReloadHome = route.shouldReload,
+        providerIdToLoad = route.providerId?.takeIf { it.isNotBlank() },
+    )
+}
+
+internal fun resolveLocalNotificationRead(
+    notifications: List<AppNotification>,
+    readLocalNotificationIds: Set<String>,
+    notificationId: String,
+): LocalNotificationStateResolution {
+    val normalized = notificationId.trim()
+    if (!normalized.startsWith("local:")) {
+        return LocalNotificationStateResolution(
+            notifications = notifications,
+            readLocalNotificationIds = readLocalNotificationIds,
+            acknowledgedCommunityNotificationIds = emptySet(),
+            acknowledgedMessageNotificationIds = emptySet(),
+        )
+    }
+    return LocalNotificationStateResolution(
+        notifications = notifications.map { existing ->
+            if (existing.id == normalized) existing.copy(read = true) else existing
+        },
+        readLocalNotificationIds = readLocalNotificationIds + normalized,
+        acknowledgedCommunityNotificationIds = emptySet(),
+        acknowledgedMessageNotificationIds = emptySet(),
+    )
+}
+
+internal fun resolveLocalNotificationIdsRead(
+    notifications: List<AppNotification>,
+    readLocalNotificationIds: Set<String>,
+    notificationIds: Set<String>,
+    toastMessage: String? = null,
+): LocalNotificationStateResolution {
+    val localIds = notificationIds
+        .map { id -> id.trim() }
+        .filter { id -> id.startsWith("local:") }
+        .toSet()
+    return LocalNotificationStateResolution(
+        notifications = notifications.map { notification ->
+            if (notification.id in localIds) notification.copy(read = true) else notification
+        },
+        readLocalNotificationIds = readLocalNotificationIds + localIds,
+        acknowledgedCommunityNotificationIds = emptySet(),
+        acknowledgedMessageNotificationIds = emptySet(),
+        toastMessage = toastMessage,
+    )
+}
+
+internal fun resolveClearAllLocalNotifications(
+    notifications: List<AppNotification>,
+    toastMessage: String,
+): LocalNotificationStateResolution {
+    return LocalNotificationStateResolution(
+        notifications = notifications.filterNot { notification -> notification.id.startsWith("local:") },
+        readLocalNotificationIds = emptySet(),
+        acknowledgedCommunityNotificationIds = emptySet(),
+        acknowledgedMessageNotificationIds = emptySet(),
+        toastMessage = toastMessage,
+    )
+}
+
+internal fun resolveClearLocalNotificationIds(
+    notifications: List<AppNotification>,
+    readLocalNotificationIds: Set<String>,
+    acknowledgedCommunityNotificationIds: Set<String>,
+    acknowledgedMessageNotificationIds: Set<String>,
+    notificationIds: List<String>,
+): LocalNotificationStateResolution {
+    val localIds = notificationIds
+        .map { id -> id.trim() }
+        .filter { id -> id.startsWith("local:") }
+        .toSet()
+    if (localIds.isEmpty()) {
+        return LocalNotificationStateResolution(
+            notifications = notifications,
+            readLocalNotificationIds = readLocalNotificationIds,
+            acknowledgedCommunityNotificationIds = acknowledgedCommunityNotificationIds,
+            acknowledgedMessageNotificationIds = acknowledgedMessageNotificationIds,
+        )
+    }
+    return LocalNotificationStateResolution(
+        notifications = notifications.filterNot { notification -> notification.id in localIds },
+        readLocalNotificationIds = readLocalNotificationIds - localIds,
+        acknowledgedCommunityNotificationIds = acknowledgedCommunityNotificationIds - localIds,
+        acknowledgedMessageNotificationIds = acknowledgedMessageNotificationIds - localIds,
+        toastMessage = "Local notifications cleared",
+    )
+}
+
+internal fun resolveOnboardingCompletion(
+    barkThreads: List<BarkThread>,
+    fallbackThreadId: String,
+    fallbackUpdatedAt: Long,
+): OnboardingCompletionResolution {
+    val nextThreads = barkThreads.filterNot { it.id == ONBOARD_THREAD_ID }
+    val fallbackThread = BarkThread(
+        id = fallbackThreadId,
+        title = "New thread",
+        updatedAt = fallbackUpdatedAt,
+    )
+    val remainingThreads = if (nextThreads.isEmpty()) listOf(fallbackThread) else nextThreads
+    val selectedThread = remainingThreads.first()
+    return OnboardingCompletionResolution(
+        selectedThreadId = selectedThread.id,
+        barkThreads = remainingThreads,
+        chat = selectedThread.chat,
+        conversation = selectedThread.conversation,
+    )
+}
+
+internal fun resolveTabSwitchState(
+    navigation: NavigationState,
+    tab: AppTab,
+    directMessages: List<DirectMessage>,
+    notifications: List<AppNotification>,
+    acknowledgedCommunityNotificationIds: Set<String>,
+    acknowledgedMessageNotificationIds: Set<String>,
+): TabSwitchResolution {
+    return TabSwitchResolution(
+        navigation = navigation.copy(
+            selectedTab = tab,
+            selectedMessageThreadId = navigation.selectedMessageThreadId,
+            selectedCommunityGroupId = if (tab == AppTab.Community) navigation.selectedCommunityGroupId else null,
+            profileNotificationFilter = if (tab == AppTab.Profile) navigation.profileNotificationFilter else "all",
+        ),
+        directMessages = directMessages,
+        acknowledgedCommunityNotificationIds = when (tab) {
+            AppTab.Community -> acknowledgedCommunityNotificationIds + notifications
+                .asSequence()
+                .filter { notification -> isCommunityNotification(notification.category) }
+                .map { notification -> notification.id }
+                .toSet()
+            else -> acknowledgedCommunityNotificationIds
+        },
+        acknowledgedMessageNotificationIds = when (tab) {
+            AppTab.Messages -> acknowledgedMessageNotificationIds + notifications
+                .asSequence()
+                .filter { notification -> isMessageNotification(notification.category) }
+                .map { notification -> notification.id }
+                .toSet()
+            else -> acknowledgedMessageNotificationIds
+        },
+    )
+}
+
+internal fun resolveFriendQrTokenInput(friendToken: String): FriendQrTokenResolution {
+    val cleanToken = friendToken.trim()
+    return if (cleanToken.isBlank()) {
+        FriendQrTokenResolution.Invalid("Invalid friend QR")
+    } else {
+        FriendQrTokenResolution.Verify(cleanToken)
+    }
+}
+
+internal fun resolveFriendQrVerificationFailure(statusCode: Int?): String = when (statusCode) {
+    401 -> "Friend QR expired. Ask for a new one."
+    409 -> "This is your profile QR"
+    else -> "Unable to verify friend QR"
+}
+
+internal fun resolveFriendMutation(
+    state: UiState,
+    action: FriendMutationAction,
+    userId: String,
+    humanName: String? = null,
+    dogName: String? = null,
+): FriendMutationResolution {
+    val normalized = userId.trim()
+    if (normalized.isBlank()) return FriendMutationResolution.NoChange
+    if (action == FriendMutationAction.AddOrUpdate && normalized == state.activeUserId) {
+        return FriendMutationResolution.ToastOnly("This is your profile QR")
+    }
+    return when (action) {
+        FriendMutationAction.AddOrUpdate -> {
+            val incomingHumanName = humanName?.trim().orEmpty()
+            val incomingDogName = dogName?.trim().orEmpty()
+            val existing = state.friendProfiles.firstOrNull { profile -> profile.userId == normalized }
+            val wasAlreadyFriend = existing?.isFriend == true
+            val ensuredThread = ensureMessageThreadForUser(
+                state = state,
+                userId = normalized,
+                humanName = incomingHumanName,
+                dogName = incomingDogName,
+            )
+            val updatedProfiles = if (existing != null) {
+                state.friendProfiles.map { profile ->
+                    if (profile.userId != normalized) {
+                        profile
+                    } else {
+                        profile.copy(
+                            humanName = if (incomingHumanName.isNotBlank()) incomingHumanName else profile.humanName,
+                            dogName = if (incomingDogName.isNotBlank()) incomingDogName else profile.dogName,
+                            isFriend = true,
+                        )
+                    }
+                }
+            } else {
+                val inserted = FriendProfile(
+                    userId = normalized,
+                    humanName = incomingHumanName.ifBlank { accountLabel(normalized) },
+                    dogName = incomingDogName.ifBlank { "Dog" },
+                    dogPhotoUrl = "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80",
+                    isFriend = true,
+                )
+                (state.friendProfiles + inserted).sortedWith(
+                    compareByDescending<FriendProfile> { profile -> profile.isFriend }
+                        .thenBy { profile -> profile.humanName.lowercase() },
+                )
+            }
+            FriendMutationResolution.StateUpdate(
+                friendProfiles = updatedProfiles,
+                messageThreads = ensuredThread.second,
+                toastMessage = if (wasAlreadyFriend) "Already friends" else "Friend added",
+            )
+        }
+        FriendMutationAction.Remove -> FriendMutationResolution.StateUpdate(
+            friendProfiles = state.friendProfiles.map { profile ->
+                if (profile.userId == normalized) profile.copy(isFriend = false) else profile
+            },
+            messageThreads = state.messageThreads,
+            toastMessage = "Friend removed",
+        )
+    }
+}
+
+internal fun resolveProfileSocialMessageTarget(userId: String): MessageTarget {
+    return MessageTarget(
+        userId = userId,
+        source = "profile_social",
+    )
+}
+
+internal fun shouldRefreshProviderInbox(canLoadProviderInbox: Boolean): Boolean = canLoadProviderInbox
+
+internal fun resolveQuoteOfferSubmission(
+    providerInboxItems: List<ProviderInboxItem>,
+    sendingQuoteOfferItemIds: Set<String>,
+    inboxItemId: String,
+    priceCents: Int,
+    proposedDate: String,
+    proposedTimeSlot: String,
+    expiresAt: String,
+    note: String = "",
+): QuoteOfferSubmissionResolution {
+    val normalizedId = inboxItemId.trim()
+    if (normalizedId.isBlank()) return QuoteOfferSubmissionResolution.Ignore
+    if (priceCents <= 0) {
+        return QuoteOfferSubmissionResolution.Toast("Offer price must be greater than zero")
+    }
+    val cleanedDate = proposedDate.trim()
+    val cleanedTimeSlot = proposedTimeSlot.trim()
+    val cleanedExpiresAt = expiresAt.trim()
+    if (cleanedDate.isBlank() || cleanedTimeSlot.isBlank() || cleanedExpiresAt.isBlank()) {
+        return QuoteOfferSubmissionResolution.Toast("Offer date, time, and expiry are required")
+    }
+    val item = providerInboxItems.firstOrNull { inboxItem -> inboxItem.id == normalizedId }
+        ?: return QuoteOfferSubmissionResolution.Toast("Inbox item not found")
+    val quoteRequestId = item.quoteRequestId?.trim().orEmpty()
+    if (item.itemType != "quote_request" || quoteRequestId.isBlank()) {
+        return QuoteOfferSubmissionResolution.Toast("Only quote requests can receive offers")
+    }
+    if (normalizedId in sendingQuoteOfferItemIds) return QuoteOfferSubmissionResolution.Ignore
+    return QuoteOfferSubmissionResolution.Submit(
+        inboxItemId = normalizedId,
+        quoteRequestId = quoteRequestId,
+        providerId = item.providerId,
+        providerName = item.providerName,
+        priceCents = priceCents,
+        proposedDate = cleanedDate,
+        proposedTimeSlot = cleanedTimeSlot,
+        expiresAt = cleanedExpiresAt,
+        note = note.trim(),
+    )
+}
+
+internal fun resolveBookingRequest(
+    state: UiState,
+    providerId: String,
+    date: String,
+    timeSlot: String,
+    note: String,
+): BookingRequestResolution {
+    val normalizedProviderId = providerId.trim()
+    val normalizedDate = date.trim()
+    val normalizedTimeSlot = timeSlot.trim()
+    if (normalizedProviderId.isBlank() || normalizedDate.isBlank() || normalizedTimeSlot.isBlank()) {
+        return BookingRequestResolution.Toast("Select a provider, date, and time slot")
+    }
+    val providerOwnerUserId = state.providers.firstOrNull { it.id == normalizedProviderId }?.ownerUserId
+    val approvalHint = nextActionSwitchHint(
+        targetUserId = providerOwnerUserId,
+        activeUserId = state.activeUserId,
+        actionText = "approve this booking",
+    )
+    return BookingRequestResolution.Submit(
+        providerId = normalizedProviderId,
+        date = normalizedDate,
+        timeSlot = normalizedTimeSlot,
+        note = note.trim(),
+        approvalHint = approvalHint,
+    )
+}
+
+internal fun resolveServiceQuoteRequest(
+    selectedSuburb: String,
+    stagingTestBuild: Boolean,
+    category: String,
+    preferredWindow: String,
+    petDetails: String,
+    note: String,
+): ServiceQuoteRequestResolution {
+    val cleanedCategory = normalizeServiceCategory(category)
+    val cleanedWindow = preferredWindow.trim()
+    val cleanedPetDetails = petDetails.trim()
+    val cleanedSuburb = selectedSuburb.trim()
+    if (cleanedCategory.isBlank() || cleanedWindow.isBlank() || cleanedPetDetails.isBlank()) {
+        return ServiceQuoteRequestResolution.Toast("Complete category, preferred window, and pet details")
+    }
+    return ServiceQuoteRequestResolution.Submit(
+        category = cleanedCategory,
+        preferredWindow = cleanedWindow,
+        petDetails = cleanedPetDetails,
+        note = note.trim(),
+        suburb = cleanedSuburb.ifBlank { null },
+    )
+}
+
+internal fun resolveHomeLoadIndicatorState(
+    showLoadingIndicators: Boolean,
+    shouldLoadProviderInbox: Boolean,
+    currentLoading: Boolean,
+    currentLoadingProviderInbox: Boolean,
+): HomeLoadIndicatorState {
+    if (!showLoadingIndicators) {
+        return HomeLoadIndicatorState(
+            loading = currentLoading,
+            loadingProviderInbox = currentLoadingProviderInbox,
+        )
+    }
+    return HomeLoadIndicatorState(
+        loading = true,
+        loadingProviderInbox = shouldLoadProviderInbox,
+    )
+}
+
+internal fun resolveServiceQuoteSuburb(
+    selectedSuburb: String,
+    currentLocationSuburb: String?,
+    profileSuburb: String,
+    recommendationSuburb: String?,
+    providers: List<ServiceProvider>,
+    category: String,
+): String? {
+    val normalizedCategory = normalizeServiceCategory(category)
+    val visibleProviderSuburb = providers
+        .firstOrNull { provider ->
+            normalizeServiceCategory(provider.category) == normalizedCategory && provider.suburb.isNotBlank()
+        }
+        ?.suburb
+        ?.trim()
+    return listOf(
+        visibleProviderSuburb,
+        currentLocationSuburb?.trim(),
+        recommendationSuburb?.trim(),
+        profileSuburb.trim(),
+        selectedSuburb.trim(),
+    ).firstOrNull { suburb -> !suburb.isNullOrBlank() }
+}
+
+private fun normalizeServiceCategory(category: String): String {
+    return when (category.trim().lowercase()) {
+        "walking", "dog walking", "dog_walking" -> "dog_walking"
+        "grooming", "groomer", "groomers" -> "grooming"
+        else -> category.trim()
+    }
+}
+
+internal fun resolveProfileNotificationNavigation(
+    navigation: NavigationState,
+    filter: String,
+): NavigationState {
+    val normalized = when (filter.lowercase()) {
+        "community", "messages", "safety" -> filter.lowercase()
+        else -> "all"
+    }
+    return navigation.copy(
+        selectedTab = AppTab.Profile,
+        profileNotificationFilter = normalized,
+    )
+}
+
+internal fun resolveCommunityGroupNavigation(
+    navigation: NavigationState,
+    groupId: String,
+): NavigationState? {
+    val normalized = groupId.trim()
+    if (normalized.isBlank()) return null
+    return navigation.copy(
+        selectedTab = AppTab.Community,
+        selectedCommunityGroupId = normalized,
+    )
+}
+
+internal fun clearSelectedCommunityGroupNavigation(
+    navigation: NavigationState,
+): NavigationState = navigation.copy(selectedCommunityGroupId = null)
+
+internal fun resolveSessionResetState(
+    state: UiState,
+    providerOsSurface: Boolean,
+    authRequired: Boolean,
+    activeUserId: String,
+    toastMessage: String,
+): SessionResetResolution {
+    val (providerModeEnabled, hasProviderListings, canLoadProviderInbox) = clearedProviderState(
+        providerOsSurface = providerOsSurface,
+    )
+    return SessionResetResolution(
+        navigation = state.navigation.copy(
+            selectedMessageThreadId = null,
+            pendingInvite = null,
+        ),
+        providerModeEnabled = providerModeEnabled,
+        hasProviderListings = hasProviderListings,
+        canLoadProviderInbox = canLoadProviderInbox,
+        authRequired = authRequired,
+        isCommunityModerator = activeUserId in COMMUNITY_MODERATOR_IDS,
+        toastMessage = toastMessage,
+    )
+}
+
+internal fun applySessionResetResolution(
+    state: UiState,
+    resolution: SessionResetResolution,
+): UiState {
+    return state.copy(
+        navigation = resolution.navigation,
+        providerModeEnabled = resolution.providerModeEnabled,
+        hasProviderListings = resolution.hasProviderListings,
+        canLoadProviderInbox = resolution.canLoadProviderInbox,
+        authRequired = resolution.authRequired,
+        authOtpRequested = resolution.authOtpRequested,
+        authInviteId = resolution.authInviteId,
+        authEmail = resolution.authEmail,
+        authOtpExpiresAt = resolution.authOtpExpiresAt,
+        authInFlight = resolution.authInFlight,
+        providers = resolution.providers,
+        nearbyPetBusinesses = resolution.nearbyPetBusinesses,
+        groups = resolution.groups,
+        posts = resolution.posts,
+        communityCommentsByPostId = resolution.communityCommentsByPostId,
+        communityEvents = resolution.communityEvents,
+        ownerBookings = resolution.ownerBookings,
+        providerBookings = resolution.providerBookings,
+        calendarEvents = resolution.calendarEvents,
+        messageThreads = resolution.messageThreads,
+        directMessages = resolution.directMessages,
+        readDirectMessageIds = resolution.readDirectMessageIds,
+        savedCommunityPostIds = resolution.savedCommunityPostIds,
+        savedCommunityEventIds = resolution.savedCommunityEventIds,
+        latestGroupInvites = resolution.latestGroupInvites,
+        friendProfiles = resolution.friendProfiles,
+        notifications = resolution.notifications,
+        readLocalNotificationIds = resolution.readLocalNotificationIds,
+        acknowledgedCommunityNotificationIds = resolution.acknowledgedCommunityNotificationIds,
+        acknowledgedMessageNotificationIds = resolution.acknowledgedMessageNotificationIds,
+        loading = resolution.loading,
+        error = resolution.error,
+        isCommunityModerator = resolution.isCommunityModerator,
+        toastMessage = resolution.toastMessage,
+    )
+}
+
+
 private fun ApiDirectMessage.toDirectMessage(): DirectMessage {
     return DirectMessage(
         id = id,
@@ -4976,7 +5980,7 @@ private fun buildMessageThreadsForState(
     state: UiState,
     apiThreads: List<ApiMessageThread>,
 ): List<MessageThread> {
-    return buildMessageThreadsFromApi(
+    val refreshedThreads = buildMessageThreadsFromApi(
         activeUserId = state.activeUserId,
         apiThreads = apiThreads,
         providers = state.providers,
@@ -4987,6 +5991,14 @@ private fun buildMessageThreadsForState(
         mutedThreadIds = state.mutedMessageThreadIds,
         pinnedThreadIds = state.pinnedMessageThreadIds,
         blockedParticipantIds = state.blockedUserIds.toSet(),
+    )
+    return applyThreadPresentationFlags(
+        threads = mergeLocalMessageThreads(
+            currentThreads = state.messageThreads,
+            refreshedThreads = refreshedThreads,
+        ),
+        mutedThreadIds = state.mutedMessageThreadIds,
+        pinnedThreadIds = state.pinnedMessageThreadIds,
     )
 }
 
@@ -5078,6 +6090,7 @@ private fun buildMessageThreadsFromApi(
                 title = title,
                 participantUserId = thread.participantUserId,
                 participantAccountLabel = accountLabel(thread.participantUserId),
+                participantAvatarUrl = KNOWN_FRIEND_PROFILES[thread.participantUserId]?.second?.second,
                 participantPetNames = petNamesByUser[thread.participantUserId]
                     ?.toList()
                     ?.sortedBy { name -> name.lowercase() }
@@ -5116,6 +6129,29 @@ private fun applyThreadPresentationFlags(
                 .thenByDescending { it.unreadCount }
                 .thenBy { it.title },
         )
+}
+
+private fun applyFriendProfileAvatars(
+    threads: List<MessageThread>,
+    friendProfiles: List<FriendProfile>,
+): List<MessageThread> {
+    val friendByUserId = friendProfiles.associateBy { profile -> profile.userId }
+    return threads.map { thread ->
+        val friend = friendByUserId[thread.participantUserId]
+        val humanName = friend?.humanName?.takeIf { value -> value.isNotBlank() }
+        val petNames = friend?.dogName
+            ?.takeIf { value -> value.isNotBlank() }
+            ?.let { listOf(it) }
+            ?: thread.participantPetNames
+        thread.copy(
+            title = humanName ?: thread.title,
+            participantAccountLabel = humanName ?: thread.participantAccountLabel,
+            participantAvatarUrl = friend?.dogPhotoUrl
+                ?.takeIf { value -> value.isNotBlank() }
+                ?: thread.participantAvatarUrl,
+            participantPetNames = petNames,
+        )
+    }
 }
 
 private fun buildLocalCommunityNotifications(
@@ -5254,6 +6290,89 @@ class PetSocialViewModelFactory(
     }
 }
 
+private data class ServicesTabPayload(
+    val providers: List<ServiceProvider>,
+    val recommendationSuburb: String?,
+    val recommendationSource: String,
+    val nearbyPetBusinesses: List<NearbyPetBusiness>,
+)
+
+private data class CommunityTabPayload(
+    val groups: List<Group>,
+    val posts: List<CommunityPost>,
+    val events: List<CommunityEvent>,
+)
+
+private data class ProfileTabPayload(
+    val ownerBookings: List<BookingResponse>,
+    val providerBookings: List<BookingResponse>,
+    val providerInboxItems: List<ProviderInboxItem>,
+    val calendarEvents: List<CalendarEvent>,
+)
+
+private data class MessagesTabPayload(
+    val messageThreads: List<ApiMessageThread>,
+    val selectedMessageThreadId: String?,
+    val selectedThreadMessages: List<ApiDirectMessage>,
+)
+
+private data class SharedHomePayload(
+    val notifications: List<AppNotification>,
+    val profileInfo: ProfileInfo,
+    val blockedUserIds: List<String>,
+    val moderationReports: List<CommunityReport>,
+    val communityFunnelMetrics: CommunityFunnelMetrics?,
+    val activationFunnelMetrics: CommunityActivationFunnel?,
+)
+
+private data class ProviderHomeSnapshot(
+    val syncedFavorites: List<String>,
+    val syncedListings: List<ProviderListing>,
+    val ownerBookings: List<OwnerBooking>,
+    val providerBookings: List<ProviderBooking>,
+    val providerIdsInScope: Set<String>,
+)
+
+private data class MessagingHomeSnapshot(
+    val selectedThreadId: String?,
+    val selectedThreadMessages: List<DirectMessage>,
+    val validReadMessageIds: Set<String>,
+    val decoratedMessageThreads: List<MessageThread>,
+    val friendProfiles: List<FriendProfile>,
+)
+
+private data class NotificationHomeSnapshot(
+    val mergedNotifications: List<AppNotification>,
+    val validLocalReadIds: Set<String>,
+)
+
+private data class CommunityHomeSnapshot(
+    val joinedEvents: List<JoinedEvent>,
+    val validSavedPostIds: Set<String>,
+    val validSavedEventIds: Set<String>,
+    val validFollowedGroupIds: Set<String>,
+    val groupRosters: Map<String, List<PetRosterItem>>,
+    val groomerRosters: Map<String, List<PetRosterItem>>,
+    val headerRosterPet: PetRosterItem?,
+)
+
+private data class HomeApplySnapshot(
+    val providers: List<ServiceProvider>,
+    val groups: List<Group>,
+    val posts: List<CommunityPost>,
+    val events: List<CommunityEvent>,
+    val providerSnapshot: ProviderHomeSnapshot,
+    val messagingSnapshot: MessagingHomeSnapshot,
+    val notificationSnapshot: NotificationHomeSnapshot,
+    val communitySnapshot: CommunityHomeSnapshot,
+    val homePayloadState: HomePayloadStateResolution,
+    val validPostIds: Set<String>,
+    val validBookingIds: Set<String>,
+    val validListingIds: Set<String>,
+    val validNotificationIds: Set<String>,
+    val profileInfo: ProfileInfo,
+)
+
 private data class HomePayload(
     val providers: List<ServiceProvider>,
     val ownerListingProviders: List<ServiceProvider>,
@@ -5276,6 +6395,944 @@ private data class HomePayload(
     val moderationReports: List<CommunityReport>,
     val communityFunnelMetrics: CommunityFunnelMetrics?,
     val activationFunnelMetrics: CommunityActivationFunnel?,
+)
+
+private suspend fun loadHomePayload(
+    repository: PetSocialRepository,
+    state: UiState,
+    currentPayload: HomePayload,
+    refreshPlan: HomeRefreshPlan,
+    category: String?,
+    suburb: String,
+    isStagingTestBuild: Boolean,
+    useCurrentLocation: Boolean,
+    shouldLoadProviderInbox: Boolean,
+): HomePayload = supervisorScope {
+    val servicesDeferred = if (refreshPlan.fetchServices) {
+        async {
+            loadServicesTabPayload(
+                repository = repository,
+                state = state,
+                category = category,
+                suburb = suburb,
+                isStagingTestBuild = isStagingTestBuild,
+                useCurrentLocation = useCurrentLocation,
+            )
+        }
+    } else {
+        null
+    }
+    val ownerListingsDeferred = if (refreshPlan.fetchOwnerListings) {
+        async {
+            repository.loadProviders(
+                userId = state.activeUserId,
+                includeInactive = true,
+            )
+        }
+    } else {
+        null
+    }
+    val communityDeferred = if (refreshPlan.fetchCommunity) {
+        async {
+            loadCommunityTabPayload(
+                repository = repository,
+                state = state,
+                suburb = suburb,
+            )
+        }
+    } else {
+        null
+    }
+    val profileDeferred = if (refreshPlan.fetchProfilePane) {
+        async {
+            loadProfileTabPayload(
+                repository = repository,
+                state = state,
+                shouldLoadProviderInbox = shouldLoadProviderInbox,
+            )
+        }
+    } else {
+        null
+    }
+    val messagesDeferred = if (refreshPlan.fetchMessages) {
+        async {
+            loadMessagesTabPayload(
+                repository = repository,
+                state = state,
+                currentPayload = currentPayload,
+            )
+        }
+    } else {
+        null
+    }
+    val sharedDeferred = if (
+        refreshPlan.fetchNotifications ||
+        refreshPlan.fetchProfileInfo ||
+        refreshPlan.fetchBlockedUsers ||
+        refreshPlan.fetchModerationReports ||
+        refreshPlan.fetchFunnels
+    ) {
+        async {
+            loadSharedHomePayload(
+                repository = repository,
+                state = state,
+                currentPayload = currentPayload,
+                refreshPlan = refreshPlan,
+                suburb = suburb,
+                isStagingTestBuild = isStagingTestBuild,
+            )
+        }
+    } else {
+        null
+    }
+
+    var payload = currentPayload
+
+    servicesDeferred?.await()?.let { services ->
+        payload = payload.copy(
+            providers = services.providers,
+            recommendationSuburb = services.recommendationSuburb,
+            recommendationSource = services.recommendationSource,
+            nearbyPetBusinesses = services.nearbyPetBusinesses,
+        )
+    }
+    ownerListingsDeferred?.await()?.let { ownerListingProviders ->
+        payload = payload.copy(ownerListingProviders = ownerListingProviders)
+    }
+    communityDeferred?.await()?.let { community ->
+        payload = payload.copy(
+            groups = community.groups,
+            posts = community.posts,
+            events = community.events,
+        )
+    }
+    messagesDeferred?.await()?.let { messages ->
+        payload = payload.copy(
+            messageThreads = messages.messageThreads,
+            selectedMessageThreadId = messages.selectedMessageThreadId,
+            selectedThreadMessages = messages.selectedThreadMessages,
+        )
+    }
+    sharedDeferred?.await()?.let { shared ->
+        payload = payload.copy(
+            notifications = shared.notifications,
+            profileInfo = shared.profileInfo,
+            blockedUserIds = shared.blockedUserIds,
+            moderationReports = shared.moderationReports,
+            communityFunnelMetrics = shared.communityFunnelMetrics,
+            activationFunnelMetrics = shared.activationFunnelMetrics,
+        )
+    }
+    profileDeferred?.await()?.let { profile ->
+        val providersWithBookings = payload.providers + resolveMissingBookingProviders(
+            repository = repository,
+            knownProviders = payload.providers,
+            ownerBookings = profile.ownerBookings,
+        )
+        payload = payload.copy(
+            providers = providersWithBookings.distinctBy { provider -> provider.id },
+            ownerBookings = profile.ownerBookings,
+            providerBookings = profile.providerBookings,
+            providerInboxItems = profile.providerInboxItems,
+            calendarEvents = profile.calendarEvents,
+        )
+    }
+
+    payload
+}
+
+private suspend fun loadServicesTabPayload(
+    repository: PetSocialRepository,
+    state: UiState,
+    category: String?,
+    suburb: String,
+    isStagingTestBuild: Boolean,
+    useCurrentLocation: Boolean,
+): ServicesTabPayload = supervisorScope {
+    val shouldUseRecommendations = state.servicesSearchQuery.isBlank() && state.servicesSortBy == "relevance"
+    val recommendationsDeferred = if (shouldUseRecommendations) {
+        async {
+            runCatching {
+                repository.loadRecommendedProviders(
+                    category = category,
+                    suburb = if (isStagingTestBuild) suburb else null,
+                    minRating = state.serviceMinRating?.toDouble(),
+                    maxDistanceKm = state.serviceMaxDistanceKm?.toDouble(),
+                    userLat = if (useCurrentLocation) state.currentLatitude else null,
+                    userLng = if (useCurrentLocation) state.currentLongitude else null,
+                )
+            }.getOrNull()
+        }
+    } else {
+        null
+    }
+    val nearbyPetBusinessesDeferred = if (useCurrentLocation) {
+        async {
+            repository.loadNearbyPetBusinesses(
+                latitude = state.currentLatitude ?: 0.0,
+                longitude = state.currentLongitude ?: 0.0,
+            )
+        }
+    } else {
+        null
+    }
+
+    val recommendations = recommendationsDeferred?.await()
+    val primaryProviders = recommendations?.providers ?: repository.loadProviders(
+        category = category,
+        suburb = suburb,
+        includeInactive = false,
+        minRating = state.serviceMinRating?.toDouble(),
+        maxDistanceKm = state.serviceMaxDistanceKm?.toDouble(),
+        userLat = if (useCurrentLocation) state.currentLatitude else null,
+        userLng = if (useCurrentLocation) state.currentLongitude else null,
+        query = state.servicesSearchQuery.ifBlank { null },
+        sortBy = state.servicesSortBy,
+    )
+    val resolvedProviders = if (primaryProviders.isNotEmpty()) {
+        primaryProviders
+    } else {
+        val relaxedLocalProviders = repository.loadProviders(
+            category = category,
+            suburb = suburb,
+            includeInactive = false,
+            minRating = null,
+            maxDistanceKm = null,
+            userLat = null,
+            userLng = null,
+            query = state.servicesSearchQuery.ifBlank { null },
+            sortBy = "relevance",
+        )
+        if (relaxedLocalProviders.isNotEmpty()) {
+            relaxedLocalProviders
+        } else {
+            repository.loadProviders(
+                category = category,
+                suburb = null,
+                includeInactive = false,
+                minRating = null,
+                maxDistanceKm = null,
+                userLat = null,
+                userLng = null,
+                query = state.servicesSearchQuery.ifBlank { null },
+                sortBy = "relevance",
+            )
+        }
+    }
+
+    ServicesTabPayload(
+        providers = resolvedProviders,
+        recommendationSuburb = recommendations?.inferredSuburb,
+        recommendationSource = recommendations?.suburbSource ?: "none",
+        nearbyPetBusinesses = nearbyPetBusinessesDeferred?.await().orEmpty(),
+    )
+}
+
+private suspend fun loadCommunityTabPayload(
+    repository: PetSocialRepository,
+    state: UiState,
+    suburb: String,
+): CommunityTabPayload = supervisorScope {
+    val normalizedCommunitySort = normalizeCommunitySort(state.postsSortBy)
+    val groupsDeferred = async {
+        val localGroups = repository.loadGroups(suburb = suburb)
+        if (localGroups.isNotEmpty()) localGroups else repository.loadGroups(suburb = null)
+    }
+    val postsDeferred = async {
+        val localPosts = repository.loadPosts(
+            suburb = suburb,
+            postType = null,
+            sortBy = normalizedCommunitySort,
+            openOnly = null,
+            recentHours = null,
+            centerLat = null,
+            centerLng = null,
+            maxDistanceKm = null,
+        )
+        if (localPosts.isNotEmpty()) {
+            localPosts
+        } else {
+            repository.loadPosts(
+                suburb = null,
+                postType = null,
+                sortBy = normalizedCommunitySort,
+                openOnly = null,
+                recentHours = null,
+                centerLat = null,
+                centerLng = null,
+                maxDistanceKm = null,
+            )
+        }
+    }
+    val eventsDeferred = async {
+        val localEvents = repository.loadEvents(suburb = suburb)
+        if (localEvents.isNotEmpty()) localEvents else repository.loadEvents(suburb = null)
+    }
+
+    CommunityTabPayload(
+        groups = groupsDeferred.await(),
+        posts = postsDeferred.await(),
+        events = eventsDeferred.await(),
+    )
+}
+
+private suspend fun loadProfileTabPayload(
+    repository: PetSocialRepository,
+    state: UiState,
+    shouldLoadProviderInbox: Boolean,
+): ProfileTabPayload = supervisorScope {
+    val ownerBookingsDeferred = async { repository.loadOwnerBookings() }
+    val providerBookingsDeferred = async { repository.loadProviderBookings() }
+    val providerInboxDeferred = if (shouldLoadProviderInbox) {
+        async<List<ProviderInboxItem>> {
+            runCatching {
+                repository.loadProviderInbox(
+                    includeResolved = false,
+                    limit = 50,
+                ).items
+            }.getOrDefault(emptyList())
+        }
+    } else {
+        null
+    }
+    val calendarEventsDeferred = async {
+        repository.loadCalendarEvents(role = state.selectedCalendarRole)
+    }
+
+    ProfileTabPayload(
+        ownerBookings = ownerBookingsDeferred.await(),
+        providerBookings = providerBookingsDeferred.await(),
+        providerInboxItems = providerInboxDeferred?.await().orEmpty(),
+        calendarEvents = calendarEventsDeferred.await(),
+    )
+}
+
+private suspend fun loadMessagesTabPayload(
+    repository: PetSocialRepository,
+    state: UiState,
+    currentPayload: HomePayload,
+): MessagesTabPayload = supervisorScope {
+    val messageThreads = runCatching { repository.loadMessageThreads(limit = 50) }
+        .getOrElse { currentPayload.messageThreads }
+    val selectedMessageThreadId = state.selectedMessageThreadId
+        ?.takeIf { selectedThreadId -> messageThreads.any { thread -> thread.id == selectedThreadId } }
+    val selectedThreadMessagesDeferred = if (selectedMessageThreadId.isNullOrBlank()) {
+        null
+    } else {
+        async {
+            runCatching {
+                repository.loadThreadMessages(
+                    threadId = selectedMessageThreadId,
+                    limit = 200,
+                )
+            }.getOrDefault(currentPayload.selectedThreadMessages)
+        }
+    }
+
+    MessagesTabPayload(
+        messageThreads = messageThreads,
+        selectedMessageThreadId = selectedMessageThreadId,
+        selectedThreadMessages = selectedThreadMessagesDeferred?.await().orEmpty(),
+    )
+}
+
+private suspend fun loadSharedHomePayload(
+    repository: PetSocialRepository,
+    state: UiState,
+    currentPayload: HomePayload,
+    refreshPlan: HomeRefreshPlan,
+    suburb: String,
+    isStagingTestBuild: Boolean,
+): SharedHomePayload = supervisorScope {
+    val notificationsDeferred = if (refreshPlan.fetchNotifications) {
+        async { repository.loadNotifications(unreadOnly = false) }
+    } else {
+        null
+    }
+    val profileInfoDeferred = if (refreshPlan.fetchProfileInfo) {
+        async {
+            runCatching { repository.loadUserProfile() }
+                .map { response ->
+                    response.toProfileInfo(
+                        activeUserId = state.activeUserId,
+                        fallbackProfile = state.profileInfo,
+                        fallbackSuburb = suburb,
+                    )
+                }
+                .getOrElse {
+                    state.profileInfo.copy(
+                        suburb = if (isStagingTestBuild) STAGING_TEST_SUBURB else suburb,
+                    )
+                }
+        }
+    } else {
+        null
+    }
+    val blockedUsersDeferred = if (refreshPlan.fetchBlockedUsers) {
+        async<List<String>> { runCatching { repository.loadBlockedUsers().blockedUserIds }.getOrDefault(emptyList()) }
+    } else {
+        null
+    }
+    val moderationReportsDeferred = if (refreshPlan.fetchModerationReports) {
+        async<List<CommunityReport>> {
+            runCatching { repository.loadModerationReports(includeResolved = false) }.getOrDefault(emptyList())
+        }
+    } else {
+        null
+    }
+    val communityFunnelDeferred = if (refreshPlan.fetchFunnels) {
+        async { runCatching { repository.loadCommunityFunnel(windowHours = 168) }.getOrNull() }
+    } else {
+        null
+    }
+    val activationFunnelDeferred = if (refreshPlan.fetchFunnels) {
+        async { runCatching { repository.loadCommunityActivationFunnel(windowHours = 72) }.getOrNull() }
+    } else {
+        null
+    }
+
+    SharedHomePayload(
+        notifications = notificationsDeferred?.await() ?: currentPayload.notifications,
+        profileInfo = profileInfoDeferred?.await() ?: currentPayload.profileInfo,
+        blockedUserIds = blockedUsersDeferred?.await() ?: currentPayload.blockedUserIds,
+        moderationReports = moderationReportsDeferred?.await() ?: currentPayload.moderationReports,
+        communityFunnelMetrics = if (refreshPlan.fetchFunnels) {
+            communityFunnelDeferred?.await()
+        } else {
+            currentPayload.communityFunnelMetrics
+        },
+        activationFunnelMetrics = if (refreshPlan.fetchFunnels) {
+            activationFunnelDeferred?.await()
+        } else {
+            currentPayload.activationFunnelMetrics
+        },
+    )
+}
+
+private suspend fun resolveMissingBookingProviders(
+    repository: PetSocialRepository,
+    knownProviders: List<ServiceProvider>,
+    ownerBookings: List<BookingResponse>,
+): List<ServiceProvider> = supervisorScope {
+    ownerBookings
+        .map { booking -> booking.providerId }
+        .filter { providerId -> providerId.isNotBlank() && knownProviders.none { provider -> provider.id == providerId } }
+        .distinct()
+        .map { providerId ->
+            async { runCatching { repository.loadProviderDetails(providerId).provider }.getOrNull() }
+        }
+        .mapNotNull { deferred -> deferred.await() }
+}
+
+private fun resolveHomeRefreshPlan(
+    selectedTab: AppTab,
+    scope: HomeRefreshScope,
+): HomeRefreshPlan {
+    if (scope == HomeRefreshScope.Full) {
+        return HomeRefreshPlan(
+            fetchServices = true,
+            fetchOwnerListings = true,
+            fetchCommunity = true,
+            fetchProfilePane = true,
+            fetchMessages = true,
+            fetchNotifications = true,
+            fetchProfileInfo = true,
+            fetchBlockedUsers = true,
+            fetchModerationReports = true,
+            fetchFunnels = true,
+        )
+    }
+    return when (selectedTab) {
+        AppTab.Services -> HomeRefreshPlan(
+            fetchServices = true,
+            fetchOwnerListings = false,
+            fetchCommunity = false,
+            fetchProfilePane = false,
+            fetchMessages = false,
+            fetchNotifications = true,
+            fetchProfileInfo = true,
+            fetchBlockedUsers = false,
+            fetchModerationReports = false,
+            fetchFunnels = false,
+        )
+        AppTab.Community -> HomeRefreshPlan(
+            fetchServices = false,
+            fetchOwnerListings = false,
+            fetchCommunity = true,
+            fetchProfilePane = false,
+            fetchMessages = false,
+            fetchNotifications = true,
+            fetchProfileInfo = true,
+            fetchBlockedUsers = true,
+            fetchModerationReports = true,
+            fetchFunnels = false,
+        )
+        AppTab.BarkAI -> HomeRefreshPlan(
+            fetchServices = false,
+            fetchOwnerListings = false,
+            fetchCommunity = false,
+            fetchProfilePane = false,
+            fetchMessages = false,
+            fetchNotifications = true,
+            fetchProfileInfo = true,
+            fetchBlockedUsers = false,
+            fetchModerationReports = false,
+            fetchFunnels = false,
+        )
+        AppTab.Messages -> HomeRefreshPlan(
+            fetchServices = false,
+            fetchOwnerListings = false,
+            fetchCommunity = false,
+            fetchProfilePane = false,
+            fetchMessages = true,
+            fetchNotifications = true,
+            fetchProfileInfo = true,
+            fetchBlockedUsers = true,
+            fetchModerationReports = false,
+            fetchFunnels = false,
+        )
+        AppTab.Profile -> HomeRefreshPlan(
+            fetchServices = true,
+            fetchOwnerListings = true,
+            fetchCommunity = true,
+            fetchProfilePane = true,
+            fetchMessages = true,
+            fetchNotifications = true,
+            fetchProfileInfo = true,
+            fetchBlockedUsers = true,
+            fetchModerationReports = true,
+            fetchFunnels = true,
+        )
+    }
+}
+
+private fun currentHomePayload(
+    state: UiState,
+    suburb: String,
+): HomePayload {
+    return HomePayload(
+        providers = state.providers,
+        ownerListingProviders = state.providers.filter { provider -> provider.ownerUserId == state.activeUserId },
+        recommendationSuburb = state.servicesRecommendationSuburb,
+        recommendationSource = state.servicesRecommendationSource,
+        nearbyPetBusinesses = state.nearbyPetBusinesses,
+        groups = state.groups,
+        posts = state.posts,
+        events = state.communityEvents,
+        ownerBookings = state.ownerBookings.map { booking -> booking.toBookingResponse() },
+        providerBookings = state.providerBookings.map { booking -> booking.toBookingResponse() },
+        providerInboxItems = state.providerInboxItems,
+        calendarEvents = state.calendarEvents,
+        messageThreads = state.messageThreads.map { thread -> thread.toApiMessageThread() },
+        selectedMessageThreadId = state.selectedMessageThreadId,
+        selectedThreadMessages = state.directMessages
+            .filter { message -> message.threadId == state.selectedMessageThreadId }
+            .map { message -> message.toApiDirectMessage() },
+        notifications = state.notifications.filterNot { notification -> notification.id.startsWith("local:") },
+        profileInfo = state.profileInfo.copy(suburb = state.profileInfo.suburb.ifBlank { suburb }),
+        blockedUserIds = state.blockedUserIds,
+        moderationReports = state.moderationReports,
+        communityFunnelMetrics = state.communityFunnelMetrics,
+        activationFunnelMetrics = state.activationFunnelMetrics,
+    )
+}
+
+private fun buildProviderHomeSnapshot(
+    current: UiState,
+    payload: HomePayload,
+    providers: List<ServiceProvider>,
+): ProviderHomeSnapshot {
+    val providerById = providers.associateBy { provider -> provider.id }
+    val syncedFavorites = if (current.favoriteProviderIds.isEmpty()) {
+        providers.take(3).map { provider -> provider.id }
+    } else {
+        current.favoriteProviderIds.filter { id -> providers.any { provider -> provider.id == id } }
+    }
+    val syncedListings = payload.ownerListingProviders
+        .filter { provider -> provider.ownerUserId == current.activeUserId }
+        .map { provider ->
+            ProviderListing(
+                id = provider.id,
+                title = provider.name,
+                category = provider.category.replace("_", " "),
+                status = provider.status,
+                priceFrom = provider.priceFrom,
+                description = provider.description,
+                suburb = provider.suburb,
+                imageUrls = provider.imageUrls,
+            )
+        }
+    val ownerBookings = payload.ownerBookings.map { booking ->
+        val provider = providerById[booking.providerId]
+        OwnerBooking(
+            id = booking.id,
+            serviceName = provider?.name ?: booking.providerId,
+            providerId = booking.providerId,
+            providerUserId = booking.counterpartyUserId
+                ?: booking.providerOwnerUserId
+                ?: provider?.ownerUserId
+                .orEmpty(),
+            threadId = booking.threadId,
+            providerAccountLabel = provider?.ownerLabel
+                ?: booking.providerOwnerUserId?.let(::accountLabel)
+                ?: booking.counterpartyUserId?.let(::accountLabel)
+                ?: provider?.ownerUserId?.let(::accountLabel)
+                ?: "Unknown owner",
+            date = booking.date,
+            timeSlot = booking.timeSlot,
+            status = booking.status,
+            note = booking.note,
+        )
+    }
+    val providerBookings = payload.providerBookings.map { booking ->
+        ProviderBooking(
+            id = booking.id,
+            petName = booking.petName,
+            ownerUserId = booking.counterpartyUserId ?: booking.ownerUserId,
+            threadId = booking.threadId,
+            providerId = booking.providerId,
+            serviceName = providerById[booking.providerId]?.name ?: booking.providerId,
+            date = booking.date,
+            timeSlot = booking.timeSlot,
+            status = booking.status,
+        )
+    }
+    val providerIdsInScope = buildSet {
+        providerBookings
+            .map { booking -> booking.providerId }
+            .filter { id -> id.isNotBlank() }
+            .forEach { id -> add(id) }
+        syncedListings
+            .map { listing -> listing.id }
+            .filter { id -> id.isNotBlank() }
+            .forEach { id -> add(id) }
+    }
+
+    return ProviderHomeSnapshot(
+        syncedFavorites = syncedFavorites,
+        syncedListings = syncedListings,
+        ownerBookings = ownerBookings,
+        providerBookings = providerBookings,
+        providerIdsInScope = providerIdsInScope,
+    )
+}
+
+private fun buildMessagingHomeSnapshot(
+    current: UiState,
+    payload: HomePayload,
+    providers: List<ServiceProvider>,
+    groups: List<Group>,
+    posts: List<CommunityPost>,
+    ownerBookings: List<OwnerBooking>,
+    providerBookings: List<ProviderBooking>,
+): MessagingHomeSnapshot {
+    val selectedThreadId = payload.selectedMessageThreadId
+        ?.takeIf { candidate -> payload.messageThreads.any { thread -> thread.id == candidate } }
+        ?: current.selectedMessageThreadId?.takeIf { candidate ->
+            payload.messageThreads.any { thread -> thread.id == candidate }
+        }
+    val selectedThreadMessages = if (selectedThreadId.isNullOrBlank()) {
+        emptyList()
+    } else {
+        val payloadMessages = payload.selectedThreadMessages.map { message -> message.toDirectMessage() }
+        if (payloadMessages.isNotEmpty()) {
+            payloadMessages
+        } else {
+            current.directMessages.filter { message -> message.threadId == selectedThreadId }
+        }
+    }
+    val messageThreads = buildMessageThreadsFromApi(
+        activeUserId = current.activeUserId,
+        apiThreads = payload.messageThreads,
+        providers = providers,
+        groups = groups,
+        posts = posts,
+        ownerBookings = ownerBookings,
+        providerBookings = providerBookings,
+        mutedThreadIds = current.mutedMessageThreadIds,
+        pinnedThreadIds = current.pinnedMessageThreadIds,
+        blockedParticipantIds = current.blockedUserIds.toSet(),
+    )
+    val friendProfiles = buildFriendProfiles(
+        activeUserId = current.activeUserId,
+        messageThreads = messageThreads,
+        existingProfiles = current.friendProfiles,
+    )
+
+    return MessagingHomeSnapshot(
+        selectedThreadId = selectedThreadId,
+        selectedThreadMessages = selectedThreadMessages,
+        validReadMessageIds = selectedThreadMessages.map { message -> message.id }.toSet(),
+        decoratedMessageThreads = applyFriendProfileAvatars(
+            threads = messageThreads,
+            friendProfiles = friendProfiles,
+        ),
+        friendProfiles = friendProfiles,
+    )
+}
+
+private fun buildNotificationHomeSnapshot(
+    current: UiState,
+    payload: HomePayload,
+    groups: List<Group>,
+    posts: List<CommunityPost>,
+    events: List<CommunityEvent>,
+): NotificationHomeSnapshot {
+    val localNotifications = buildLocalCommunityNotifications(
+        activeUserId = current.activeUserId,
+        followedGroupIds = current.followedGroupIds,
+        savedPostIds = current.savedCommunityPostIds,
+        groups = groups,
+        events = events,
+        posts = posts,
+        moderationReports = payload.moderationReports,
+        includeFollowedGroupAlerts = current.notifyFollowedGroupAlerts,
+        includeSavedPostUpdates = current.notifySavedPostUpdates,
+        includeSafetyAlerts = current.notifySafetyAlerts,
+    )
+    val validLocalReadIds = current.readLocalNotificationIds.intersect(localNotifications.map { it.id }.toSet())
+
+    return NotificationHomeSnapshot(
+        mergedNotifications = mergeNotifications(
+            remoteNotifications = payload.notifications,
+            localNotifications = localNotifications,
+            localReadIds = validLocalReadIds,
+        ),
+        validLocalReadIds = validLocalReadIds,
+    )
+}
+
+private fun buildCommunityHomeSnapshot(
+    current: UiState,
+    providers: List<ServiceProvider>,
+    groups: List<Group>,
+    posts: List<CommunityPost>,
+    events: List<CommunityEvent>,
+): CommunityHomeSnapshot {
+    val today = LocalDate.now()
+    val joinedEvents = events
+        .filter { event -> event.rsvpStatus == "attending" }
+        .map { event ->
+            JoinedEvent(
+                id = event.id,
+                title = event.title,
+                date = event.date,
+                suburb = event.suburb,
+            )
+        }
+    val groupRosters = buildGroupRosters(
+        groups = groups,
+        posts = posts,
+        providers = providers,
+        today = today,
+    )
+    val groomerRosters = buildGroomerRosters(
+        providers = providers,
+        today = today,
+    )
+
+    return CommunityHomeSnapshot(
+        joinedEvents = joinedEvents,
+        validSavedPostIds = current.savedCommunityPostIds.intersect(posts.map { post -> post.id }.toSet()),
+        validSavedEventIds = current.savedCommunityEventIds.intersect(events.map { event -> event.id }.toSet()),
+        validFollowedGroupIds = current.followedGroupIds.intersect(groups.map { group -> group.id }.toSet()),
+        groupRosters = groupRosters,
+        groomerRosters = groomerRosters,
+        headerRosterPet = groupRosters.values
+            .flatten()
+            .dailyShuffle("header", today)
+            .firstOrNull(),
+    )
+}
+
+private fun buildHomeApplySnapshot(
+    current: UiState,
+    payload: HomePayload,
+    suburb: String,
+    isStagingTestBuild: Boolean,
+): HomeApplySnapshot {
+    val providers = payload.providers
+    val groups = payload.groups
+    val posts = payload.posts
+    val events = payload.events
+    val providerSnapshot = buildProviderHomeSnapshot(
+        current = current,
+        payload = payload,
+        providers = providers,
+    )
+    val messagingSnapshot = buildMessagingHomeSnapshot(
+        current = current,
+        payload = payload,
+        providers = providers,
+        groups = groups,
+        posts = posts,
+        ownerBookings = providerSnapshot.ownerBookings,
+        providerBookings = providerSnapshot.providerBookings,
+    )
+    val notificationSnapshot = buildNotificationHomeSnapshot(
+        current = current,
+        payload = payload,
+        groups = groups,
+        posts = posts,
+        events = events,
+    )
+    val communitySnapshot = buildCommunityHomeSnapshot(
+        current = current,
+        providers = providers,
+        groups = groups,
+        posts = posts,
+        events = events,
+    )
+    val homePayloadState = resolveHomePayloadState(
+        selectedMessageThreadId = messagingSnapshot.selectedThreadId,
+        validMessageThreadIds = payload.messageThreads.map { thread -> thread.id },
+        selectedCommunityGroupId = current.selectedCommunityGroupId,
+        validGroupIds = groups.map { group -> group.id },
+        providerOsSurface = IS_PROVIDER_OS_SURFACE,
+        profileProviderMode = payload.profileInfo.serviceProviderMode,
+        hasProviderListings = providerSnapshot.syncedListings.isNotEmpty(),
+    )
+    val validBookingIds = (
+        providerSnapshot.ownerBookings.map { booking -> booking.id } +
+            providerSnapshot.providerBookings.map { booking -> booking.id }
+        ).toSet()
+
+    return HomeApplySnapshot(
+        providers = providers,
+        groups = groups,
+        posts = posts,
+        events = events,
+        providerSnapshot = providerSnapshot,
+        messagingSnapshot = messagingSnapshot,
+        notificationSnapshot = notificationSnapshot,
+        communitySnapshot = communitySnapshot,
+        homePayloadState = homePayloadState,
+        validPostIds = posts.map { post -> post.id }.toSet(),
+        validBookingIds = validBookingIds,
+        validListingIds = providerSnapshot.syncedListings.map { listing -> listing.id }.toSet(),
+        validNotificationIds = notificationSnapshot.mergedNotifications.map { notification -> notification.id }.toSet(),
+        profileInfo = payload.profileInfo.copy(
+            suburb = if (isStagingTestBuild) STAGING_TEST_SUBURB else payload.profileInfo.suburb.ifBlank { suburb },
+        ),
+    )
+}
+
+private fun UiState.applyHomePayloadSnapshot(
+    payload: HomePayload,
+    snapshot: HomeApplySnapshot,
+    errorMessage: String?,
+    isOfflineMode: Boolean,
+    hasPendingSync: Boolean,
+    metrics: HomeLoadMetrics?,
+): UiState {
+    return withNavigation {
+        copy(
+            selectedMessageThreadId = snapshot.homePayloadState.selectedMessageThreadId,
+            selectedCommunityGroupId = snapshot.homePayloadState.selectedCommunityGroupId,
+        )
+    }.copy(
+        providers = reuseIfEquivalent(providers, snapshot.providers),
+        nearbyPetBusinesses = reuseIfEquivalent(nearbyPetBusinesses, payload.nearbyPetBusinesses),
+        groups = reuseIfEquivalent(groups, snapshot.groups),
+        posts = reuseIfEquivalent(posts, snapshot.posts),
+        communityCommentsByPostId = communityCommentsByPostId.filterKeys(snapshot.validPostIds::contains),
+        loadingCommentPostIds = loadingCommentPostIds.filter(snapshot.validPostIds::contains).toSet(),
+        communityEvents = reuseIfEquivalent(communityEvents, snapshot.events),
+        ownerBookings = reuseIfEquivalent(ownerBookings, snapshot.providerSnapshot.ownerBookings),
+        providerBookings = reuseIfEquivalent(providerBookings, snapshot.providerSnapshot.providerBookings),
+        providerInboxItems = reuseIfEquivalent(providerInboxItems, payload.providerInboxItems),
+        loadingProviderInbox = false,
+        calendarEvents = reuseIfEquivalent(calendarEvents, payload.calendarEvents),
+        messageThreads = reuseIfEquivalent(messageThreads, snapshot.messagingSnapshot.decoratedMessageThreads),
+        friendProfiles = reuseIfEquivalent(friendProfiles, snapshot.messagingSnapshot.friendProfiles),
+        directMessages = reuseIfEquivalent(directMessages, snapshot.messagingSnapshot.selectedThreadMessages),
+        readDirectMessageIds = snapshot.messagingSnapshot.validReadMessageIds,
+        savedCommunityPostIds = snapshot.communitySnapshot.validSavedPostIds,
+        savedCommunityEventIds = snapshot.communitySnapshot.validSavedEventIds,
+        mutedCommunityKeywords = mutedCommunityKeywords,
+        followedGroupIds = snapshot.communitySnapshot.validFollowedGroupIds,
+        joinedEvents = reuseIfEquivalent(joinedEvents, snapshot.communitySnapshot.joinedEvents),
+        favoriteProviderIds = reuseIfEquivalent(favoriteProviderIds, snapshot.providerSnapshot.syncedFavorites),
+        providerListings = reuseIfEquivalent(providerListings, snapshot.providerSnapshot.syncedListings),
+        providerBlackoutsByProvider = providerBlackoutsByProvider.filterKeys(snapshot.validListingIds::contains),
+        bookingHistoryByBookingId = bookingHistoryByBookingId.filterKeys(snapshot.validBookingIds::contains),
+        loadingBookingHistoryIds = loadingBookingHistoryIds.filter(snapshot.validBookingIds::contains).toSet(),
+        providerRescheduleSlotsByKey = providerRescheduleSlotsByKey.filterKeys { key ->
+            snapshot.providerSnapshot.providerIdsInScope.any { providerId -> key.startsWith("$providerId|") }
+        },
+        loadingProviderRescheduleKeys = loadingProviderRescheduleKeys.filter { key ->
+            snapshot.providerSnapshot.providerIdsInScope.any { providerId -> key.startsWith("$providerId|") }
+        }.toSet(),
+        headerRosterPet = snapshot.communitySnapshot.headerRosterPet,
+        groupPetRosters = reuseIfEquivalent(groupPetRosters, snapshot.communitySnapshot.groupRosters),
+        groomerPetRosters = reuseIfEquivalent(groomerPetRosters, snapshot.communitySnapshot.groomerRosters),
+        servicesRecommendationSuburb = payload.recommendationSuburb,
+        servicesRecommendationSource = payload.recommendationSource,
+        profileInfo = snapshot.profileInfo,
+        providerModeEnabled = snapshot.homePayloadState.providerState.providerModeEnabled,
+        hasProviderListings = snapshot.homePayloadState.providerState.hasProviderListings,
+        canLoadProviderInbox = snapshot.homePayloadState.providerState.canLoadProviderInbox,
+        loading = false,
+        error = errorMessage,
+        authRequired = false,
+        authInFlight = false,
+        latestHomeLoadMetrics = metrics ?: latestHomeLoadMetrics,
+        isOfflineMode = isOfflineMode,
+        hasPendingSync = hasPendingSync,
+        notifications = reuseIfEquivalent(notifications, snapshot.notificationSnapshot.mergedNotifications),
+        readLocalNotificationIds = snapshot.notificationSnapshot.validLocalReadIds,
+        acknowledgedCommunityNotificationIds = acknowledgedCommunityNotificationIds.intersect(snapshot.validNotificationIds),
+        acknowledgedMessageNotificationIds = acknowledgedMessageNotificationIds.intersect(snapshot.validNotificationIds),
+        blockedUserIds = reuseIfEquivalent(blockedUserIds, payload.blockedUserIds),
+        moderationReports = reuseIfEquivalent(moderationReports, payload.moderationReports),
+        communityFunnelMetrics = payload.communityFunnelMetrics,
+        activationFunnelMetrics = payload.activationFunnelMetrics ?: activationFunnelMetrics,
+        isCommunityModerator = activeUserId in COMMUNITY_MODERATOR_IDS,
+    )
+}
+
+private fun OwnerBooking.toBookingResponse(): BookingResponse = BookingResponse(
+    id = id,
+    ownerUserId = "",
+    providerId = providerId,
+    providerOwnerUserId = providerUserId.ifBlank { null },
+    counterpartyUserId = providerUserId.ifBlank { null },
+    threadId = threadId,
+    petName = "",
+    date = date,
+    timeSlot = timeSlot,
+    note = note,
+    status = status,
+)
+
+private fun ProviderBooking.toBookingResponse(): BookingResponse = BookingResponse(
+    id = id,
+    ownerUserId = ownerUserId,
+    providerId = providerId,
+    counterpartyUserId = ownerUserId.ifBlank { null },
+    threadId = threadId,
+    petName = petName,
+    date = date,
+    timeSlot = timeSlot,
+    note = "",
+    status = status,
+)
+
+private fun MessageThread.toApiMessageThread(): ApiMessageThread = ApiMessageThread(
+    id = id,
+    participantUserId = participantUserId,
+    lastMessage = lastMessage,
+    lastMessageAt = Instant.now().toString(),
+    unreadCount = unreadCount,
+)
+
+private fun DirectMessage.toApiDirectMessage(): ApiDirectMessage = ApiDirectMessage(
+    id = id,
+    threadId = threadId,
+    senderUserId = senderUserId,
+    recipientUserId = recipientUserId,
+    body = body,
+    createdAt = Instant.now().toString(),
 )
 
 private fun UserProfileResponse.toProfileInfo(
@@ -5305,6 +7362,7 @@ private fun UserProfileResponse.toProfileInfo(
         phone = phone.trim().ifBlank { fallbackProfile.phone },
         humanPronouns = humanPronouns.trim().ifBlank { fallbackProfile.humanPronouns },
         humanRoleLabel = humanRoleLabel.trim().ifBlank { fallbackProfile.humanRoleLabel.ifBlank { "Member" } },
+        serviceProviderMode = serviceProviderMode || fallbackProfile.serviceProviderMode,
         dogName = dogName.trim().ifBlank { fallbackProfile.dogName },
         dogAgeMonths = dogAgeMonths.takeIf { it > 0 } ?: fallbackProfile.dogAgeMonths,
         dogBreedMix = dogBreedMix.trim().ifBlank { fallbackProfile.dogBreedMix },
@@ -5401,7 +7459,7 @@ private fun buildGroupRosters(
             addedDate = createdDate,
             suburb = post.suburb,
         )
-    } + seedTestCommunityRosterEntries(today = today, photoPool = photoPool)
+    }
 
     return groups.associate { group ->
         val roster = entries
@@ -5420,13 +7478,6 @@ private fun buildGroomerRosters(
         .filter { it.category == "grooming" }
         .associate { provider ->
             val photos = (provider.imageUrls + fallbackPetPhotos).distinct()
-            val seeded = seedTestGroomerRosterEntries(
-                providerId = provider.id,
-                providerName = provider.name,
-                suburb = provider.suburb,
-                today = today,
-                photos = photos,
-            )
             val roster = photos.mapIndexed { index, photo ->
                 PetRosterItem(
                     id = "groomer_${provider.id}_$index",
@@ -5435,65 +7486,12 @@ private fun buildGroomerRosters(
                     addedDate = today.minusDays((index % 7).toLong()),
                     suburb = provider.suburb,
                 )
-            } + seeded
+            }
                 .filter { item -> isInRollingWindow(item.addedDate, today, days = 7) }
                 .dailyShuffle(seed = "groomer_${provider.id}", today = today)
                 .take(8)
             provider.id to roster
         }
-}
-
-private fun seedTestCommunityRosterEntries(
-    today: LocalDate,
-    photoPool: List<String>,
-): List<PetRosterItem> {
-    val suburbs = listOf("Surry Hills", "Newtown", "Redfern")
-    val names = listOf(
-        "Milo",
-        "Luna",
-        "Waffles",
-        "Poppy",
-        "Ollie",
-        "Maple",
-        "Nala",
-        "Biscuit",
-        "Archie",
-    )
-    var cursor = 0
-    return suburbs.flatMap { suburb ->
-        (0..6).map { dayOffset ->
-            val name = names[cursor % names.size]
-            val photo = photoPool[cursor % photoPool.size]
-            val id = "seed_${suburb.replace(" ", "_").lowercase()}_$dayOffset"
-            cursor += 1
-            PetRosterItem(
-                id = id,
-                petName = name,
-                photoUrl = photo,
-                addedDate = today.minusDays(dayOffset.toLong()),
-                suburb = suburb,
-            )
-        }
-    }
-}
-
-private fun seedTestGroomerRosterEntries(
-    providerId: String,
-    providerName: String,
-    suburb: String,
-    today: LocalDate,
-    photos: List<String>,
-): List<PetRosterItem> {
-    val sampleNames = listOf("Teddy", "Coco", "Blue", "Daisy", "Mochi", "Scout", "Pepper", "Ziggy")
-    return sampleNames.mapIndexed { index, name ->
-        PetRosterItem(
-            id = "seed_groomer_${providerId}_$index",
-            petName = "$name (${providerName.substringBefore(' ')})",
-            photoUrl = photos[index % photos.size],
-            addedDate = today.minusDays((index % 7).toLong()),
-            suburb = suburb,
-        )
-    }
 }
 
 private fun extractPetName(title: String, body: String, index: Int): String {

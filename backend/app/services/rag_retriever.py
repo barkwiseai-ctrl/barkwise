@@ -28,7 +28,20 @@ class RagRetriever:
         "puppies": "puppy",
         "dogs": "dog",
         "vomiting": "vomit",
+        "vomited": "vomit",
+        "vomits": "vomit",
         "diarrhoea": "diarrhea",
+        "diarrhoeic": "diarrhea",
+        "diarrheal": "diarrhea",
+        "fell": "fall",
+        "fallen": "fall",
+        "slipped": "slip",
+        "slipping": "slip",
+        "collapsed": "collapse",
+        "wobbly": "wobble",
+        "staggering": "stagger",
+        "staggered": "stagger",
+        "weak": "weakness",
         "parvovirus": "parvo",
         "toxic": "toxin",
         "poisoning": "poison",
@@ -66,6 +79,10 @@ class RagRetriever:
     }
     HIGH_RISK_SOURCE_CAPS: Dict[str, int] = {
         "knowledge_base": 4,
+    }
+    HEALTH_RISK_SOURCE_CAPS: Dict[str, int] = {
+        "knowledge_base": 4,
+        "provider": 1,
     }
     HIGH_RISK_AU_AUTHORITIES: Set[str] = {
         "rspca australia",
@@ -171,6 +188,14 @@ class RagRetriever:
             )
             if high_risk_terms and not self._has_high_risk_term_match(top_docs, high_risk_terms):
                 top_docs = self._fallback_high_risk_docs(priority_terms=high_risk_terms)
+        elif health_risk_query:
+            top_docs = self._select_top_docs(
+                scored,
+                max_docs=4,
+                source_caps=self.HEALTH_RISK_SOURCE_CAPS,
+            )
+            if not any(str(doc.get("source", "")).strip() == "knowledge_base" for doc in top_docs):
+                top_docs = self._fallback_high_risk_docs(priority_terms=list(query_tokens))
         else:
             top_docs = self._select_top_docs(scored)
         if not top_docs:
@@ -291,10 +316,30 @@ class RagRetriever:
             "dehydration",
             "diarrhea",
             "lethargy",
+            "collapse",
+            "fall",
+            "slip",
+            "wobble",
+            "stagger",
+            "weakness",
             "vaccine",
             "rabies",
         }
-        return len(query_tokens.intersection(risk_tokens)) > 0
+        if len(query_tokens.intersection(risk_tokens)) > 0:
+            return True
+        mobility_patterns = (
+            {"hind", "leg", "gave", "out"},
+            {"hind", "legs", "gave", "out"},
+            {"back", "leg", "gave", "out"},
+            {"back", "legs", "gave", "out"},
+            {"could", "not", "stand"},
+            {"couldnt", "stand"},
+            {"cannot", "stand"},
+            {"could", "not", "get", "up"},
+            {"couldnt", "get", "up"},
+            {"cannot", "get", "up"},
+        )
+        return any(pattern.issubset(query_tokens) for pattern in mobility_patterns)
 
     def _select_top_docs(
         self,
@@ -331,6 +376,7 @@ class RagRetriever:
         self,
         rag_context: Dict[str, Any],
         support_mode: bool,
+        severity: str = "standard",
     ) -> Optional[str]:
         docs = rag_context.get("documents", [])
         if not isinstance(docs, list) or not docs:
@@ -339,25 +385,40 @@ class RagRetriever:
         high_risk_terms = rag_context.get("high_risk_terms", [])
         if not isinstance(high_risk_terms, list):
             high_risk_terms = []
+        query_tokens = self._expand_query_tokens(self._rag_tokens(str(rag_context.get("query", "")).strip().lower()))
+        symptom_query = self._is_health_risk_query(query_tokens)
 
         lines: List[str] = []
         if support_mode:
             lines.append("I know this can feel stressful, and you are doing the right thing by asking.")
             lines.append("")
-        if high_risk_mode:
+        if high_risk_mode or severity in {"urgent", "emergency"}:
             concern_label = ", ".join(str(item) for item in high_risk_terms[:3] if str(item).strip())
             if concern_label:
                 lines.append(f"This looks high-risk ({concern_label}). I cannot diagnose in chat.")
             else:
-                lines.append("This looks high-risk. I cannot diagnose in chat.")
-            lines.append("Use this safety-first plan now:")
-            lines.append("1. Contact a veterinarian or emergency clinic for real-time triage immediately.")
-            lines.append("2. Keep your dog calm and avoid home medications or induced vomiting unless a vet directs it.")
-            lines.append(
-                "3. If collapse, trouble breathing, repeated vomiting, seizures, or severe weakness occur, treat as an emergency now."
-            )
+                lines.append("This looks urgent. I cannot diagnose in chat.")
+            lines.append("Immediate steps:")
+            if severity == "emergency":
+                lines.append("1. Contact your nearest emergency vet now for real-time triage.")
+                lines.append("2. Keep your dog quiet and prevent falls or injury while you leave.")
+                lines.append("3. Do not give home medications or induce vomiting unless a vet directs it.")
+            else:
+                lines.append("1. Contact a veterinarian or emergency clinic for real-time triage immediately.")
+                lines.append("2. Keep your dog calm and avoid home medications or induced vomiting unless a vet directs it.")
+                lines.append(
+                    "3. If collapse, trouble breathing, repeated vomiting, seizures, or severe weakness occur, treat as an emergency now."
+                )
             lines.append("")
             lines.append("Trusted references for immediate guidance:")
+        elif symptom_query:
+            lines.append("I cannot diagnose in chat, but this sounds like a symptom concern that deserves careful monitoring.")
+            lines.append("Immediate next steps:")
+            lines.append("1. Reduce activity, keep your dog comfortable, and note exactly what happened and when.")
+            lines.append("2. Do not give home medications unless your veterinarian tells you to.")
+            lines.append("3. Contact your vet promptly if this repeats, worsens, or comes with weakness, pain, collapse, vomiting, trouble breathing, or trouble standing.")
+            lines.append("")
+            lines.append("Trusted references for practical guidance:")
         else:
             lines.append("From what I can see in your local BarkAI data:")
         for doc in docs[:3]:

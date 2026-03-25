@@ -179,7 +179,7 @@ android {
             buildConfigField("Boolean", "ALLOW_DEMO_LOGIN", stagingAllowDemoLogin.toString())
             buildConfigField("Boolean", "REQUIRE_INVITE_OTP_AUTH", stagingRequireOtpAuth.toString())
             buildConfigField("Boolean", "ONBOARD_FAKE_SIGN_IN", stagingFakeSignIn.toString())
-            buildConfigField("Boolean", "ONBOARD_SCRIPT_ENABLED", "false")
+            buildConfigField("Boolean", "ONBOARD_SCRIPT_ENABLED", "true")
             buildConfigField("String", "ONBOARD_GROUP_TITLE", "\"Beach onboarding\"")
             buildConfigField("String", "ONBOARD_EVENT_TITLE", "\"Beach Onboarding Party\"")
             buildConfigField("String", "APP_SURFACE", "\"owner\"")
@@ -196,6 +196,7 @@ android {
             buildConfigField("String", "ENVIRONMENT", "\"prod\"")
             buildConfigField("Boolean", "ALLOW_DEMO_LOGIN", "false")
             buildConfigField("Boolean", "REQUIRE_INVITE_OTP_AUTH", "true")
+            buildConfigField("Boolean", "ONBOARD_SCRIPT_ENABLED", "true")
             buildConfigField("String", "APP_SURFACE", "\"owner\"")
             manifestPlaceholders["usesCleartextTraffic"] = "false"
             manifestPlaceholders["appDeepLinkScheme"] = "barkwise"
@@ -265,6 +266,24 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    testOptions {
+        animationsDisabled = true
+        managedDevices {
+            localDevices {
+                create("pixel8Api35Atd") {
+                    device = "Pixel 8"
+                    apiLevel = 35
+                    systemImageSource = "aosp-atd"
+                }
+            }
+            groups {
+                create("composeSmoke") {
+                    targetDevices.add(devices["pixel8Api35Atd"])
+                }
+            }
+        }
+    }
 }
 
 kotlin {
@@ -324,6 +343,12 @@ tasks.register("installDebug") {
 
 tasks.register("compileDebugKotlin") {
     dependsOn("compileStagingDebugKotlin")
+}
+
+tasks.register("managedComposeSmoke") {
+    group = "verification"
+    description = "Runs staging Compose smoke tests on the managed Pixel 8 API 35 device group."
+    dependsOn("composeSmokeGroupStagingDebugAndroidTest")
 }
 
 val prodReleaseTasksRequiringSigning = setOf(

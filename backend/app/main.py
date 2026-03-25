@@ -1,8 +1,11 @@
+import logging
 import os
+import time
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -10,6 +13,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.routers import auth, chat, community, community_activation, friend_qr, messages, notifications, security, services
 
 app = FastAPI(title="BarkWise API", version="0.1.0")
+logger = logging.getLogger(__name__)
 
 
 def _parse_csv_env(name: str, default: str) -> list[str]:
@@ -28,10 +32,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 trusted_hosts = _parse_csv_env("TRUSTED_HOSTS", "*")
 if not (len(trusted_hosts) == 1 and trusted_hosts[0] == "*"):
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
+
+
+@app.middleware("http")
+async def log_request_metrics(request, call_next):
+    started_at = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - started_at) * 1000.0
+        logger.exception(
+            "request method=%s path=%s failed duration_ms=%.1f",
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
+    duration_ms = (time.perf_counter() - started_at) * 1000.0
+    response_size = response.headers.get("content-length", "unknown")
+    response.headers["X-Process-Time-Ms"] = f"{duration_ms:.1f}"
+    logger.info(
+        "request method=%s path=%s status=%s duration_ms=%.1f response_bytes=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+        response_size,
+    )
+    return response
 
 app.include_router(services.router, prefix="/services")
 app.include_router(services.router, prefix="/listings")

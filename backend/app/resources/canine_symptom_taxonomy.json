@@ -1,0 +1,74 @@
+[
+  {
+    "id": "gi_vomiting",
+    "label": "vomiting",
+    "category": "gastrointestinal",
+    "severity": "monitor",
+    "terms": ["vomit", "vomiting", "vomited", "throwing up", "threw up", "retching", "bile"],
+    "cta_labels": ["What To Monitor", "Prepare Vet Summary"]
+  },
+  {
+    "id": "gi_diarrhea",
+    "label": "diarrhea",
+    "category": "gastrointestinal",
+    "severity": "monitor",
+    "terms": ["diarrhea", "diarrhoea", "loose stool", "bloody stool"],
+    "cta_labels": ["What To Monitor", "Prepare Vet Summary"]
+  },
+  {
+    "id": "mobility_fall",
+    "label": "fall or slip",
+    "category": "mobility",
+    "severity": "monitor",
+    "terms": ["slipped over", "fell over", "fallen over", "toppled over", "slipped", "fell"],
+    "cta_labels": ["What To Monitor", "Prepare Vet Summary"]
+  },
+  {
+    "id": "mobility_hindlegs",
+    "label": "hind leg weakness",
+    "category": "mobility",
+    "severity": "urgent",
+    "terms": ["hind legs gave out", "back legs gave out", "hind leg weakness", "dragging leg", "can't stand", "cannot stand", "couldn't get up"],
+    "cta_labels": ["Urgent Vet Steps", "Prepare Vet Summary"]
+  },
+  {
+    "id": "breathing_distress",
+    "label": "breathing difficulty",
+    "category": "respiratory",
+    "severity": "emergency",
+    "terms": ["can't breathe", "cannot breathe", "trouble breathing", "labored breathing", "not breathing", "gasping"],
+    "cta_labels": ["Urgent Vet Steps", "Prepare Vet Summary"]
+  },
+  {
+    "id": "collapse_event",
+    "label": "collapse",
+    "category": "neurologic",
+    "severity": "emergency",
+    "terms": ["collapse", "collapsed", "unconscious", "passed out"],
+    "cta_labels": ["Urgent Vet Steps", "Prepare Vet Summary"]
+  },
+  {
+    "id": "neuro_instability",
+    "label": "neurologic instability",
+    "category": "neurologic",
+    "severity": "urgent",
+    "terms": ["wobbly", "staggering", "staggered", "disoriented", "seizure", "shaking", "tremors"],
+    "cta_labels": ["Urgent Vet Steps", "Prepare Vet Summary"]
+  },
+  {
+    "id": "pain_lameness",
+    "label": "pain or lameness",
+    "category": "mobility",
+    "severity": "monitor",
+    "terms": ["limping", "limp", "pain", "yelping", "crying when walking"],
+    "cta_labels": ["What To Monitor", "Prepare Vet Summary"]
+  },
+  {
+    "id": "systemic_weakness",
+    "label": "weakness or lethargy",
+    "category": "systemic",
+    "severity": "urgent",
+    "terms": ["weak", "weakness", "lethargic", "lethargy", "not himself", "not herself", "acting strange", "not right"],
+    "cta_labels": ["Urgent Vet Steps", "Prepare Vet Summary"]
+  }
+]

@@ -11,6 +11,9 @@ android/.kotlin/
 android/local.properties
 android/**/build/
 android/share/
+android/.idea/.name
+android/.idea/caches/
+android/.idea/workspace.xml
 
 # macOS
 .DS_Store
@@ -18,6 +21,8 @@ android/share/
 .pytest_cache/
 
 # Local runtime data
+backend/.idea/
+backend/.pycache_tmp/
 backend/data/*.sqlite3
 backend/data/*.sqlite3-shm
 backend/data/*.sqlite3-wal

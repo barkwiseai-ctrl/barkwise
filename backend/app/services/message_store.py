@@ -76,6 +76,29 @@ class MessageStore:
             (thread_id, user_a, user_b, created_at),
         )
 
+    def ensure_thread(
+        self,
+        *,
+        user_a: str,
+        user_b: str,
+        created_at: str,
+    ) -> str:
+        clean_user_a = user_a.strip()
+        clean_user_b = user_b.strip()
+        if not clean_user_a or not clean_user_b:
+            raise ValueError("user_a and user_b are required")
+        resolved_thread_id = _thread_id(clean_user_a, clean_user_b)
+        with self._lock:
+            with self._connect() as conn:
+                self._ensure_thread(
+                    conn,
+                    resolved_thread_id,
+                    *sorted([clean_user_a, clean_user_b]),
+                    created_at,
+                )
+                conn.commit()
+        return resolved_thread_id
+
     def _participant_for(self, conn: sqlite3.Connection, thread_id: str, user_id: str) -> Optional[str]:
         row = conn.execute(
             "SELECT user_a, user_b FROM threads WHERE id = ?",

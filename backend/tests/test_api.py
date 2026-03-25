@@ -1144,6 +1144,54 @@ def test_services_booking_history_endpoint_tracks_exact_transitions_and_permissi
     assert "Only booking owner or provider can view booking history" in forbidden.json()["detail"]
 
 
+def test_services_booking_payload_includes_messaging_identity_fields():
+    owner_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
+    assert owner_login.status_code == 200
+    owner_headers = {"Authorization": f"Bearer {owner_login.json()['access_token']}"}
+
+    provider, available_slots = _find_provider_with_available_slots(
+        category="dog_walking",
+        min_available_slots=1,
+        day_offset_start=210,
+        day_offset_end=260,
+        exclude_owner_user_id="user_2",
+    )
+    provider_id = provider["id"]
+    provider_owner_user_id = provider.get("owner_user_id")
+    assert provider_owner_user_id
+
+    create_booking = client.post(
+        "/services/bookings",
+        json={
+            "user_id": "user_2",
+            "provider_id": provider_id,
+            "pet_name": "Milo",
+            "date": available_slots[0]["date"],
+            "time_slot": available_slots[0]["time_slot"],
+            "note": "Booking payload contract test",
+        },
+        headers=owner_headers,
+    )
+    assert create_booking.status_code == 200
+    payload = create_booking.json()
+    expected_thread_id = f"dm_{min('user_2', provider_owner_user_id)}_{max('user_2', provider_owner_user_id)}"
+    assert payload["owner_user_id"] == "user_2"
+    assert payload["provider_owner_user_id"] == provider_owner_user_id
+    assert payload["counterparty_user_id"] == provider_owner_user_id
+    assert payload["thread_id"] == expected_thread_id
+
+    owner_bookings = client.get(
+        "/services/bookings",
+        params={"user_id": "user_2", "role": "owner"},
+        headers=owner_headers,
+    )
+    assert owner_bookings.status_code == 200
+    listed = next(item for item in owner_bookings.json() if item["id"] == payload["id"])
+    assert listed["provider_owner_user_id"] == provider_owner_user_id
+    assert listed["counterparty_user_id"] == provider_owner_user_id
+    assert listed["thread_id"] == expected_thread_id
+
+
 def test_services_provider_reschedule_updates_slot_and_keeps_transition_history():
     owner_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
     assert owner_login.status_code == 200
@@ -1525,7 +1573,19 @@ def test_mvp_day2_contract_freeze_parks_and_grooming():
         "highlighted_vet_until",
     }
     availability_slot_keys = {"date", "time_slot", "available", "reason"}
-    booking_keys = {"id", "owner_user_id", "provider_id", "pet_name", "date", "time_slot", "note", "status"}
+    booking_keys = {
+        "id",
+        "owner_user_id",
+        "provider_id",
+        "provider_owner_user_id",
+        "counterparty_user_id",
+        "thread_id",
+        "pet_name",
+        "date",
+        "time_slot",
+        "note",
+        "status",
+    }
     notification_keys = {"id", "user_id", "title", "body", "category", "read", "created_at", "deep_link"}
 
     login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})

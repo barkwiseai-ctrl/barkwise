@@ -1,6 +1,7 @@
 package com.petsocial.app.data
 
 import android.content.Context
+import android.provider.Settings
 import com.google.firebase.messaging.FirebaseMessaging
 import com.petsocial.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +34,8 @@ class PetSocialRepository(
     private val mapsApiKey: String,
     context: Context,
 ) {
-    private val cachePrefs = context.applicationContext.getSharedPreferences(CACHE_PREFS_NAME, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val cachePrefs = appContext.getSharedPreferences(CACHE_PREFS_NAME, Context.MODE_PRIVATE)
     private var userId: String = cachePrefs.getString(ACTIVE_USER_ID_KEY, "user_2").orEmpty().ifBlank { "user_2" }
     private val json = Json { ignoreUnknownKeys = true }
     private val httpClient = OkHttpClient.Builder().build()
@@ -48,11 +50,7 @@ class PetSocialRepository(
     fun activeUserId(): String = userId
 
     fun testProfileMode(): String {
-        val defaultMode = if (BuildConfig.ONBOARD_SCRIPT_ENABLED) {
-            TEST_PROFILE_MODE_ONBOARDING
-        } else {
-            TEST_PROFILE_MODE_READY
-        }
+        val defaultMode = TEST_PROFILE_MODE_READY
         val raw = cachePrefs.getString(TEST_PROFILE_MODE_KEY, defaultMode)
             .orEmpty()
             .trim()
@@ -139,7 +137,7 @@ class PetSocialRepository(
         imageUrls: List<String> = emptyList(),
         latitude: Double? = null,
         longitude: Double? = null,
-    ): ServiceProvider = createServiceProviderWithFallback(
+    ): ServiceProvider = api.createProvider(
         CreateServiceProviderRequest(
             userId = userId,
             name = name,
@@ -153,94 +151,6 @@ class PetSocialRepository(
             longitude = longitude,
         ),
     )
-
-    private suspend fun createServiceProviderWithFallback(payload: CreateServiceProviderRequest): ServiceProvider {
-        return runCatching { api.createProvider(payload) }
-            .recoverCatching { error ->
-                val retryableHttp = error as? HttpException
-                if (retryableHttp == null || (retryableHttp.code() != 404 && retryableHttp.code() != 405)) {
-                    throw error
-                }
-                postServiceProviderViaFallbackPath(payload)
-            }
-            .getOrThrow()
-    }
-
-    private suspend fun postServiceProviderViaFallbackPath(payload: CreateServiceProviderRequest): ServiceProvider =
-        withContext(Dispatchers.IO) {
-            val mediaType = "application/json".toMediaType()
-            val candidatePaths = listOf(
-                "services/providers",
-                "services/providers/",
-                "services/provider",
-                "services/provider/",
-                "services/providers/create",
-                "services/provider/create",
-                "providers",
-                "providers/",
-                "api/services/providers",
-                "api/services/providers/",
-                "api/services/provider",
-                "api/services/provider/",
-                "api/services/providers/create",
-                "api/services/provider/create",
-            )
-            val candidateMethods = listOf("POST", "PUT")
-            val baseCandidates = resolveBaseCandidates()
-            var lastError: Throwable? = null
-
-            for (base in baseCandidates) {
-                val baseHttpUrl = base.toHttpUrlOrNull() ?: continue
-                for (path in candidatePaths) {
-                    for (method in candidateMethods) {
-                        val url = baseHttpUrl.newBuilder()
-                            .encodedPath("/")
-                            .apply {
-                                path.split("/")
-                                    .filter { it.isNotBlank() }
-                                    .forEach { addPathSegment(it) }
-                            }
-                            .build()
-                        val requestBody = json.encodeToString(payload).toRequestBody(mediaType)
-                        val requestBuilder = Request.Builder().url(url)
-                        when (method) {
-                            "POST" -> requestBuilder.post(requestBody)
-                            "PUT" -> requestBuilder.put(requestBody)
-                            else -> requestBuilder.post(requestBody)
-                        }
-                        if (authToken.isNotBlank()) {
-                            requestBuilder.header("Authorization", "Bearer $authToken")
-                        }
-                        val request = requestBuilder.build()
-                        val response = try {
-                            httpClient.newCall(request).execute()
-                        } catch (error: Exception) {
-                            lastError = error
-                            continue
-                        }
-
-                        var tryNextPath = false
-                        response.use { raw ->
-                            if (raw.isSuccessful) {
-                                val rawBody = raw.body?.string().orEmpty()
-                                if (rawBody.isBlank()) error("Empty response from ${url.encodedPath}")
-                                return@withContext json.decodeFromString<ServiceProvider>(rawBody)
-                            }
-                            if (raw.code == 404 || raw.code == 405) {
-                                lastError = IllegalStateException("HTTP ${raw.code} ($method) at ${url.encodedPath}")
-                                tryNextPath = true
-                                return@use
-                            }
-                            error("Create service failed (${raw.code}) at ${url.encodedPath}")
-                        }
-                        if (tryNextPath) {
-                            continue
-                        }
-                    }
-                }
-            }
-            throw (lastError ?: IllegalStateException("Service create endpoint unavailable"))
-        }
 
     suspend fun updateServiceProvider(
         providerId: String,
@@ -1201,7 +1111,18 @@ class PetSocialRepository(
                 inviteId = inviteId,
                 email = email,
                 otpCode = otpCode,
+                deviceId = currentDeviceId(),
             ),
+        )
+        authToken = response.accessToken
+        cachePrefs.edit().putString(AUTH_TOKEN_KEY, authToken).apply()
+        setActiveUser(response.userId)
+        return response
+    }
+
+    suspend fun tryTrustedDeviceLogin(): AuthLoginResponse {
+        val response = api.trustedDeviceLogin(
+            AuthTrustedDeviceLoginRequest(deviceId = currentDeviceId()),
         )
         authToken = response.accessToken
         cachePrefs.edit().putString(AUTH_TOKEN_KEY, authToken).apply()
@@ -1217,6 +1138,15 @@ class PetSocialRepository(
 
     suspend fun logout(): Boolean = runCatching {
         api.logout()
+        authToken = ""
+        cachePrefs.edit().putString(AUTH_TOKEN_KEY, "").apply()
+        true
+    }.getOrElse { false }
+
+    suspend fun resetTrustedDevice(): Boolean = runCatching {
+        api.resetTrustedDevice(
+            AuthTrustedDeviceResetRequest(deviceId = currentDeviceId()),
+        )
         authToken = ""
         cachePrefs.edit().putString(AUTH_TOKEN_KEY, "").apply()
         true
@@ -1239,6 +1169,7 @@ class PetSocialRepository(
         phone: String,
         humanPronouns: String,
         humanRoleLabel: String,
+        serviceProviderMode: Boolean,
         dogName: String,
         dogAgeMonths: Int,
         dogBreedMix: String,
@@ -1277,6 +1208,7 @@ class PetSocialRepository(
             phone = phone,
             humanPronouns = humanPronouns,
             humanRoleLabel = humanRoleLabel,
+            serviceProviderMode = serviceProviderMode,
             dogName = dogName,
             dogAgeMonths = dogAgeMonths,
             dogBreedMix = dogBreedMix,
@@ -1436,18 +1368,60 @@ class PetSocialRepository(
     }
 
     fun saveHomeCache(snapshot: HomeCacheSnapshot) {
-        val encoded = runCatching { json.encodeToString(snapshot) }.getOrNull() ?: return
+        val discoverySlice = HomeDiscoveryCacheSlice(
+            providers = snapshot.providers,
+            ownerListingProviders = snapshot.ownerListingProviders,
+            nearbyPetBusinesses = snapshot.nearbyPetBusinesses,
+            groups = snapshot.groups,
+            posts = snapshot.posts,
+            events = snapshot.events,
+        )
+        val bookingsSlice = HomeBookingsCacheSlice(
+            ownerBookings = snapshot.ownerBookings,
+            providerBookings = snapshot.providerBookings,
+        )
+        val calendarSlice = HomeCalendarCacheSlice(
+            calendarEvents = snapshot.calendarEvents,
+        )
+        val encodedDiscovery = runCatching { json.encodeToString(discoverySlice) }.getOrNull() ?: return
+        val encodedBookings = runCatching { json.encodeToString(bookingsSlice) }.getOrNull() ?: return
+        val encodedCalendar = runCatching { json.encodeToString(calendarSlice) }.getOrNull() ?: return
         cachePrefs.edit()
-            .putString(cacheKeyForUser(userId), encoded)
+            .putString(cacheKeyForUser(userId, HOME_CACHE_DISCOVERY_SUFFIX), encodedDiscovery)
+            .putString(cacheKeyForUser(userId, HOME_CACHE_BOOKINGS_SUFFIX), encodedBookings)
+            .putString(cacheKeyForUser(userId, HOME_CACHE_CALENDAR_SUFFIX), encodedCalendar)
+            .remove(legacyHomeCacheKeyForUser(userId))
             .apply()
     }
 
     fun loadHomeCache(): HomeCacheSnapshot? {
-        val raw = cachePrefs.getString(cacheKeyForUser(userId), null) ?: return null
-        return runCatching { json.decodeFromString<HomeCacheSnapshot>(raw) }.getOrNull()
+        val discovery = cachePrefs.getString(cacheKeyForUser(userId, HOME_CACHE_DISCOVERY_SUFFIX), null)
+            ?.let { raw -> runCatching { json.decodeFromString<HomeDiscoveryCacheSlice>(raw) }.getOrNull() }
+        val bookings = cachePrefs.getString(cacheKeyForUser(userId, HOME_CACHE_BOOKINGS_SUFFIX), null)
+            ?.let { raw -> runCatching { json.decodeFromString<HomeBookingsCacheSlice>(raw) }.getOrNull() }
+        val calendar = cachePrefs.getString(cacheKeyForUser(userId, HOME_CACHE_CALENDAR_SUFFIX), null)
+            ?.let { raw -> runCatching { json.decodeFromString<HomeCalendarCacheSlice>(raw) }.getOrNull() }
+        if (discovery != null && bookings != null && calendar != null) {
+            return HomeCacheSnapshot(
+                providers = discovery.providers,
+                ownerListingProviders = discovery.ownerListingProviders,
+                nearbyPetBusinesses = discovery.nearbyPetBusinesses,
+                groups = discovery.groups,
+                posts = discovery.posts,
+                events = discovery.events,
+                ownerBookings = bookings.ownerBookings,
+                providerBookings = bookings.providerBookings,
+                calendarEvents = calendar.calendarEvents,
+            )
+        }
+        val legacyRaw = cachePrefs.getString(legacyHomeCacheKeyForUser(userId), null) ?: return null
+        val legacySnapshot = runCatching { json.decodeFromString<HomeCacheSnapshot>(legacyRaw) }.getOrNull() ?: return null
+        saveHomeCache(legacySnapshot)
+        return legacySnapshot
     }
 
-    private fun cacheKeyForUser(userId: String): String = "home_snapshot_$userId"
+    private fun cacheKeyForUser(userId: String, suffix: String): String = "home_snapshot_${suffix}_$userId"
+    private fun legacyHomeCacheKeyForUser(userId: String): String = "home_snapshot_$userId"
 
     private companion object {
         const val CACHE_PREFS_NAME = "petsocial_cache"
@@ -1459,10 +1433,20 @@ class PetSocialRepository(
         const val TEST_PROFILE_MODE_ONBOARDING = "onboarding"
         const val TEST_PROFILE_HEADER_MODE_VISIBLE = "visible"
         const val TEST_PROFILE_HEADER_MODE_HIDDEN = "hidden"
+        const val HOME_CACHE_DISCOVERY_SUFFIX = "discovery"
+        const val HOME_CACHE_BOOKINGS_SUFFIX = "bookings"
+        const val HOME_CACHE_CALENDAR_SUFFIX = "calendar"
         const val DEFAULT_API_BASE_URL = "https://api.barkwiseai.com/"
     }
 
     fun currentAuthToken(): String = authToken
+
+    fun currentDeviceId(): String {
+        return Settings.Secure.getString(
+            appContext.contentResolver,
+            Settings.Secure.ANDROID_ID,
+        )?.trim().orEmpty().ifBlank { "unknown-device" }
+    }
 
     private suspend fun fetchFirebaseToken(): String? = suspendCancellableCoroutine { cont ->
         runCatching {

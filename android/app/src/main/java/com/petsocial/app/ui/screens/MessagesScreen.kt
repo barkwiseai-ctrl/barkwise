@@ -1,27 +1,35 @@
 package com.petsocial.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.MarkEmailUnread
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.PushPin
@@ -29,11 +37,13 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -49,9 +59,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.petsocial.app.ui.DirectMessage
 import com.petsocial.app.ui.MessageThread
 
@@ -218,64 +232,73 @@ fun MessagesScreen(
                                 )
                             },
                             content = {
-                                Column(
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
-                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        .clickable {
+                                            onSelectThread(thread.id)
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                onSelectThread(thread.id)
-                                                if (thread.unreadCount > 0) onMarkThreadRead(thread.id)
-                                            },
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically,
+                                    ConversationAvatar(
+                                        label = thread.participantAccountLabel,
+                                        imageUrl = thread.participantAvatarUrl,
+                                        hasUnread = thread.unreadCount > 0,
+                                    )
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(3.dp),
                                     ) {
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             Text(
                                                 text = thread.participantAccountLabel,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.Medium,
-                                            )
-                                            if (thread.participantPetNames.isNotEmpty()) {
-                                                Text(
-                                                    text = thread.participantPetNames.joinToString(", "),
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1,
-                                                )
-                                            }
-                                            Text(
-                                                text = "${thread.title} • ${thread.lastMessage}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.SemiBold,
                                                 maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f),
                                             )
                                         }
-                                        if (thread.unreadCount > 0) {
-                                            Badge { Text(thread.unreadCount.toString()) }
+                                        if (thread.participantPetNames.isNotEmpty()) {
+                                            Text(
+                                                text = thread.participantPetNames.joinToString(", "),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
                                         }
+                                        Text(
+                                            text = thread.lastMessage,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
                                     }
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
+                                    Column(
+                                        horizontalAlignment = Alignment.End,
+                                        verticalArrangement = Arrangement.spacedBy(6.dp),
                                     ) {
-                                        if (isPinned) {
-                                            AssistChip(onClick = {}, label = { Text("Pinned") })
-                                        }
-                                        if (isMuted) {
-                                            AssistChip(onClick = {}, label = { Text("Muted") })
-                                        }
                                         if (thread.unreadCount > 0) {
-                                            TextButton(onClick = { onMarkThreadRead(thread.id) }) {
-                                                Text("Mark read")
+                                            UnreadCountBadge(thread.unreadCount)
+                                        }
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            if (isPinned) {
+                                                AssistChip(onClick = {}, label = { Text("Pinned", maxLines = 1) })
+                                            }
+                                            if (isMuted) {
+                                                AssistChip(onClick = {}, label = { Text("Muted", maxLines = 1) })
                                             }
                                         }
                                     }
@@ -299,6 +322,12 @@ fun MessagesScreen(
                     contentDescription = "Back to conversations",
                 )
             }
+            ConversationAvatar(
+                label = selectedThread.participantAccountLabel,
+                imageUrl = selectedThread.participantAvatarUrl,
+                hasUnread = selectedThread.unreadCount > 0,
+                size = 42.dp,
+            )
             Column {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -306,10 +335,10 @@ fun MessagesScreen(
                 ) {
                     Text(selectedThread.participantAccountLabel, style = MaterialTheme.typography.titleMedium)
                     if (selectedThread.id in pinnedThreadIds || selectedThread.isPinned) {
-                        AssistChip(onClick = {}, label = { Text("Pinned") })
+                        AssistChip(onClick = {}, label = { Text("Pinned", maxLines = 1) })
                     }
                     if (selectedThread.id in mutedThreadIds || selectedThread.isMuted) {
-                        AssistChip(onClick = {}, label = { Text("Muted") })
+                        AssistChip(onClick = {}, label = { Text("Muted", maxLines = 1) })
                     }
                 }
                 selectedThread.participantPetNames
@@ -325,25 +354,41 @@ fun MessagesScreen(
                     selectedThread.title,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            TextButton(onClick = { onMarkThreadRead(selectedThread.id) }) {
-                Text("Mark read")
-            }
-            TextButton(onClick = { onTogglePinThread(selectedThread.id) }) {
-                Text(if (selectedThread.id in pinnedThreadIds || selectedThread.isPinned) "Unpin thread" else "Pin thread")
-            }
-            TextButton(onClick = { onToggleMuteThread(selectedThread.id) }) {
-                Text(if (selectedThread.id in mutedThreadIds || selectedThread.isMuted) "Unmute thread" else "Mute thread")
-            }
-            TextButton(onClick = { onBlockParticipant(selectedThread.participantUserId) }) {
-                Text("Block user")
-            }
+            AssistChip(onClick = { onMarkThreadRead(selectedThread.id) }, label = { Text("Read", maxLines = 1) })
+            AssistChip(
+                onClick = { onTogglePinThread(selectedThread.id) },
+                label = {
+                    Text(
+                        if (selectedThread.id in pinnedThreadIds || selectedThread.isPinned) "Unpin" else "Pin",
+                        maxLines = 1,
+                    )
+                },
+            )
+            AssistChip(
+                onClick = { onToggleMuteThread(selectedThread.id) },
+                label = {
+                    Text(
+                        if (selectedThread.id in mutedThreadIds || selectedThread.isMuted) "Unmute" else "Mute",
+                        maxLines = 1,
+                    )
+                },
+            )
+            AssistChip(
+                onClick = { onBlockParticipant(selectedThread.participantUserId) },
+                label = { Text("Block", maxLines = 1) },
+                leadingIcon = { Icon(Icons.Default.Block, contentDescription = null) },
+            )
         }
 
         LazyColumn(
@@ -362,17 +407,32 @@ fun MessagesScreen(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+                    verticalAlignment = Alignment.Bottom,
                 ) {
+                    if (!mine) {
+                        ConversationAvatar(
+                            label = selectedThread.participantAccountLabel,
+                            imageUrl = selectedThread.participantAvatarUrl,
+                            hasUnread = false,
+                            size = 30.dp,
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                    }
                     Text(
                         text = message.body,
                         modifier = Modifier
-                            .fillMaxWidth(0.9f)
+                            .fillMaxWidth(0.82f)
                             .widthIn(max = 340.dp)
                             .background(
-                                if (mine) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surface,
-                                RoundedCornerShape(12.dp),
+                                if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                                RoundedCornerShape(
+                                    topStart = 16.dp,
+                                    topEnd = 16.dp,
+                                    bottomEnd = if (mine) 4.dp else 16.dp,
+                                    bottomStart = if (mine) 16.dp else 4.dp,
+                                ),
                             )
-                            .padding(10.dp),
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -392,16 +452,87 @@ fun MessagesScreen(
                 modifier = Modifier
                     .weight(1f)
                     .onFocusChanged { inputFocused = it.isFocused },
-                label = { Text("Message ${selectedThread.participantAccountLabel}") },
+                label = { Text("Message", maxLines = 1) },
+                placeholder = {
+                    Text(
+                        "Write to ${selectedThread.participantAccountLabel}",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
                 minLines = 1,
                 maxLines = if (inputFocused) 4 else 1,
             )
-            Button(
+            FilledIconButton(
+                enabled = input.isNotBlank(),
                 onClick = {
                     onSend(selectedThread.id, input)
                     input = ""
                 },
-            ) { Text("Send") }
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnreadCountBadge(count: Int) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+    ) {
+        Box(
+            modifier = Modifier.size(28.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = if (count > 9) "9+" else count.toString(),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConversationAvatar(
+    label: String,
+    imageUrl: String? = null,
+    hasUnread: Boolean,
+    size: androidx.compose.ui.unit.Dp = 48.dp,
+) {
+    val initial = label.trim().firstOrNull()?.uppercase() ?: "B"
+    Box(
+        modifier = Modifier
+            .size(size)
+            .background(
+                color = if (hasUnread) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                shape = CircleShape,
+            )
+            .border(
+                width = if (hasUnread) 1.5.dp else 0.dp,
+                color = if (hasUnread) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = CircleShape,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!imageUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = imageUrl,
+                contentDescription = "$label avatar",
+                modifier = Modifier
+                    .size(size)
+                    .clip(CircleShape),
+            )
+        } else {
+            Text(
+                text = initial,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

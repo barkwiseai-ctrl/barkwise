@@ -19,11 +19,27 @@ def _login(user_id: str) -> str:
     return payload["access_token"]
 
 
+def _enable_provider_mode(user_id: str, token: str) -> None:
+    response = client.put(
+        "/auth/profile",
+        json={
+            "requester_user_id": user_id,
+            "display_name": user_id,
+            "human_role_label": "Member",
+            "service_provider_mode": True,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["service_provider_mode"] is True
+
+
 def test_golden_path_login_services_booking_chat_notifications_read():
     owner_user = f"golden_owner_{uuid4().hex[:8]}"
     customer_user = f"golden_customer_{uuid4().hex[:8]}"
 
     owner_token = _login(owner_user)
+    _enable_provider_mode(owner_user, owner_token)
 
     created_provider = client.post(
         "/services/providers",

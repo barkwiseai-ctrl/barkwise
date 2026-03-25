@@ -40,6 +40,36 @@ ENVIRONMENT=staging BASE_URL=http://127.0.0.1:8000/ ./android/scripts/install_pr
 ENVIRONMENT=prod BASE_URL=https://api.barkwise.app/ ./android/scripts/install_provider_phone.sh
 ```
 
+## Local dual-phone MVP bootstrap
+
+For the March 27 MVP pass, use the local two-phone bootstrap to install both variants, reverse local API traffic, and seed authenticated sessions:
+
+```bash
+OWNER_SERIAL=<owner-adb-serial> \
+PROVIDER_SERIAL=<provider-adb-serial> \
+./android/scripts/bootstrap_dual_phone_local_mvp.sh
+```
+
+Defaults:
+- owner app: `com.barkwise.app.staging` signed in as `user_2`
+- provider app: `com.barkwise.app.provider.staging` signed in as `user_1`
+- local API base: `http://127.0.0.1:8000/`
+
+If you only need to seed one phone after install, use:
+
+```bash
+./android/scripts/seed_phone_auth_session.sh \
+  --serial <adb-serial> \
+  --package com.barkwise.app.staging \
+  --user-id user_2 \
+  --api-base-url http://127.0.0.1:8000/ \
+  --launch
+```
+
+Notes:
+- The script prints `deviceLocked=` and keyguard state after seeding so you can see whether `adb` can continue autonomously.
+- Devices that remain `deviceLocked=1` on Samsung always-on display still need a real unlock before cross-device UI automation can proceed.
+
 ## Optional: split workspace for Provider OS development
 
 Use a dedicated git worktree (separate folder, shared history):

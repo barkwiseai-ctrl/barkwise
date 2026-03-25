@@ -11,8 +11,12 @@ from uuid import uuid4
 from app.data import group_memberships, groups
 from app.models import BookingRequest, ChatCitation, ChatResponse, ChatTurn, CtaChip, Group, GroupJoinRecord, PetProfileSuggestion
 from app.services.faq_dog_qa import FaqMatchResult, match_faq_answer
+from app.routers.community import persist_community_state_snapshot
+from app.services.auth_otp_store import auth_otp_store
 from app.services.memory_store import MemoryStore
+from app.services.message_store import message_store
 from app.services.rag_retriever import RagRetriever
+from app.services.symptom_taxonomy import load_symptom_taxonomy
 from app.services.service_store import ServiceStoreError, service_store
 
 try:
@@ -31,6 +35,7 @@ ALLOWED_INTENTS = {
     "weight_concern",
     "provider_onboarding",
     "add_service_listing",
+    "manage_provider_mode",
     "add_pet_owner_profile",
     "manage_community_group",
     "manage_booking",
@@ -47,6 +52,7 @@ APP_ROUTE_INTENTS = {
     "weight_concern",
     "provider_onboarding",
     "add_service_listing",
+    "manage_provider_mode",
     "add_pet_owner_profile",
     "manage_community_group",
     "manage_booking",
@@ -79,6 +85,11 @@ TOOL_DEFS = [
             "price_from": "optional integer",
             "contact_name": "optional string",
         },
+    },
+    {
+        "name": "set_provider_mode",
+        "description": "Turn provider mode on or off for the current user.",
+        "args": {"enabled": "required true|false"},
     },
     {
         "name": "add_pet_owner_profile",
@@ -131,6 +142,7 @@ TOOL_ARG_ALLOWLIST: Dict[str, set[str]] = {
     "search_groups": {"suburb", "limit"},
     "draft_lost_found": {"suburb"},
     "add_service_listing": {"service_name", "category", "suburb", "description", "price_from", "contact_name"},
+    "set_provider_mode": {"enabled"},
     "add_pet_owner_profile": {"pet_name", "pet_type", "breed", "age_years", "weight_kg", "suburb"},
     "create_user_group": {"name", "suburb", "user_id"},
     "add_group_member": {"group_name", "member_user_id", "requester_user_id"},
@@ -403,6 +415,24 @@ DEFAULT_HIGH_RISK_TERMS = (
     "leptospirosis",
 )
 
+MOBILITY_SYMPTOM_PATTERNS = (
+    (r"\bslipp(?:ed|ing)?\s+over\b", "slipped over"),
+    (r"\bf(?:all|ell)(?:ing)?\s+over\b", "fell over"),
+    (r"\btoppled\s+over\b", "toppled over"),
+    (r"\b(?:hind\s+legs?|back\s+legs?)\s+(?:gave\s+out|give\s+out|giving\s+out)\b", "hind legs gave out"),
+    (r"\b(?:couldn'?t|cannot|cant)\s+get\s+up\b", "could not get up"),
+    (r"\b(?:couldn'?t|cannot|cant)\s+stand\b", "could not stand"),
+    (r"\b(?:wobbl(?:y|ing)|stagger(?:ed|ing)?|unsteady\s+on\s+(?:his|her|their)\s+feet)\b", "wobbly"),
+)
+
+GERIATRIC_RISK_PATTERNS = (
+    r"\bold(?:er)?\s+dog\b",
+    r"\bsenior\s+dog\b",
+    r"\belderly\s+dog\b",
+    r"\bgeriatr(?:ic|ics)\b",
+    r"\b\d{1,2}\s*(?:year|yr)s?\s*old\b",
+)
+
 WELFARE_POLICY_RESOURCE_PATH = Path(__file__).resolve().parents[1] / "resources" / "welfare_policy_countries.json"
 DEFAULT_WELFARE_POLICY_CONFIG: Dict[str, Any] = {
     "default_country_code": "AU",
@@ -495,6 +525,7 @@ class AIOrchestrator:
         self.sessions: Dict[str, SessionMemory] = {}
         self.skill_manifests = self._load_skill_manifests()
         self.rag_retriever = RagRetriever()
+        self.symptom_taxonomy = load_symptom_taxonomy()
         self.rag_trigger_terms = self._load_rag_trigger_terms()
         self.rag_trigger_patterns = self._compile_rag_trigger_patterns(self.rag_trigger_terms)
         self.high_risk_terms = self._load_high_risk_terms()
@@ -642,7 +673,24 @@ class AIOrchestrator:
         if self._is_high_risk_query(message):
             plan["intent"] = "general_pet_question"
             plan["tools"] = []
+        intent = str(plan.get("intent", "general_pet_question"))
         route = self._route_query(message=message, plan=plan)
+        symptom_intent = self._analyze_symptom_intent(
+            message=message,
+            route=route,
+            intent=intent,
+            user_id=user_id,
+        )
+        if symptom_intent.get("symptom_like"):
+            if symptom_intent.get("severity") in {"urgent", "emergency"}:
+                route["high_risk_mode"] = True
+                route["reason"] = "high_risk_safe_mode"
+                route["matched_high_risk_terms"] = list(
+                    dict.fromkeys(route.get("matched_high_risk_terms", []) + symptom_intent.get("matched_labels", []))
+                )
+            route["matched_terms"] = list(dict.fromkeys(route.get("matched_terms", []) + symptom_intent.get("matched_labels", [])))
+            route["rag_triggered"] = True
+            route["lane"] = "RAG"
         tool_results = self._execute_tools(
             tool_calls=plan.get("tools", []),
             message=message,
@@ -650,7 +698,6 @@ class AIOrchestrator:
             session=session,
             user_id=user_id,
         )
-        intent = str(plan.get("intent", "general_pet_question"))
         if route["lane"] == "RAG":
             rag_context = self.rag_retriever.build_context(
                 message=message,
@@ -707,6 +754,7 @@ class AIOrchestrator:
                 tool_results=tool_results,
                 session=session,
                 rag_context=rag_context,
+                symptom_intent=symptom_intent,
                 user_id=user_id,
             )
             rag_citations = self._build_rag_citations(rag_context=rag_context, limit=3)
@@ -722,12 +770,22 @@ class AIOrchestrator:
                 answer_source = "fallback"
                 answer_badges = ["Heuristic Fallback"]
                 citations = []
+        response_severity = self._classify_response_severity(message, route, symptom_intent=symptom_intent)
+        answer = self._apply_immediate_steps_format(answer, response_severity)
         if route.get("high_risk_mode"):
             answer_badges = self._dedupe_badges(answer_badges + ["High Risk Safe Mode", "Trusted Sources Only"])
         profile = plan.get("suggested_profile")
         if not isinstance(profile, dict):
             profile = self._fallback_profile(message)
-        ctas = self._build_ctas(intent=plan.get("intent", "general_pet_question"), tool_results=tool_results)
+        if session.profile_memory:
+            merged_profile = dict(profile)
+            merged_profile.update(session.profile_memory)
+            profile = merged_profile
+        ctas = self._build_ctas(
+            intent=plan.get("intent", "general_pet_question"),
+            tool_results=tool_results,
+            symptom_intent=symptom_intent,
+        )
 
         response = ChatResponse(
             answer=answer,
@@ -902,6 +960,9 @@ class AIOrchestrator:
         for term, pattern in zip(self.rag_trigger_terms, self.rag_trigger_patterns):
             if pattern.search(normalized):
                 matches.append(term)
+        for pattern, label in MOBILITY_SYMPTOM_PATTERNS:
+            if re.search(pattern, normalized):
+                matches.append(label)
         return matches
 
     def _matched_high_risk_terms(self, message: str) -> List[str]:
@@ -912,13 +973,334 @@ class AIOrchestrator:
         for term, pattern in zip(self.high_risk_terms, self.high_risk_patterns):
             if pattern.search(normalized):
                 matches.append(term)
+        if self._has_geriatric_risk_context(normalized):
+            for pattern, label in MOBILITY_SYMPTOM_PATTERNS:
+                if re.search(pattern, normalized):
+                    matches.append(f"geriatric {label}")
+        if self._has_mobility_symptom_signal(normalized):
+            if re.search(r"\b(?:weak|weakness|wobbl(?:y|ing)|stagger(?:ed|ing)?|collapse|collapsed)\b", normalized):
+                matches.append("acute mobility change")
+            if re.search(r"\b(?:couldn'?t|cannot|cant)\s+(?:stand|get\s+up)\b", normalized):
+                matches.append("unable to stand")
+            if re.search(r"\b(?:hind\s+legs?|back\s+legs?)\s+(?:gave\s+out|give\s+out|giving\s+out)\b", normalized):
+                matches.append("hind legs gave out")
         return matches
+
+    def _has_mobility_symptom_signal(self, text: str) -> bool:
+        normalized = text.lower()
+        return any(re.search(pattern, normalized) for pattern, _ in MOBILITY_SYMPTOM_PATTERNS)
+
+    def _has_geriatric_risk_context(self, text: str) -> bool:
+        normalized = text.lower()
+        if any(re.search(pattern, normalized) for pattern in GERIATRIC_RISK_PATTERNS):
+            return True
+        age_match = re.search(r"\b(\d{1,2})\s*(?:year|yr)s?\s*old\b", normalized)
+        if not age_match:
+            return False
+        try:
+            return int(age_match.group(1)) >= 8
+        except ValueError:
+            return False
 
     def _should_apply_rag(self, message: str) -> bool:
         return bool(self._matched_rag_trigger_terms(message))
 
     def _is_high_risk_query(self, message: str) -> bool:
         return bool(self._matched_high_risk_terms(message))
+
+    def _is_emergency_symptom_query(self, message: str) -> bool:
+        text = message.lower()
+        emergency_patterns = [
+            r"can'?t\s+breathe",
+            r"seizure\s+(?:won't\s+stop|wont\s+stop|for\s+\d+|lasting)",
+            r"continuous\s+seizure",
+            r"collapsed|collapse",
+            r"unconscious",
+            r"bloody\s+vomit|vomiting\s+blood",
+            r"not\s+breathing",
+        ]
+        if any(re.search(pattern, text) for pattern in emergency_patterns):
+            return True
+
+        neuro_markers = [
+            r"\btwitch(?:ing)?\b",
+            r"\btremor(?:s)?\b",
+            r"\bshak(?:e|es|ing)\b",
+            r"\bwobbl(?:y|ing)\b",
+            r"\bstagger(?:ing|ed)?\b",
+            r"\bataxi(?:a|c)\b",
+            r"\bhead\s+bobb?ing\b",
+            r"\bdisoriented\b",
+            r"\bcan'?t\s+stand\b",
+        ]
+        ingestion_markers = [
+            r"\bate\s+something\b",
+            r"\bgot\s+into\b",
+            r"\bingest(?:ed|ion)?\b",
+            r"\bpoison(?:ed|ing)?\b",
+            r"\btoxin\b",
+            r"\bweed\b",
+            r"\bedible\b",
+            r"\bmedication\b",
+            r"\bpill(?:s)?\b",
+        ]
+        vomiting_markers = [
+            r"\bvomit(?:ed|ing|s)?\b",
+            r"\bthrew\s+up\b",
+            r"\bbile\b",
+        ]
+        neuro_hits = sum(1 for pattern in neuro_markers if re.search(pattern, text))
+        has_possible_ingestion = any(re.search(pattern, text) for pattern in ingestion_markers)
+        has_vomiting = any(re.search(pattern, text) for pattern in vomiting_markers)
+        if self._has_mobility_symptom_signal(text) and re.search(r"\b(?:unconscious|not\s+breathing|cannot\s+stand|can'?t\s+stand)\b", text):
+            return True
+        return neuro_hits >= 2 and (has_possible_ingestion or has_vomiting)
+
+    def _classify_response_severity(
+        self,
+        message: str,
+        route: Dict[str, Any],
+        symptom_intent: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        text = message.lower()
+        if self._is_emergency_symptom_query(text):
+            return "emergency"
+        inferred_severity = str((symptom_intent or {}).get("severity", "")).strip().lower()
+        if inferred_severity in {"emergency", "urgent"}:
+            return inferred_severity
+        if bool(route.get("high_risk_mode", False)):
+            return "urgent"
+
+        urgent_patterns = [
+            r"\bletharg(?:ic|y)\b",
+            r"\bweak(?:ness)?\b",
+            r"\brepeated\s+vomit(?:ed|ing|s)?\b",
+            r"\bwon't\s+eat\b",
+            r"\bnot\s+eating\b",
+            r"\bdehydrat(?:ed|ion)\b",
+        ]
+        neuro_markers = [
+            r"\btwitch(?:ing)?\b",
+            r"\btremor(?:s)?\b",
+            r"\bshak(?:e|es|ing)\b",
+            r"\bwobbl(?:y|ing)\b",
+            r"\bstagger(?:ing|ed)?\b",
+            r"\bhead\s+bobb?ing\b",
+        ]
+        urgent_hits = sum(1 for pattern in urgent_patterns if re.search(pattern, text))
+        neuro_hits = sum(1 for pattern in neuro_markers if re.search(pattern, text))
+        mobility_risk = self._has_mobility_symptom_signal(text)
+        geriatric_context = self._has_geriatric_risk_context(text)
+        if mobility_risk and geriatric_context:
+            return "urgent"
+        if mobility_risk and re.search(r"\b(?:pain|yelp(?:ed|ing)?|cry(?:ing)?|limp(?:ing)?|weak(?:ness)?|wobbl(?:y|ing)|stagger(?:ed|ing)?)\b", text):
+            return "urgent"
+        if neuro_hits >= 2 or urgent_hits >= 2:
+            return "urgent"
+        return "standard"
+
+    def _likely_pet_symptom_context(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", text.strip().lower())
+        if not normalized:
+            return False
+        pet_subject = any(token in normalized for token in ["my dog", "my puppy", "my pet", "dog", "puppy"])
+        vague_concern_patterns = [
+            r"\bnot\s+(?:himself|herself|themselves|right)\b",
+            r"\bacting\s+(?:weird|strange|off)\b",
+            r"\bseems\s+off\b",
+            r"\bsomething\s+is\s+wrong\b",
+            r"\bdoesn'?t\s+look\s+right\b",
+            r"\bstruggling\s+to\b",
+        ]
+        return pet_subject and any(re.search(pattern, normalized) for pattern in vague_concern_patterns)
+
+    def _has_standing_distress_signal(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", text.strip().lower())
+        patterns = [
+            r"\bstruggling\s+to\s+stand\b",
+            r"\btrouble\s+standing\b",
+            r"\bdifficulty\s+standing\b",
+            r"\bcan'?t\s+stand\b",
+            r"\bcannot\s+stand\b",
+            r"\bcouldn'?t\s+stand\b",
+            r"\bunsteady\s+standing\b",
+        ]
+        return any(re.search(pattern, normalized) for pattern in patterns)
+
+    def _analyze_symptom_intent(
+        self,
+        *,
+        message: str,
+        route: Dict[str, Any],
+        intent: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        normalized = re.sub(r"\s+", " ", message.strip().lower())
+        pet_context = any(token in normalized for token in ["dog", "puppy", "pet"])
+        matched_entries: List[Dict[str, Any]] = []
+        for entry in self.symptom_taxonomy:
+            terms = entry.get("terms", [])
+            if any(term in normalized for term in terms):
+                matched_entries.append(entry)
+
+        matched_labels = [str(entry.get("label", "")).strip() for entry in matched_entries if str(entry.get("label", "")).strip()]
+        cta_labels: List[str] = []
+        severity_order = {"monitor": 0, "urgent": 1, "emergency": 2}
+        severity = "standard"
+        if matched_entries:
+            severity = max(
+                (str(entry.get("severity", "monitor")).strip().lower() for entry in matched_entries),
+                key=lambda item: severity_order.get(item, 0),
+            )
+            for entry in matched_entries:
+                for label in entry.get("cta_labels", []):
+                    if label not in cta_labels:
+                        cta_labels.append(label)
+
+        deterministic_confidence = 0.0
+        if matched_entries:
+            deterministic_confidence = min(0.95, 0.45 + (0.18 * len(matched_entries)))
+        elif self._is_pet_health_question(normalized):
+            deterministic_confidence = 0.6
+        elif self._likely_pet_symptom_context(normalized):
+            deterministic_confidence = 0.35
+
+        symptom_like = bool(matched_entries) or self._is_pet_health_question(normalized) or self._has_standing_distress_signal(normalized)
+        if self._has_standing_distress_signal(normalized):
+            severity = "urgent" if severity in {"standard", "monitor"} else severity
+            if "standing difficulty" not in matched_labels:
+                matched_labels.append("standing difficulty")
+            for label in ["Urgent Vet Steps", "Prepare Vet Summary"]:
+                if label not in cta_labels:
+                    cta_labels.append(label)
+            deterministic_confidence = max(deterministic_confidence, 0.72)
+        if not symptom_like and deterministic_confidence < 0.55 and pet_context and intent == "general_pet_question":
+            model_hint = self._model_symptom_intent_hint(message=message, user_id=user_id)
+            if model_hint.get("symptom_like"):
+                symptom_like = True
+                severity = str(model_hint.get("severity", severity)).strip().lower() or severity
+                deterministic_confidence = max(deterministic_confidence, float(model_hint.get("confidence", 0.0)))
+                for label in model_hint.get("matched_labels", []):
+                    if label not in matched_labels:
+                        matched_labels.append(label)
+                for label in model_hint.get("cta_labels", []):
+                    if label not in cta_labels:
+                        cta_labels.append(label)
+
+        if severity == "standard" and symptom_like:
+            severity = "monitor"
+        if str(route.get("high_risk_mode", False)).lower() == "true" or route.get("high_risk_mode", False):
+            severity = "urgent" if severity != "emergency" else "emergency"
+
+        return {
+            "symptom_like": symptom_like,
+            "severity": severity,
+            "matched_labels": matched_labels,
+            "cta_labels": cta_labels,
+            "confidence": deterministic_confidence,
+        }
+
+    def _model_symptom_intent_hint(self, *, message: str, user_id: str) -> Dict[str, Any]:
+        if not self.client:
+            return {}
+        if not self._allow_model_call(stage="planner", user_id=user_id, intent="general_pet_question"):
+            return {}
+        prompt = {
+            "message": message,
+            "task": "Classify whether this sounds like a pet symptom concern and estimate urgency conservatively.",
+            "allowed_severity": ["standard", "monitor", "urgent", "emergency"],
+            "response_format": {
+                "symptom_like": True,
+                "severity": "monitor",
+                "matched_labels": ["short phrase"],
+                "cta_labels": ["What To Monitor", "Prepare Vet Summary"],
+                "confidence": 0.0,
+            },
+        }
+        try:
+            response = self.client.responses.create(
+                model=self.model,
+                input=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Return strict JSON only. "
+                            "Be conservative for possible pet symptom descriptions, especially weakness, collapse, breathing, gait, or sudden behavior change. "
+                            "If unsure but it might be a symptom, set symptom_like=true and choose at least monitor."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(prompt)},
+                ],
+                temperature=0.0,
+                max_output_tokens=90,
+            )
+            data = json.loads((getattr(response, "output_text", "") or "").strip() or "{}")
+            if not isinstance(data, dict):
+                return {}
+            return {
+                "symptom_like": bool(data.get("symptom_like", False)),
+                "severity": self._safe_text(data.get("severity"), default="monitor", max_len=16).lower(),
+                "matched_labels": [
+                    self._safe_text(item, default="", max_len=48)
+                    for item in data.get("matched_labels", [])
+                    if self._safe_text(item, default="", max_len=48)
+                ][:3],
+                "cta_labels": [
+                    self._safe_text(item, default="", max_len=48)
+                    for item in data.get("cta_labels", [])
+                    if self._safe_text(item, default="", max_len=48)
+                ][:3],
+                "confidence": max(0.0, min(float(data.get("confidence", 0.0)), 1.0)),
+            }
+        except Exception:
+            return {}
+
+    def _severity_intro(self, severity: str) -> str:
+        if severity == "emergency":
+            return (
+                "This may be an emergency. I cannot diagnose critical conditions in chat, "
+                "and this dog needs urgent veterinary assessment now."
+            )
+        if severity == "urgent":
+            return (
+                "This sounds urgent. I cannot diagnose in chat, but this should be treated as a same-day vet issue."
+            )
+        return ""
+
+    def _immediate_steps_for_severity(self, severity: str) -> List[str]:
+        if severity == "emergency":
+            return [
+                "Contact your nearest emergency vet now for real-time triage.",
+                "Keep your dog quiet and away from stairs, ledges, pools, or anything they could fall from.",
+                "Remove access to anything they may have eaten and bring the video, timing, and any packaging or samples with you.",
+                "Do not give home medications or induce vomiting unless a veterinarian explicitly tells you to.",
+            ]
+        if severity == "urgent":
+            return [
+                "Contact a veterinarian now for real-time triage and an urgent appointment.",
+                "Keep your dog resting, hydrated if they can safely drink, and closely monitored.",
+                "Avoid home medications and do not induce vomiting unless a veterinarian explicitly tells you to.",
+            ]
+        return []
+
+    def _apply_immediate_steps_format(self, answer: str, severity: str) -> str:
+        if severity not in {"urgent", "emergency"}:
+            return answer
+        normalized = answer.strip()
+        if re.search(r"^\s*Immediate steps:\s*$", normalized, re.I | re.M):
+            return normalized
+
+        intro = self._severity_intro(severity)
+        steps = self._immediate_steps_for_severity(severity)
+        sections: List[str] = []
+        if intro and intro.lower() not in normalized.lower():
+            sections.append(intro)
+        if normalized:
+            sections.append(normalized)
+        if steps:
+            numbered = "\n".join(f"{index}. {step}" for index, step in enumerate(steps, start=1))
+            sections.append(f"Immediate steps:\n{numbered}")
+        return "\n\n".join(part.strip() for part in sections if part.strip())
 
     def _route_query(self, message: str, plan: Dict[str, Any]) -> Dict[str, Any]:
         intent = str(plan.get("intent", "general_pet_question"))
@@ -1083,6 +1465,9 @@ class AIOrchestrator:
 
     def submit_provider_listing(self, user_id: str) -> ChatResponse:
         session = self._get_session(user_id)
+        if not auth_otp_store.user_can_create_provider_listings(user_id=user_id):
+            # Drafted provider onboarding is enough intent to turn provider mode on automatically.
+            auth_otp_store.set_service_provider_mode(user_id=user_id, enabled=True)
         draft = session.provider.collected
         missing = [field for field in PROVIDER_FIELDS if not draft.get(field)]
         if missing:
@@ -1254,21 +1639,9 @@ class AIOrchestrator:
             )
         # Keep this guard for immediate life-threatening phrasing only.
         # Broader risk terms are handled by high-risk safe mode with trusted-source guidance.
-        emergency_patterns = [
-            r"can'?t\s+breathe",
-            r"seizure\s+(?:won't\s+stop|wont\s+stop|for\s+\d+|lasting)",
-            r"continuous\s+seizure",
-            r"collapsed|collapse",
-            r"unconscious",
-            r"bloody\s+vomit|vomiting\s+blood",
-            r"not\s+breathing",
-        ]
-        if any(re.search(pattern, text) for pattern in emergency_patterns):
+        if self._is_emergency_symptom_query(text):
             return ChatResponse(
-                answer=(
-                    "This may be an emergency. I cannot diagnose critical conditions in chat. "
-                    "Please contact your nearest emergency vet now."
-                ),
+                answer=self._apply_immediate_steps_format("", "emergency"),
                 suggested_profile=session.profile_memory,
                 cta_chips=[
                     CtaChip(label="Open Community", action="open_community"),
@@ -1686,10 +2059,10 @@ class AIOrchestrator:
             "You are the planner for a pet app assistant. "
             "Return strict JSON only with fields: intent, tools, suggested_profile. "
             "Allowed intents: find_dog_walker, find_groomer, lost_found, community_discovery, "
-            "weight_concern, provider_onboarding, add_service_listing, add_pet_owner_profile, "
+            "weight_concern, provider_onboarding, add_service_listing, manage_provider_mode, add_pet_owner_profile, "
             "manage_community_group, manage_booking, general_pet_question, general_assistant_query, out_of_scope_non_pet. "
             "Allowed tools: search_services, search_groups, draft_lost_found, add_service_listing, "
-            "add_pet_owner_profile, create_user_group, add_group_member, "
+            "set_provider_mode, add_pet_owner_profile, create_user_group, add_group_member, "
             "search_availability, create_booking_request, get_booking_status. "
             "If the user query is clearly unrelated to pets, pet services, pet health/safety, bookings, "
             "or local pet community, set intent=out_of_scope_non_pet and tools=[]. "
@@ -1822,10 +2195,29 @@ class AIOrchestrator:
                 "tools": [],
                 "suggested_profile": self._fallback_profile(message),
             }
+        if "provider mode" in text and any(term in text for term in ("turn on", "switch on", "enable", " on")):
+            return {
+                "intent": "manage_provider_mode",
+                "tools": [{"name": "set_provider_mode", "args": {"enabled": True}}],
+                "suggested_profile": self._fallback_profile(message),
+            }
+        if "provider mode" in text and any(term in text for term in ("turn off", "switch off", "disable", " off")):
+            return {
+                "intent": "manage_provider_mode",
+                "tools": [{"name": "set_provider_mode", "args": {"enabled": False}}],
+                "suggested_profile": self._fallback_profile(message),
+            }
         if "create group" in text or "new group" in text or "start group" in text:
             return {
                 "intent": "manage_community_group",
-                "tools": [{"name": "create_user_group", "args": {"suburb": suburb}}],
+                "tools": [
+                    {"name": "create_user_group", "args": {"suburb": suburb}},
+                    *(
+                        [{"name": "add_group_member", "args": {"requester_user_id": "from_context", "member_user_id": "my_friends"}}]
+                        if "my friends" in text or "add friends" in text
+                        else []
+                    ),
+                ],
                 "suggested_profile": self._fallback_profile(message),
             }
         if "add member" in text or "invite" in text:
@@ -2092,6 +2484,7 @@ class AIOrchestrator:
             "sick",
             "vomit",
             "vomiting",
+            "vomited",
             "diarrhea",
             "diarrhoea",
             "itch",
@@ -2103,11 +2496,21 @@ class AIOrchestrator:
             "bleed",
             "cough",
             "letharg",
+            "slip",
+            "slipped",
+            "fell",
+            "fall",
+            "collapse",
+            "collapsed",
+            "wobbly",
+            "stagger",
+            "unsteady",
+            "weak",
             "not eating",
             "won't eat",
             "wont eat",
         ]
-        return any(token in text for token in health_tokens)
+        return any(token in text for token in health_tokens) or self._has_mobility_symptom_signal(text)
 
     def _is_groundable_pet_knowledge_query(self, message: str, intent: str) -> bool:
         normalized = re.sub(r"\s+", " ", message.strip().lower())
@@ -2175,6 +2578,7 @@ class AIOrchestrator:
             "underweight",
             "vomiting",
             "vomit",
+            "vomited",
             "diarrhea",
             "diarrhoea",
             "limping",
@@ -2182,6 +2586,15 @@ class AIOrchestrator:
             "panting",
             "heat",
             "heatstroke",
+            "slipped",
+            "fell",
+            "fall",
+            "collapse",
+            "collapsed",
+            "wobbly",
+            "stagger",
+            "unsteady",
+            "weakness",
         }
         guidance_phrases = (
             "what should",
@@ -2204,7 +2617,7 @@ class AIOrchestrator:
         has_knowledge_signal = any(token in normalized for token in knowledge_tokens) or any(
             phrase in normalized for phrase in guidance_phrases
         )
-        return has_pet_subject and has_knowledge_signal
+        return has_pet_subject and (has_knowledge_signal or self._has_mobility_symptom_signal(normalized))
 
     def _is_general_assistant_query(self, text: str) -> bool:
         normalized = re.sub(r"\s+", " ", text.strip().lower())
@@ -2238,8 +2651,16 @@ class AIOrchestrator:
             "itch",
             "scratch",
             "vomit",
+            "vomited",
             "diarrhea",
             "diarrhoea",
+            "slipped",
+            "fell",
+            "collapse",
+            "collapsed",
+            "wobbly",
+            "unsteady",
+            "weak",
             "litter",
             "flea",
             "tick",
@@ -2280,7 +2701,9 @@ class AIOrchestrator:
         # Personal pet-context statements should stay app-specific.
         personal_pet_patterns = [
             r"\bmy\s+(dog|cat|pet|puppy|kitten|border\s+collie|collie|labrador|poodle|beagle|bulldog|corgi)\b",
-            r"\b(has|is)\s+(matted\s+fur|vomiting|diarrhea|diarrhoea|itchy|limping|anxious|aggressive)\b",
+            r"\b(has|is)\s+(matted\s+fur|vomit(?:ed|ing)?|diarrhea|diarrhoea|itchy|limping|anxious|aggressive|wobbly|weak)\b",
+            r"\b(?:slipp(?:ed|ing)?|f(?:all|ell)(?:ing)?|toppled)\s+over\b",
+            r"\b(?:hind\s+legs?|back\s+legs?)\s+(?:gave\s+out|give\s+out|giving\s+out)\b",
         ]
         if any(re.search(pattern, normalized) for pattern in personal_pet_patterns):
             return False
@@ -2367,6 +2790,8 @@ class AIOrchestrator:
                         user_id=user_id,
                         args=args,
                     )
+                elif name == "set_provider_mode":
+                    results[name] = self._tool_set_provider_mode(user_id=user_id, args=args)
                 elif name == "add_pet_owner_profile":
                     results[name] = self._tool_add_pet_owner_profile(
                         session=session,
@@ -2539,6 +2964,8 @@ class AIOrchestrator:
         user_id: str,
         args: Dict[str, Any],
     ) -> Dict[str, Any]:
+        if not auth_otp_store.user_can_create_provider_listings(user_id=user_id):
+            auth_otp_store.set_service_provider_mode(user_id=user_id, enabled=True)
         extracted = self._extract_provider_fields_from_text(message=message, suburb=suburb)
         for key, value in args.items():
             if key in PROVIDER_FIELDS and value not in (None, ""):
@@ -2574,6 +3001,14 @@ class AIOrchestrator:
             "status": "created",
             "provider": new_provider.model_dump(),
             "contact_name": contact_name,
+        }
+
+    def _tool_set_provider_mode(self, user_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        enabled = bool(args.get("enabled"))
+        profile = auth_otp_store.set_service_provider_mode(user_id=user_id, enabled=enabled)
+        return {
+            "status": "updated",
+            "enabled": profile.service_provider_mode,
         }
 
     def _tool_add_pet_owner_profile(
@@ -2631,6 +3066,7 @@ class AIOrchestrator:
         )
         groups.append(group)
         group_memberships.append(GroupJoinRecord(group_id=group.id, user_id=user_id, status="member"))
+        persist_community_state_snapshot()
         return {"status": "created", "group": group.model_dump()}
 
     def _tool_add_group_member(
@@ -2652,17 +3088,36 @@ class AIOrchestrator:
         if not group:
             return {"status": "group_not_found_or_not_owner", "group_name": group_name}
 
-        existing = next((m for m in group_memberships if m.group_id == group.id and m.user_id == member_user_id), None)
-        if existing and existing.status == "member":
+        target_user_ids = (
+            [thread.participant_user_id for thread in message_store.list_threads(user_id=user_id, limit=100)]
+            if member_user_id == "my_friends"
+            else [member_user_id]
+        )
+        normalized_targets = [value.strip() for value in target_user_ids if value and value.strip() and value.strip() != user_id]
+        if not normalized_targets:
+            return {"status": "missing_info", "required": ["member_user_id"]}
+
+        added_user_ids: List[str] = []
+        for target_user_id in list(dict.fromkeys(normalized_targets)):
+            existing = next((m for m in group_memberships if m.group_id == group.id and m.user_id == target_user_id), None)
+            if existing and existing.status == "member":
+                continue
+            if existing:
+                existing.status = "member"
+            else:
+                group_memberships.append(GroupJoinRecord(group_id=group.id, user_id=target_user_id, status="member"))
+                group.member_count += 1
+            added_user_ids.append(target_user_id)
+
+        persist_community_state_snapshot()
+        if not added_user_ids:
             return {"status": "already_member", "group": group.model_dump(), "member_user_id": member_user_id}
-
-        if existing:
-            existing.status = "member"
-        else:
-            group_memberships.append(GroupJoinRecord(group_id=group.id, user_id=member_user_id, status="member"))
-            group.member_count += 1
-
-        return {"status": "member_added", "group": group.model_dump(), "member_user_id": member_user_id}
+        return {
+            "status": "member_added",
+            "group": group.model_dump(),
+            "member_user_id": member_user_id,
+            "added_user_ids": added_user_ids,
+        }
 
     def _extract_provider_fields_from_text(self, message: str, suburb: Optional[str]) -> Dict[str, Any]:
         extracted: Dict[str, Any] = {}
@@ -2718,9 +3173,35 @@ class AIOrchestrator:
         return None
 
     def _extract_suburb_from_text(self, text: str) -> Optional[str]:
-        match = re.search(r"(?:in|at)\s+([A-Za-z ]{3,})", text, re.I)
-        if match:
-            return match.group(1).strip().title()
+        patterns = [
+            r"(?:suburb\s*(?:is|:)\s*)([A-Za-z][A-Za-z .'-]{1,40})",
+            r"(?:i(?:'| a)?m\s+in|we(?:'| a)?re\s+in|based\s+in|from|live\s+in)\s+([A-Za-z][A-Za-z .'-]{1,40})",
+            r"(?:in|at)\s+([A-Za-z][A-Za-z .'-]{1,40})",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.I)
+            if match:
+                suburb = re.split(r"[,.!?]| and | but ", match.group(1), maxsplit=1)[0].strip()
+                if suburb:
+                    return suburb.title()
+        return None
+
+    def _extract_owner_name_from_text(self, text: str) -> Optional[str]:
+        patterns = [
+            r"(?:my\s+name\s+is|i\s+am|i'm|im|this\s+is)\s+([A-Za-z][A-Za-z' -]{1,40})",
+        ]
+        invalid_first_tokens = {"in", "at", "from", "here", "looking", "trying", "ready", "based"}
+        for pattern in patterns:
+            match = re.search(pattern, text, re.I)
+            if not match:
+                continue
+            candidate = re.split(r"[,.!?]| and | but ", match.group(1), maxsplit=1)[0].strip()
+            if not candidate:
+                continue
+            first_token = candidate.split()[0].lower()
+            if first_token in invalid_first_tokens:
+                continue
+            return " ".join(part.capitalize() for part in candidate.split())
         return None
 
     def _extract_member_user_id(self, text: str) -> Optional[str]:
@@ -2785,12 +3266,19 @@ class AIOrchestrator:
             return "I found groomers in your area. You can request a booking from the Services tab."
         if intent == "add_service_listing":
             listing = tool_results.get("add_service_listing", {})
+            if isinstance(listing, dict) and listing.get("status") == "provider_mode_required":
+                return "Provider mode is off. Ask me to switch provider mode on, then I can create your listing."
             if isinstance(listing, dict) and listing.get("status") == "created":
                 return "Your service listing has been created successfully."
             if isinstance(listing, dict) and listing.get("awaiting_field"):
                 field = str(listing.get("awaiting_field"))
                 return f"I started your provider listing. Please share your {field} to continue."
             return "I can help you add your service listing. Share your business details to continue."
+        if intent == "manage_provider_mode":
+            provider_mode = tool_results.get("set_provider_mode", {})
+            if isinstance(provider_mode, dict) and provider_mode.get("status") == "updated":
+                return "Provider mode is now on." if provider_mode.get("enabled") else "Provider mode is now off."
+            return "I can switch provider mode on or off for you."
         if intent == "add_pet_owner_profile":
             return "I updated your pet profile details."
         if intent == "manage_community_group":
@@ -2800,6 +3288,9 @@ class AIOrchestrator:
                 return f"I created {group_name}. Members can now apply to join from Community."
             added = tool_results.get("add_group_member", {})
             if isinstance(added, dict) and added.get("status") == "member_added":
+                added_user_ids = added.get("added_user_ids")
+                if isinstance(added_user_ids, list) and len(added_user_ids) > 1:
+                    return f"I added {len(added_user_ids)} friends to your group."
                 member = added.get("member_user_id", "member")
                 return f"I added {member} to your group."
             if isinstance(added, dict) and added.get("status") == "missing_info":
@@ -2909,10 +3400,12 @@ class AIOrchestrator:
         tool_results: Dict[str, Any],
         session: SessionMemory,
         rag_context: Dict[str, Any],
+        symptom_intent: Optional[Dict[str, Any]] = None,
         user_id: str = "guest",
     ) -> str:
         intent = plan.get("intent", "general_pet_question")
         high_risk_mode = bool(route.get("high_risk_mode", False))
+        response_severity = self._classify_response_severity(message, route, symptom_intent=symptom_intent)
         breed_summary = self._known_breed_summary(message.lower())
         if breed_summary:
             return self._format_answer_paragraphs(breed_summary)
@@ -2929,7 +3422,8 @@ class AIOrchestrator:
                     "Respond with ultra-safe guidance only. "
                     "Do not diagnose. Do not use or cite community anecdotes, social posts, or Reddit-style content. "
                     "Use only trusted medical/public-health references from rag_context documents. "
-                    "Provide concise immediate actions, critical red flags, and clear escalation to emergency vet care."
+                    "Provide concise immediate actions, critical red flags, and clear escalation to emergency vet care. "
+                    "If response_severity is urgent or emergency, include an 'Immediate steps:' heading followed by a numbered do-this-now list."
                 )
             elif intent == "out_of_scope_non_pet":
                 system_prompt = (
@@ -2949,10 +3443,13 @@ class AIOrchestrator:
                     "You are BarkAI, a pet-care assistant. "
                     "Give practical triage-style guidance for symptom questions in concise steps. "
                     "Do not diagnose. Focus on immediate safe actions, red flags, and when to see a vet. "
+                    "Treat symptom statements conservatively, including ambiguous mobility changes such as slipping over, falling, hind legs giving out, weakness, wobbliness, or trouble standing. "
                     "Do not include unrelated provider/community snippets unless directly relevant to the symptom. "
+                    "Do not frame symptom answers as social or local-feed summaries. "
                     "If rag_context.documents are present, use them as the primary evidence and avoid unsupported specifics. "
                     "If evidence is limited, say that briefly and stay conservative. "
-                    "If tone_profile.rag_support_mode is true, start with one reassuring sentence, then prioritize the most relevant points from rag_context."
+                    "If tone_profile.rag_support_mode is true, start with one reassuring sentence, then prioritize the most relevant points from rag_context. "
+                    "If response_severity is urgent or emergency, include an 'Immediate steps:' heading followed by a numbered do-this-now list."
                 )
             else:
                 system_prompt = (
@@ -2992,6 +3489,7 @@ class AIOrchestrator:
                 "route_lane": route.get("lane", "GENERAL"),
                 "route_reason": route.get("reason", "unknown"),
                 "high_risk_mode": high_risk_mode,
+                "response_severity": response_severity,
                 "matched_high_risk_terms": route.get("matched_high_risk_terms", []),
                 "rag_context": filtered_rag_context,
             }
@@ -3009,6 +3507,7 @@ class AIOrchestrator:
                 if text:
                     if not self._is_profile_edit_request(message):
                         text = self._strip_reask_questions(text, session.field_locks)
+                    text = self._apply_immediate_steps_format(text, response_severity)
                     return self._format_answer_paragraphs(text)
             except Exception:
                 pass
@@ -3031,22 +3530,29 @@ class AIOrchestrator:
         rag_fallback = self.rag_retriever.fallback_answer(
             rag_context=rag_context,
             support_mode=bool(tone_profile.get("support_mode")),
+            severity=response_severity,
         )
         if high_risk_mode and rag_fallback:
             return rag_fallback
         if rag_related and rag_fallback:
-            return rag_fallback
+            return self._apply_immediate_steps_format(rag_fallback, response_severity)
         if high_risk_mode:
-            return (
+            return self._apply_immediate_steps_format(
+                (
                 "This may be high risk. I cannot diagnose in chat, but you should contact a veterinarian now for real-time triage. "
                 "Avoid home medications and do not induce vomiting unless a vet explicitly tells you to. "
                 "If collapse, breathing difficulty, seizures, repeated vomiting, or severe weakness are present, seek emergency care immediately."
+                ),
+                response_severity,
             )
         if self._is_pet_health_question(message.lower()):
-            return (
+            return self._apply_immediate_steps_format(
+                (
                 "I cannot diagnose in chat, but limping after a walk should be managed carefully. "
                 "Limit activity today, check the paw and nails for cuts or debris, and avoid human pain medications. "
                 "If limping is severe, there is swelling, or it lasts beyond 24 hours, contact a vet promptly."
+                ),
+                response_severity,
             )
         if tone_profile.get("support_mode"):
             local_hint = tone_profile.get("local_context_hint", "")
@@ -3059,8 +3565,34 @@ class AIOrchestrator:
             return rag_fallback
         return "I can help with pet advice, local services, and community support."
 
-    def _build_ctas(self, intent: str, tool_results: Dict[str, Any]) -> List[CtaChip]:
+    def _build_ctas(
+        self,
+        intent: str,
+        tool_results: Dict[str, Any],
+        symptom_intent: Optional[Dict[str, Any]] = None,
+    ) -> List[CtaChip]:
         ctas: List[CtaChip] = []
+        symptom_like = bool((symptom_intent or {}).get("symptom_like", False))
+        symptom_severity = str((symptom_intent or {}).get("severity", "")).strip().lower()
+        if symptom_like:
+            labels = [str(item).strip() for item in (symptom_intent or {}).get("cta_labels", []) if str(item).strip()]
+            if symptom_severity in {"urgent", "emergency"}:
+                if "Urgent Vet Steps" not in labels:
+                    labels.insert(0, "Urgent Vet Steps")
+            elif "What To Monitor" not in labels:
+                labels.insert(0, "What To Monitor")
+            if "Prepare Vet Summary" not in labels:
+                labels.append("Prepare Vet Summary")
+            action_map = {
+                "Urgent Vet Steps": "urgent_vet_steps",
+                "What To Monitor": "what_to_monitor",
+                "Prepare Vet Summary": "prepare_vet_summary",
+            }
+            for label in labels[:3]:
+                action = action_map.get(label)
+                if action:
+                    ctas.append(CtaChip(label=label, action=action))
+            return ctas
         if intent in {"general_assistant_query", "out_of_scope_non_pet"}:
             return ctas
         if intent in {"find_dog_walker", "weight_concern"}:
@@ -3072,8 +3604,12 @@ class AIOrchestrator:
             if isinstance(listing, dict) and listing.get("status") == "created":
                 category = listing.get("provider", {}).get("category", "dog_walking")
                 ctas.append(CtaChip(label="Open Services", action="open_services", payload={"category": category}))
+            elif isinstance(listing, dict) and listing.get("status") == "provider_mode_required":
+                ctas.append(CtaChip(label="Open Home", action="open_home"))
             else:
                 ctas.append(CtaChip(label="Submit Provider Listing", action="submit_provider_listing"))
+        if intent == "manage_provider_mode":
+            ctas.append(CtaChip(label="Open Home", action="open_home"))
         if intent == "manage_community_group":
             ctas.append(CtaChip(label="Open Community", action="open_community"))
         if intent == "lost_found":
@@ -3099,6 +3635,16 @@ class AIOrchestrator:
         if suburb:
             profile["suburb"] = suburb
             session.field_locks["suburb"] = True
+        else:
+            inferred_suburb = self._extract_suburb_from_text(message)
+            if inferred_suburb:
+                profile["suburb"] = inferred_suburb
+                session.field_locks["suburb"] = True
+
+        owner_name = self._extract_owner_name_from_text(message)
+        if owner_name:
+            profile["owner_name"] = owner_name
+            session.field_locks["owner_name"] = True
 
         if "dog" in text and not profile.get("pet_type"):
             profile["pet_type"] = "dog"
@@ -3165,6 +3711,7 @@ class AIOrchestrator:
             return None
 
         return PetProfileSuggestion(
+            owner_name=profile.get("owner_name"),
             pet_name=profile.get("pet_name"),
             pet_type=profile.get("pet_type"),
             breed=profile.get("breed"),

@@ -280,6 +280,9 @@ data class BookingResponse(
     val id: String,
     @SerialName("owner_user_id") val ownerUserId: String = "",
     @SerialName("provider_id") val providerId: String,
+    @SerialName("provider_owner_user_id") val providerOwnerUserId: String? = null,
+    @SerialName("counterparty_user_id") val counterpartyUserId: String? = null,
+    @SerialName("thread_id") val threadId: String? = null,
     @SerialName("pet_name") val petName: String,
     val date: String,
     @SerialName("time_slot") val timeSlot: String,
@@ -397,6 +400,7 @@ data class ChatCitation(
 
 @Serializable
 data class PetProfileSuggestion(
+    @SerialName("owner_name") val ownerName: String? = null,
     @SerialName("pet_name") val petName: String? = null,
     @SerialName("pet_type") val petType: String? = null,
     val breed: String? = null,
@@ -837,6 +841,27 @@ data class HomeCacheSnapshot(
 )
 
 @Serializable
+data class HomeDiscoveryCacheSlice(
+    val providers: List<ServiceProvider>,
+    @SerialName("owner_listing_providers") val ownerListingProviders: List<ServiceProvider> = emptyList(),
+    val nearbyPetBusinesses: List<NearbyPetBusiness>,
+    val groups: List<Group>,
+    val posts: List<CommunityPost>,
+    val events: List<CommunityEvent>,
+)
+
+@Serializable
+data class HomeBookingsCacheSlice(
+    val ownerBookings: List<BookingResponse>,
+    val providerBookings: List<BookingResponse>,
+)
+
+@Serializable
+data class HomeCalendarCacheSlice(
+    val calendarEvents: List<CalendarEvent>,
+)
+
+@Serializable
 data class AuthLoginRequest(
     @SerialName("user_id") val userId: String,
     val password: String = "petsocial-demo",
@@ -883,6 +908,7 @@ data class AuthOtpVerifyRequest(
     @SerialName("invite_id") val inviteId: String,
     val email: String,
     @SerialName("otp_code") val otpCode: String,
+    @SerialName("device_id") val deviceId: String? = null,
 )
 
 @Serializable
@@ -891,6 +917,16 @@ data class AuthOtpVerifyResponse(
     @SerialName("token_type") val tokenType: String,
     @SerialName("user_id") val userId: String,
     @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class AuthTrustedDeviceLoginRequest(
+    @SerialName("device_id") val deviceId: String,
+)
+
+@Serializable
+data class AuthTrustedDeviceResetRequest(
+    @SerialName("device_id") val deviceId: String,
 )
 
 @Serializable
@@ -932,6 +968,7 @@ data class UserProfileResponse(
     val phone: String = "",
     @SerialName("human_pronouns") val humanPronouns: String = "",
     @SerialName("human_role_label") val humanRoleLabel: String = "",
+    @SerialName("service_provider_mode") val serviceProviderMode: Boolean = false,
     @SerialName("dog_name") val dogName: String = "",
     @SerialName("dog_age_months") val dogAgeMonths: Int = 0,
     @SerialName("dog_breed_mix") val dogBreedMix: String = "",
@@ -973,6 +1010,7 @@ data class UserProfileUpsertRequest(
     val phone: String = "",
     @SerialName("human_pronouns") val humanPronouns: String = "",
     @SerialName("human_role_label") val humanRoleLabel: String = "",
+    @SerialName("service_provider_mode") val serviceProviderMode: Boolean = false,
     @SerialName("dog_name") val dogName: String = "",
     @SerialName("dog_age_months") val dogAgeMonths: Int = 0,
     @SerialName("dog_breed_mix") val dogBreedMix: String = "",

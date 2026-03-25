@@ -256,6 +256,9 @@ class Booking(BaseModel):
     id: str
     owner_user_id: str = "guest_user"
     provider_id: str
+    provider_owner_user_id: Optional[str] = None
+    counterparty_user_id: Optional[str] = None
+    thread_id: Optional[str] = None
     pet_name: str
     date: str
     time_slot: str
@@ -373,6 +376,7 @@ class ChatTurn(BaseModel):
 
 
 class PetProfileSuggestion(BaseModel):
+    owner_name: Optional[str] = None
     pet_name: Optional[str] = None
     pet_type: Optional[str] = None
     breed: Optional[str] = None
@@ -390,6 +394,10 @@ class CtaChip(BaseModel):
         "create_lost_found",
         "find_dog_walkers",
         "find_groomers",
+        "new_bark_thread",
+        "urgent_vet_steps",
+        "what_to_monitor",
+        "prepare_vet_summary",
         "accept_profile_card",
         "submit_provider_listing",
         "join_group",
@@ -837,6 +845,7 @@ class AuthOtpVerifyRequest(BaseModel):
     invite_id: str
     email: str
     otp_code: str = Field(min_length=4, max_length=8)
+    device_id: Optional[str] = None
 
 
 class AuthOtpVerifyResponse(BaseModel):
@@ -848,6 +857,14 @@ class AuthOtpVerifyResponse(BaseModel):
 
 class AuthLogoutResponse(BaseModel):
     status: Literal["ok"] = "ok"
+
+
+class AuthTrustedDeviceLoginRequest(BaseModel):
+    device_id: str = Field(min_length=4, max_length=256)
+
+
+class AuthTrustedDeviceResetRequest(BaseModel):
+    device_id: str = Field(min_length=4, max_length=256)
 
 
 class AuthDeleteResponse(BaseModel):
@@ -862,6 +879,7 @@ class UserProfile(BaseModel):
     phone: str = ""
     human_pronouns: str = ""
     human_role_label: str = ""
+    service_provider_mode: bool = False
     dog_name: str = ""
     dog_age_months: int = 0
     dog_breed_mix: str = ""
@@ -902,6 +920,7 @@ class UserProfileUpsertRequest(BaseModel):
     phone: str = ""
     human_pronouns: str = ""
     human_role_label: str = ""
+    service_provider_mode: bool = False
     dog_name: str = ""
     dog_age_months: int = 0
     dog_breed_mix: str = ""

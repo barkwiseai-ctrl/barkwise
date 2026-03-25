@@ -11,6 +11,7 @@ RUN_ANDROID_UNIT_TESTS="${RUN_ANDROID_UNIT_TESTS:-1}"
 RUN_ANDROID_LINT="${RUN_ANDROID_LINT:-1}"
 RUN_ANDROID_BUNDLE="${RUN_ANDROID_BUNDLE:-1}"
 RUN_ANDROID_BUNDLE_VALIDATE="${RUN_ANDROID_BUNDLE_VALIDATE:-1}"
+RUN_ANDROID_MANAGED_COMPOSE_SMOKE="${RUN_ANDROID_MANAGED_COMPOSE_SMOKE:-0}"
 RUN_BACKEND_TESTS="${RUN_BACKEND_TESTS:-1}"
 RUN_METADATA_CHECK="${RUN_METADATA_CHECK:-1}"
 RUN_SMOKE_HTTP="${RUN_SMOKE_HTTP:-0}"
@@ -131,7 +132,7 @@ if [[ "$RUN_ANDROID_COMPILE" == "1" ]]; then
   step "Android Kotlin compile checks"
   (
     cd "$ANDROID_DIR"
-    ./gradlew :app:compileStagingDebugKotlin :app:compileProdDebugKotlin
+    ./gradlew :app:compileStagingDebugKotlin :app:compileProviderStagingDebugKotlin :app:compileProdDebugKotlin
   )
 fi
 
@@ -139,8 +140,13 @@ if [[ "$RUN_ANDROID_UNIT_TESTS" == "1" ]]; then
   step "Android unit tests"
   (
     cd "$ANDROID_DIR"
-    ./gradlew :app:testStagingDebugUnitTest
+    ./gradlew :app:testStagingDebugUnitTest :app:testProviderStagingDebugUnitTest
   )
+fi
+
+if [[ "$RUN_ANDROID_MANAGED_COMPOSE_SMOKE" == "1" ]]; then
+  step "Android managed Compose smoke tests"
+  "$ANDROID_DIR/scripts/run_managed_compose_smoke.sh"
 fi
 
 if [[ "$RUN_ANDROID_LINT" == "1" ]]; then

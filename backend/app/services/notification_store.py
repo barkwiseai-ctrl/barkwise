@@ -17,7 +17,7 @@ class NotificationStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path = str(path)
         self._init_db()
-        self._seed_if_empty()
+        self._remove_seeded_notifications()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -56,65 +56,10 @@ class NotificationStore:
                 )
                 conn.commit()
 
-    def _seed_if_empty(self) -> None:
+    def _remove_seeded_notifications(self) -> None:
         with self._lock:
             with self._connect() as conn:
-                count = int(conn.execute("SELECT COUNT(*) AS c FROM notifications").fetchone()["c"])
-                if count > 0:
-                    return
-                now = datetime.now(timezone.utc).isoformat()
-                seed_rows = [
-                    NotificationRecord(
-                        id="ntf_seed_1",
-                        user_id="user_2",
-                        title="Quote response received",
-                        body="A provider accepted your latest quote request.",
-                        category="booking",
-                        read=False,
-                        created_at=now,
-                        deep_link="quote:qr_seed_2",
-                    ),
-                    NotificationRecord(
-                        id="ntf_seed_2",
-                        user_id="user_1",
-                        title="New booking request",
-                        body="Milo requested a 09:00 grooming slot.",
-                        category="booking",
-                        read=False,
-                        created_at=now,
-                        deep_link="booking:bk_seed_1",
-                    ),
-                    NotificationRecord(
-                        id="ntf_seed_3",
-                        user_id="user_3",
-                        title="Community reward unlocked",
-                        body="Your group advanced in Clean Park Streak.",
-                        category="community",
-                        read=False,
-                        created_at=now,
-                        deep_link="group:g_user_dogpark_surry",
-                    ),
-                ]
-                conn.executemany(
-                    """
-                    INSERT OR IGNORE INTO notifications
-                    (id, user_id, title, body, category, is_read, created_at, deep_link)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            row.id,
-                            row.user_id,
-                            row.title,
-                            row.body,
-                            row.category,
-                            1 if row.read else 0,
-                            row.created_at,
-                            row.deep_link,
-                        )
-                        for row in seed_rows
-                    ],
-                )
+                conn.execute("DELETE FROM notifications WHERE id IN ('ntf_seed_1', 'ntf_seed_2', 'ntf_seed_3')")
                 conn.commit()
 
     def _row_to_notification(self, row: sqlite3.Row) -> NotificationRecord:

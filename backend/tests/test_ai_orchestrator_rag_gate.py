@@ -128,7 +128,8 @@ def test_handle_message_applies_rag_with_trigger(monkeypatch):
     monkeypatch.setattr(orchestrator.rag_retriever, "build_context", fake_build_context)
 
     response = orchestrator.handle_message("Could this be parvo in puppies?", user_id="rag_gate_user_2")
-    assert response.answer == "ok"
+    assert "ok" in response.answer
+    assert "Immediate steps:" in response.answer
     assert rag_build_calls["count"] == 1
 
 
@@ -604,6 +605,19 @@ def test_handle_message_high_risk_faq_has_safety_badges():
     assert "High Risk Safe Mode" in response.answer_badges
     assert response.citations
     assert any((citation.source or "").lower().startswith("rspca") for citation in response.citations)
+    assert "Immediate steps:" in response.answer
+
+
+def test_emergency_symptom_cluster_gets_sharp_immediate_steps():
+    orchestrator = AIOrchestrator()
+    response = orchestrator.handle_message(
+        "Dog ate something and now he is twitching, wobbling, bobbing his head, lethargic, and throwing up.",
+        user_id="rag_gate_user_emergency_1",
+    )
+    assert response.answer_source == "safety"
+    assert "Safety Alert" in response.answer_badges
+    assert "Immediate steps:" in response.answer
+    assert "emergency vet" in response.answer.lower()
 
 
 def test_handle_message_crate_query_prefers_welfare_first_policy():

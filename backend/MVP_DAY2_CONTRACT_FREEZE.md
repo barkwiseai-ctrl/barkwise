@@ -107,6 +107,9 @@ Response keys:
 - `id`
 - `owner_user_id`
 - `provider_id`
+- `provider_owner_user_id`
+- `counterparty_user_id`
+- `thread_id`
 - `pet_name`
 - `date`
 - `time_slot`

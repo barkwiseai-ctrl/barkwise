@@ -1,5 +1,7 @@
 package com.petsocial.app.data
 
+import android.util.Log
+import com.petsocial.app.BuildConfig
 import kotlinx.serialization.json.Json
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -16,6 +18,7 @@ import retrofit2.http.Path
 import retrofit2.http.PUT
 import retrofit2.http.Query
 import java.io.IOException
+import java.util.Locale
 
 interface ApiService {
     @GET("services/recommendations")
@@ -352,6 +355,12 @@ interface ApiService {
     @POST("auth/otp/verify")
     suspend fun verifyOtp(@Body payload: AuthOtpVerifyRequest): AuthOtpVerifyResponse
 
+    @POST("auth/device/login")
+    suspend fun trustedDeviceLogin(@Body payload: AuthTrustedDeviceLoginRequest): AuthLoginResponse
+
+    @POST("auth/device/reset")
+    suspend fun resetTrustedDevice(@Body payload: AuthTrustedDeviceResetRequest): AuthLogoutResponse
+
     @POST("auth/friend-qr")
     suspend fun issueFriendQr(): AuthFriendQrIssueResponse
 
@@ -464,9 +473,37 @@ interface ApiService {
                     chain.proceed(fallbackRequest)
                 }
             }
+            val metricsInterceptor = Interceptor { chain ->
+                val request = chain.request()
+                val startedAtNs = System.nanoTime()
+                try {
+                    val response = chain.proceed(request)
+                    if (BuildConfig.DEBUG) {
+                        val durationMs = (System.nanoTime() - startedAtNs) / 1_000_000.0
+                        val sizeBytes = response.body?.contentLength()?.takeIf { it >= 0 } ?: -1L
+                        Log.d(
+                            "BarkWiseApi",
+                            "${request.method} ${request.url.encodedPath} -> ${response.code} in " +
+                                String.format(Locale.US, "%.1f", durationMs) + "ms size=$sizeBytes",
+                        )
+                    }
+                    response
+                } catch (error: IOException) {
+                    if (BuildConfig.DEBUG) {
+                        val durationMs = (System.nanoTime() - startedAtNs) / 1_000_000.0
+                        Log.w(
+                            "BarkWiseApi",
+                            "${request.method} ${request.url.encodedPath} failed in " +
+                                String.format(Locale.US, "%.1f", durationMs) + "ms: ${error.message}",
+                        )
+                    }
+                    throw error
+                }
+            }
             val client = OkHttpClient.Builder()
                 .addInterceptor(authInterceptor)
                 .addInterceptor(failoverInterceptor)
+                .addInterceptor(metricsInterceptor)
                 .build()
             val retrofit = Retrofit.Builder()
                 .baseUrl(resolvedBaseUrl)

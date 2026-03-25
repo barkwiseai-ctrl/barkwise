@@ -1,10 +1,17 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.auth import create_friend_qr_token, require_authenticated_user, verify_friend_qr_token
 from app.services.auth_otp_store import auth_otp_store
+from app.services.message_store import message_store
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class FriendQrIssueResponse(BaseModel):
@@ -54,6 +61,11 @@ def verify_friend_qr(
     friend_user_id = decoded["user_id"].strip()
     if friend_user_id == requester_user_id:
         raise HTTPException(status_code=409, detail="Cannot add yourself")
+    message_store.ensure_thread(
+        user_a=requester_user_id,
+        user_b=friend_user_id,
+        created_at=_utc_now_iso(),
+    )
     return FriendQrVerifyResponse(
         user_id=friend_user_id,
         human_name=decoded["human_name"],

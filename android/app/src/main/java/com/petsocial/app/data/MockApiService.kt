@@ -749,6 +749,9 @@ class MockApiService private constructor() : ApiService {
             id = "booking_1",
             ownerUserId = "user_2",
             providerId = "provider_1",
+            providerOwnerUserId = "user_1",
+            counterpartyUserId = "user_1",
+            threadId = canonicalThreadId("user_1", "user_2"),
             petName = "Milo",
             date = LocalDate.now().plusDays(1).toString(),
             timeSlot = "09:00",
@@ -759,6 +762,9 @@ class MockApiService private constructor() : ApiService {
             id = "booking_2",
             ownerUserId = "user_1",
             providerId = "provider_8",
+            providerOwnerUserId = "user_4",
+            counterpartyUserId = "user_4",
+            threadId = canonicalThreadId("user_1", "user_4"),
             petName = "Luna",
             date = LocalDate.now().plusDays(2).toString(),
             timeSlot = "11:00",
@@ -769,6 +775,9 @@ class MockApiService private constructor() : ApiService {
             id = "booking_3",
             ownerUserId = "user_4",
             providerId = "provider_3",
+            providerOwnerUserId = "user_1",
+            counterpartyUserId = "user_1",
+            threadId = canonicalThreadId("user_1", "user_4"),
             petName = "Maple",
             date = LocalDate.now().minusDays(1).toString(),
             timeSlot = "15:00",
@@ -779,6 +788,9 @@ class MockApiService private constructor() : ApiService {
             id = "booking_4",
             ownerUserId = "user_3",
             providerId = "provider_4",
+            providerOwnerUserId = "user_2",
+            counterpartyUserId = "user_2",
+            threadId = canonicalThreadId("user_2", "user_3"),
             petName = "Scout",
             date = LocalDate.now().plusDays(3).toString(),
             timeSlot = "13:00",
@@ -789,6 +801,9 @@ class MockApiService private constructor() : ApiService {
             id = "booking_5",
             ownerUserId = "user_2",
             providerId = "provider_6",
+            providerOwnerUserId = "user_3",
+            counterpartyUserId = "user_3",
+            threadId = canonicalThreadId("user_2", "user_3"),
             petName = "Nala",
             date = LocalDate.now().toString(),
             timeSlot = "17:00",
@@ -1013,6 +1028,7 @@ class MockApiService private constructor() : ApiService {
     private val authInvitesById = mutableMapOf<String, AuthInviteResponse>()
     private val otpCodeByInviteEmail = mutableMapOf<String, String>()
     private val otpExpiresByInviteEmail = mutableMapOf<String, Instant>()
+    private val trustedDeviceUserIdByDeviceId = mutableMapOf<String, String>()
     private val userProfilesByUserId = mutableMapOf(
         "user_1" to UserProfileResponse(
             userId = "user_1",
@@ -1948,10 +1964,14 @@ class MockApiService private constructor() : ApiService {
     }
 
     override suspend fun createBooking(payload: BookingRequest): BookingResponse {
+        val providerOwnerUserId = providers.firstOrNull { provider -> provider.id == payload.providerId }?.ownerUserId
         val booking = BookingResponse(
             id = "booking_${bookingCounter++}",
             ownerUserId = payload.userId,
             providerId = payload.providerId,
+            providerOwnerUserId = providerOwnerUserId,
+            counterpartyUserId = providerOwnerUserId,
+            threadId = providerOwnerUserId?.let { ownerId -> canonicalThreadId(payload.userId, ownerId) },
             petName = payload.petName,
             date = payload.date,
             timeSlot = payload.timeSlot,
@@ -2007,6 +2027,11 @@ class MockApiService private constructor() : ApiService {
             timeSlot = payload.timeSlot?.trim()?.ifBlank { bookings[index].timeSlot } ?: bookings[index].timeSlot,
             status = payload.status,
             note = payload.note,
+            counterpartyUserId = when (payload.actorUserId) {
+                bookings[index].ownerUserId -> bookings[index].providerOwnerUserId
+                bookings[index].providerOwnerUserId -> bookings[index].ownerUserId
+                else -> bookings[index].counterpartyUserId
+            },
         )
         bookings[index] = updated
         bookingStatusHistoryByBookingId
@@ -3105,12 +3130,33 @@ class MockApiService private constructor() : ApiService {
         otpCodeByInviteEmail.remove(key)
         otpExpiresByInviteEmail.remove(key)
         authSessionUserId = invite.userId
+        payload.deviceId
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { trustedDeviceUserIdByDeviceId[it] = invite.userId }
         return AuthOtpVerifyResponse(
             accessToken = "mock-otp-token-${invite.userId}",
             tokenType = "bearer",
             userId = invite.userId,
             expiresAt = Instant.now().plus(7, ChronoUnit.DAYS).toString(),
         )
+    }
+
+    override suspend fun trustedDeviceLogin(payload: AuthTrustedDeviceLoginRequest): AuthLoginResponse {
+        val userId = trustedDeviceUserIdByDeviceId[payload.deviceId.trim()]
+            ?: error("Trusted device not found")
+        authSessionUserId = userId
+        return AuthLoginResponse(
+            accessToken = "mock-device-token-$userId",
+            tokenType = "bearer",
+            userId = userId,
+            expiresAt = Instant.now().plus(7, ChronoUnit.DAYS).toString(),
+        )
+    }
+
+    override suspend fun resetTrustedDevice(payload: AuthTrustedDeviceResetRequest): AuthLogoutResponse {
+        trustedDeviceUserIdByDeviceId.remove(payload.deviceId.trim())
+        return AuthLogoutResponse(status = "ok")
     }
 
     override suspend fun issueFriendQr(): AuthFriendQrIssueResponse {
