@@ -151,7 +151,7 @@ PY
 
 adb -s "$SERIAL" push "$TMP_PREFS_OUT" "$REMOTE_TMP" >/dev/null
 adb -s "$SERIAL" shell "cat '$REMOTE_TMP' | run-as '$PACKAGE_NAME' dd of='$PREFS_PATH' >/dev/null"
-adb -s "$SERIAL" shell rm -f "$REMOTE_TMP" >/dev/null
+adb -s "$SERIAL" shell "rm '$REMOTE_TMP' >/dev/null 2>&1 || true"
 
 if [[ "$API_BASE_URL" == "http://127.0.0.1:8000/" || "$API_BASE_URL" == "http://localhost:8000/" ]]; then
   adb -s "$SERIAL" reverse tcp:8000 tcp:8000 >/dev/null

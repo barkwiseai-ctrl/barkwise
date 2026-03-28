@@ -132,7 +132,7 @@ if [[ "$RUN_ANDROID_COMPILE" == "1" ]]; then
   step "Android Kotlin compile checks"
   (
     cd "$ANDROID_DIR"
-    ./gradlew :app:compileStagingDebugKotlin :app:compileProviderStagingDebugKotlin :app:compileProdDebugKotlin
+    ./gradlew :app:compileStagingDebugKotlin :app:compileProviderStagingDebugKotlin :app:compileProdReleaseKotlin :app:compileProviderProdReleaseKotlin
   )
 fi
 

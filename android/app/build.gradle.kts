@@ -205,13 +205,23 @@ android {
             dimension = "environment"
             applicationIdSuffix = ".provider.staging"
             versionNameSuffix = "-provider-staging"
-            resValue("string", "app_name", "BarkWise Provider Test")
+            resValue("string", "app_name", "BW Provider")
             val providerStagingDefault = readStringConfig(project, "BARKWISE_STAGING_API_BASE_URL", "http://10.0.2.2:8000/")
             val providerStagingUseMockData = readBooleanConfig(project, "BARKWISE_PROVIDER_TEST_USE_MOCK_DATA", false)
+            val providerStagingAllowDemoLogin = readBooleanConfig(
+                project,
+                "BARKWISE_PROVIDER_TEST_ALLOW_DEMO_LOGIN",
+                providerStagingUseMockData,
+            )
+            val providerStagingRequireOtpAuth = readBooleanConfig(
+                project,
+                "BARKWISE_PROVIDER_TEST_REQUIRE_INVITE_OTP_AUTH",
+                !providerStagingAllowDemoLogin,
+            )
             val providerStagingFakeSignIn = readBooleanConfig(
                 project,
                 "BARKWISE_PROVIDER_TEST_ONBOARD_FAKE_SIGN_IN",
-                providerStagingUseMockData,
+                providerStagingUseMockData || providerStagingAllowDemoLogin,
             )
             val providerStagingApiUrl = readApiBaseUrlConfig(
                 project,
@@ -223,8 +233,8 @@ android {
             buildConfigField("Boolean", "USE_MOCK_DATA", providerStagingUseMockData.toString())
             buildConfigField("String", "ENVIRONMENT", "\"staging\"")
             buildConfigField("String", "APP_SURFACE", "\"provider\"")
-            buildConfigField("Boolean", "ALLOW_DEMO_LOGIN", "false")
-            buildConfigField("Boolean", "REQUIRE_INVITE_OTP_AUTH", "true")
+            buildConfigField("Boolean", "ALLOW_DEMO_LOGIN", providerStagingAllowDemoLogin.toString())
+            buildConfigField("Boolean", "REQUIRE_INVITE_OTP_AUTH", providerStagingRequireOtpAuth.toString())
             buildConfigField("Boolean", "ONBOARD_FAKE_SIGN_IN", providerStagingFakeSignIn.toString())
             buildConfigField("Boolean", "ONBOARD_SCRIPT_ENABLED", "false")
             buildConfigField("String", "ONBOARD_GROUP_TITLE", "\"Beach onboarding\"")
@@ -283,6 +293,22 @@ android {
                 }
             }
         }
+    }
+}
+
+androidComponents {
+    beforeVariants(selector().all()) { variantBuilder ->
+        val environmentFlavor = variantBuilder.productFlavors
+            .firstOrNull { (dimension, _) -> dimension == "environment" }
+            ?.second
+
+        val keepVariant = when (environmentFlavor) {
+            "staging", "providerStaging" -> variantBuilder.buildType == "debug"
+            "prod", "providerProd" -> variantBuilder.buildType == "release"
+            else -> false
+        }
+
+        variantBuilder.enable = keepVariant
     }
 }
 
