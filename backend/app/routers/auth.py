@@ -349,9 +349,9 @@ def delete_me(
     except Exception:
         pass
     try:
-        from app.routers.chat import orchestrator
+        from app.routers.chat import chat_service
 
-        orchestrator.memory_store.delete_user_data(user_id=user_id)
+        chat_service.memory_store.delete_user_data(user_id=user_id)
     except Exception:
         pass
     return AuthDeleteResponse(user_id=user_id)

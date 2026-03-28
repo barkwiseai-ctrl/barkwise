@@ -128,7 +128,7 @@ If asked about financial features:
   - `/Users/yingxu/public-repos/pet-social-app/backend/app/services/notification_store.py`
 - Chat and AI provider wiring:
   - `/Users/yingxu/public-repos/pet-social-app/backend/app/routers/chat.py`
-  - `/Users/yingxu/public-repos/pet-social-app/backend/app/services/ai_orchestrator.py`
+  - `/Users/yingxu/public-repos/pet-social-app/backend/app/services/simple_chat_service.py`
 - Community uploads + analytics:
   - `/Users/yingxu/public-repos/pet-social-app/backend/app/routers/community.py`
 - Android permissions:

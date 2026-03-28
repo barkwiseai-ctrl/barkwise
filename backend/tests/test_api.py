@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import sys
@@ -16,9 +17,23 @@ import app.routers.community as community_router
 import app.routers.notifications as notifications_router
 import app.services.security_audit as security_audit_service
 from app.main import app
+from app.models import ChatMessage, ChatResponse, ChatTurn
 from app.services.service_store import service_store
 
 client = TestClient(app)
+
+
+def _parse_sse_data_events(raw_text: str) -> list[object]:
+    events: list[object] = []
+    for line in raw_text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:]
+        if payload == "[DONE]":
+            events.append(payload)
+            continue
+        events.append(json.loads(payload))
+    return events
 
 
 def _enable_provider_mode(user_id: str, token: str) -> None:
@@ -528,6 +543,15 @@ def test_auth_login_failed_attempts_rate_limited(monkeypatch):
 
 
 def test_chat_message_rate_limited(monkeypatch):
+    monkeypatch.setattr(
+        chat_router.chat_service,
+        "create_chat_response",
+        lambda request: ChatResponse(
+            answer="ok",
+            message=ChatMessage(role="assistant", content="ok"),
+            conversation=[ChatTurn(role="user", content=request.message or "one"), ChatTurn(role="assistant", content="ok")],
+        ),
+    )
     monkeypatch.setattr(chat_router, "CHAT_RATE_LIMIT_MAX_REQUESTS", 2)
     monkeypatch.setattr(chat_router, "CHAT_RATE_LIMIT_WINDOW", timedelta(minutes=10))
     chat_router.CHAT_RATE_LIMIT_HISTORY.clear()
@@ -553,6 +577,15 @@ def test_chat_message_rate_limited(monkeypatch):
 
 
 def test_chat_requires_auth_when_auth_required(monkeypatch):
+    monkeypatch.setattr(
+        chat_router.chat_service,
+        "create_chat_response",
+        lambda request: ChatResponse(
+            answer="ok",
+            message=ChatMessage(role="assistant", content="ok"),
+            conversation=[ChatTurn(role="user", content=request.message or "hello"), ChatTurn(role="assistant", content="ok")],
+        ),
+    )
     monkeypatch.setattr(auth_module, "AUTH_REQUIRED", True)
     chat_router.CHAT_RATE_LIMIT_HISTORY.clear()
     response = client.post(
@@ -598,85 +631,177 @@ def test_chat_stream_rate_limited(monkeypatch):
     assert "Too many chat requests" in blocked.json()["detail"]
 
 
-def test_chat_faq_route_includes_badges_and_citations():
+def test_chat_returns_minimal_message_payload(monkeypatch):
+    def fake_chat(_request):
+        return ChatResponse(
+            answer="Hello from BarkAI",
+            message=ChatMessage(role="assistant", content="Hello from BarkAI"),
+            conversation=[
+                ChatTurn(role="user", content="Hi"),
+                ChatTurn(role="assistant", content="Hello from BarkAI"),
+            ],
+            answer_source="assistant",
+        )
+
+    monkeypatch.setattr(chat_router.chat_service, "create_chat_response", fake_chat)
+
     response = client.post(
         "/chat",
         json={
-            "user_id": "chat_faq_user",
-            "message": "How often should my dog get vaccines and boosters?",
-            "suburb": "Surry Hills",
+            "user_id": "chat_minimal_user",
+            "messages": [{"role": "user", "content": "Hi"}],
         },
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["answer_source"] == "faq"
-    assert "FAQ QA" in payload["answer_badges"]
-    assert payload["citations"], "FAQ route should provide citations"
-    citation = payload["citations"][0]
-    assert citation["title"]
-    assert citation["source"]
-    assert citation.get("url")
-
-    conversation = payload.get("conversation", [])
-    assert conversation
-    assistant_turn = next((turn for turn in reversed(conversation) if turn.get("role") == "assistant"), None)
-    assert assistant_turn is not None
-    assert assistant_turn.get("answer_source") == "faq"
-    assert assistant_turn.get("citations")
+    assert payload["message"] == {"role": "assistant", "content": "Hello from BarkAI"}
+    assert payload["answer"] == "Hello from BarkAI"
+    assert payload["answer_source"] == "assistant"
+    assert payload["answer_badges"] == []
+    assert payload["citations"] == []
+    assert payload["cta_chips"] == []
 
 
-def test_chat_rag_route_includes_grounded_citations():
+def test_chat_accepts_transcript_payload(monkeypatch):
+    captured = {}
+
+    def fake_chat(request):
+        captured["messages"] = [item.model_dump() for item in request.messages]
+        return ChatResponse(
+            answer="I remember the transcript",
+            message=ChatMessage(role="assistant", content="I remember the transcript"),
+        )
+
+    monkeypatch.setattr(chat_router.chat_service, "create_chat_response", fake_chat)
+
     response = client.post(
         "/chat",
         json={
-            "user_id": "chat_rag_user",
-            "message": "My dog may have parvo symptoms. What should I do now?",
-            "suburb": "Surry Hills",
+            "user_id": "chat_transcript_user",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+                {"role": "user", "content": "Tell me more"},
+            ],
         },
     )
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["answer_source"] in {"rag", "faq"}
-    assert "High Risk Safe Mode" in payload["answer_badges"]
-    if payload["answer_source"] == "rag":
-        assert "RAG Grounded" in payload["answer_badges"]
-    else:
-        assert "FAQ QA" in payload["answer_badges"]
-    assert payload["citations"], "RAG route should provide citations"
+    assert captured["messages"] == [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there"},
+        {"role": "user", "content": "Tell me more"},
+    ]
 
 
-def test_chat_general_route_includes_fallback_badge():
+def test_chat_profile_accept_preserves_legacy_endpoint(monkeypatch):
+    captured = {}
+
+    def fake_accept(*, user_id):
+        captured["user_id"] = user_id
+        return ChatResponse(
+            answer="Profile created",
+            message=ChatMessage(role="assistant", content="Profile created"),
+            answer_source="legacy_action",
+        )
+
+    monkeypatch.setattr(chat_router.chat_service, "accept_profile", fake_accept)
+
+    response = client.post("/chat/profile/accept", json={"user_id": "chat_profile_user"})
+    assert response.status_code == 200
+    assert captured == {"user_id": "chat_profile_user"}
+    assert response.json()["answer"] == "Profile created"
+
+
+def test_chat_provider_submit_preserves_legacy_endpoint(monkeypatch):
+    captured = {}
+
+    def fake_submit(*, user_id):
+        captured["user_id"] = user_id
+        return ChatResponse(
+            answer="Provider listed",
+            message=ChatMessage(role="assistant", content="Provider listed"),
+            answer_source="legacy_action",
+        )
+
+    monkeypatch.setattr(chat_router.chat_service, "submit_provider_listing", fake_submit)
+
+    response = client.post("/chat/provider/submit", json={"user_id": "chat_provider_user"})
+    assert response.status_code == 200
+    assert captured == {"user_id": "chat_provider_user"}
+    assert response.json()["answer"] == "Provider listed"
+
+def test_chat_stream_returns_delta_and_final_message(monkeypatch):
+    def fake_stream(_request):
+        yield {"type": "delta", "delta": "Hello "}
+        yield {"type": "delta", "delta": "there"}
+        yield {
+            "type": "final",
+            "response": ChatResponse(
+                answer="Hello there",
+                message=ChatMessage(role="assistant", content="Hello there"),
+                conversation=[
+                    ChatTurn(role="user", content="Hi"),
+                    ChatTurn(role="assistant", content="Hello there"),
+                ],
+                answer_source="assistant",
+            ).model_dump(),
+        }
+
+    monkeypatch.setattr(chat_router.chat_service, "stream_chat", fake_stream)
+
     response = client.post(
-        "/chat",
+        "/chat/stream",
         json={
-            "user_id": "chat_general_user",
-            "message": "My dog is energetic. Give me a simple daily routine.",
-            "suburb": "Surry Hills",
+            "user_id": "chat_stream_minimal_user",
+            "messages": [{"role": "user", "content": "Hi"}],
         },
     )
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["answer_source"] in {"gpt_fallback", "fallback"}
-    assert payload["answer_badges"], "General route should include answer badges"
+
+    events = _parse_sse_data_events(response.text)
+    assert events[-1] == "[DONE]"
+    delta_events = [event for event in events if isinstance(event, dict) and event.get("type") == "delta"]
+    final_event = next(event for event in events if isinstance(event, dict) and event.get("type") == "final")
+    final_payload = final_event["response"]
+
+    assert "".join(event["delta"] for event in delta_events) == "Hello there"
+    assert final_payload["message"] == {"role": "assistant", "content": "Hello there"}
+    assert final_payload["answer_badges"] == []
+    assert final_payload["citations"] == []
 
 
-def test_chat_profile_suggestion_captures_owner_name_and_suburb_from_message():
+def test_chat_stream_failure_emits_plain_error_event(monkeypatch):
+    def broken_stream(_request):
+        raise RuntimeError("boom")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(chat_router.chat_service, "stream_chat", broken_stream)
+
     response = client.post(
-        "/chat",
+        "/chat/stream",
         json={
-            "user_id": f"chat_profile_user_{uuid4().hex[:8]}",
-            "message": "Hi, I'm Alex Chen, I live in Richmond and my dog name is Milo. He is 3 years old and 12 kg.",
+            "user_id": "chat_stream_error_user",
+            "messages": [{"role": "user", "content": "Hi"}],
         },
     )
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["suggested_profile"]["owner_name"] == "Alex Chen"
-    assert payload["suggested_profile"]["suburb"] == "Richmond"
-    assert payload["suggested_profile"]["pet_name"] == "Milo"
+
+    events = _parse_sse_data_events(response.text)
+    error_event = next(event for event in events if isinstance(event, dict) and event.get("type") == "error")
+    assert "retry" in error_event["error"].lower()
 
 
 def test_security_rate_limit_metrics_snapshot_tracks_429_surfaces(monkeypatch):
     security_audit_service.reset_rate_limit_metrics()
+    monkeypatch.setattr(
+        chat_router.chat_service,
+        "create_chat_response",
+        lambda request: ChatResponse(
+            answer="ok",
+            message=ChatMessage(role="assistant", content="ok"),
+            conversation=[ChatTurn(role="user", content=request.message or "first"), ChatTurn(role="assistant", content="ok")],
+        ),
+    )
     monkeypatch.setattr(auth_router, "LOGIN_FAILURE_LIMIT", 1)
     monkeypatch.setattr(auth_router, "LOGIN_FAILURE_WINDOW", timedelta(minutes=10))
     auth_router.FAILED_LOGIN_ATTEMPTS.clear()
@@ -735,6 +860,15 @@ def test_security_rate_limit_metrics_snapshot_forbidden_for_non_admin():
 
 def test_security_rate_limit_metrics_reset_clears_counts(monkeypatch):
     security_audit_service.reset_rate_limit_metrics()
+    monkeypatch.setattr(
+        chat_router.chat_service,
+        "create_chat_response",
+        lambda request: ChatResponse(
+            answer="ok",
+            message=ChatMessage(role="assistant", content="ok"),
+            conversation=[ChatTurn(role="user", content=request.message or "first"), ChatTurn(role="assistant", content="ok")],
+        ),
+    )
     monkeypatch.setattr(chat_router, "CHAT_RATE_LIMIT_MAX_REQUESTS", 1)
     monkeypatch.setattr(chat_router, "CHAT_RATE_LIMIT_WINDOW", timedelta(minutes=10))
     chat_router.CHAT_RATE_LIMIT_HISTORY.clear()

@@ -9,12 +9,12 @@ from fastapi.responses import StreamingResponse
 
 from app.auth import assert_actor_authorized
 from app.models import ChatRequest, ProfileAcceptRequest, ProviderSubmitRequest
-from app.services.ai_orchestrator import AIOrchestrator
 from app.services.rate_limiting import SlidingWindowHitStore, read_positive_int_env
 from app.services.security_audit import record_rate_limit_hit
+from app.services.simple_chat_service import SimpleChatService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-orchestrator = AIOrchestrator()
+chat_service = SimpleChatService()
 logger = logging.getLogger(__name__)
 
 
@@ -67,11 +67,7 @@ def chat(request: ChatRequest, authorization: Optional[str] = Header(default=Non
         bucket="chat",
         max_requests=CHAT_RATE_LIMIT_MAX_REQUESTS,
     )
-    return orchestrator.handle_message(
-        message=request.message,
-        user_id=request.user_id,
-        suburb=request.suburb,
-    )
+    return chat_service.create_chat_response(request)
 
 
 @router.post("/profile/accept")
@@ -82,7 +78,7 @@ def accept_profile(request: ProfileAcceptRequest, authorization: Optional[str] =
         bucket="profile_accept",
         max_requests=CHAT_ACTION_RATE_LIMIT_MAX_REQUESTS,
     )
-    return orchestrator.accept_profile(user_id=request.user_id)
+    return chat_service.accept_profile(user_id=request.user_id)
 
 
 @router.post("/provider/submit")
@@ -93,7 +89,7 @@ def submit_provider_listing(request: ProviderSubmitRequest, authorization: Optio
         bucket="provider_submit",
         max_requests=CHAT_ACTION_RATE_LIMIT_MAX_REQUESTS,
     )
-    return orchestrator.submit_provider_listing(user_id=request.user_id)
+    return chat_service.submit_provider_listing(user_id=request.user_id)
 
 
 @router.post("/stream")
@@ -108,32 +104,14 @@ def chat_stream(request: ChatRequest, authorization: Optional[str] = Header(defa
     def event_generator():
         yield ": stream-start\n\n"
         try:
-            for event in orchestrator.stream_message(
-                message=request.message,
-                user_id=request.user_id,
-                suburb=request.suburb,
-            ):
+            for event in chat_service.stream_chat(request):
                 yield f"data: {json.dumps(event)}\n\n"
         except asyncio.CancelledError:
             # Client disconnected before stream completion.
             return
         except Exception:
             logger.exception("Chat stream failed")
-            fallback = {
-                "type": "final",
-                "response": {
-                    "answer": "I hit a streaming issue. Please retry your message.",
-                    "suggested_profile": {},
-                    "cta_chips": [],
-                    "conversation": [],
-                    "profile_suggestion": None,
-                    "a2ui_messages": [],
-                    "answer_source": "fallback",
-                    "answer_badges": ["Streaming Fallback"],
-                    "citations": [],
-                },
-            }
-            yield f"data: {json.dumps(fallback)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'error': 'BarkAI could not reply. Please retry.'})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(

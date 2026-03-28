@@ -31,18 +31,16 @@ Out of scope until MVP ship:
 ## Major Feature Changes/Additions
 
 - Services marketplace completed for dog walking and grooming, including category filtering, provider details, and in-chat provider listing submission.
-- AI assistant flow completed with persistent chat memory, intent routing, tool-calling, emergency safety guardrails, profile suggestion card acceptance, and provider onboarding state management.
+- AI assistant flow completed with persistent chat memory, streaming chat, profile suggestion card acceptance, and provider onboarding state management.
 - Streaming chat support added via `POST /chat/stream` (SSE `delta` events followed by a final structured response).
 - Community features completed with official plus user-created groups, nearby suburb discovery, join/apply membership flow, and lost/found post drafting.
 - Community thread interactions now include API-backed comments and replies (`GET/POST /community/posts/{post_id}/comments`).
-- Retrieval-grounded responses added: BarkAI now combines trusted dog-care references with local app entities (providers, groups, posts, events) to ground answers.
 - Offline mode added on Android home data loads with cached fallback and explicit retry sync controls.
 - Search/sort upgrades added for services (`q` + `sort_by`) and community posts (`sort_by`) APIs.
 - Services now include recommendation API support with dog-park/group membership suburb inference (`GET /services/recommendations`) plus inferred-suburb quote requests when suburb is omitted.
 - Auth/session hardening added with bearer token endpoints (`/auth/login`, `/auth/me`) and optional strict enforcement via `AUTH_REQUIRED=true`.
 - Notification infrastructure added with user notification feed and read-state API (`/notifications`).
 - Deploy-ready basics added: backend Dockerfile, root docker-compose, backend CI workflow, and API smoke tests.
-- BarkWiseAI policy guardrails expanded for contentious topics (crating de-escalation goal, corporal punishment block, country-aware ute/truck tray safety policy, and firm anti-long-term outdoor restraint policy).
 
 Security runbook:
 - `/Users/yingxu/public-repos/pet-social-app/backend/SECURITY_OPERATIONS.md`
@@ -55,27 +53,6 @@ Local:
 cd /Users/yingxu/public-repos/pet-social-app/backend
 pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Internal RAG eval (LLM mode when key is present, fallback smoke mode otherwise):
-
-```bash
-cd /Users/yingxu/public-repos/pet-social-app/backend
-python3 scripts/rag_internal_eval.py --allow-fallback --json-out /tmp/rag-eval.json
-```
-
-Strict LLM-mode eval (fails fast when `OPENAI_API_KEY` is not set):
-
-```bash
-cd /Users/yingxu/public-repos/pet-social-app/backend
-python3 scripts/rag_internal_eval.py --json-out /tmp/rag-eval-llm.json
-```
-
-Route telemetry summary from logs:
-
-```bash
-cd /Users/yingxu/public-repos/pet-social-app/backend
-python3 scripts/route_telemetry_report.py /path/to/backend.log --json-out /tmp/route-telemetry-summary.json
 ```
 
 Security metrics quick check:
@@ -201,12 +178,14 @@ export FIREBASE_CREDENTIALS_PATH=/absolute/path/to/firebase-service-account.json
 ## Android Environments
 
 Owner app lane:
-- `staging`: `BarkWise Test` app, package suffix `.staging`, supports switchable test capabilities.
-- `prod`: `BarkWise` app, no package suffix, uses real production backend URL.
+- `stagingDebug`: `BarkWise Test` app, package suffix `.staging`, supports switchable test capabilities.
+- `prodRelease`: `BarkWise` app, no package suffix, uses the production backend URL.
 
 Provider app lane (secondary OS shell, same backend truth):
-- `providerStaging`: `BarkWise Provider Test`, package suffix `.provider.staging`.
-- `providerProd`: `BarkWise Provider`, package suffix `.provider`.
+- `providerStagingDebug`: `BW Provider` app, package suffix `.provider.staging`.
+- `providerProdRelease`: `BarkWise Provider`, package suffix `.provider`.
+
+Only these four Android variants are generated. Other flavor/build-type combinations such as `stagingRelease`, `prodDebug`, `providerStagingRelease`, and `providerProdDebug` are intentionally disabled to keep local development and release workflows simpler.
 
 Configure backend URLs and optional test toggles in `android/local.properties` (or matching env vars):
 
@@ -242,9 +221,9 @@ Build examples:
 ```bash
 cd /Users/yingxu/public-repos/pet-social-app/android
 ./gradlew :app:installStagingDebug
-./gradlew :app:installProdRelease
 ./gradlew :app:installProviderStagingDebug
-./gradlew :app:installProviderProdDebug
+./gradlew :app:assembleProdRelease
+./gradlew :app:assembleProviderProdRelease
 ```
 
 Install Provider OS on phone:
