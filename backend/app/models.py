@@ -354,10 +354,16 @@ class CalendarEvent(BaseModel):
     booking_id: Optional[str] = None
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_LENGTH)
+
+
 class ChatRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=MAX_USER_ID_LENGTH)
-    message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_LENGTH)
+    message: Optional[str] = Field(default=None, max_length=MAX_CHAT_MESSAGE_LENGTH)
     suburb: Optional[str] = Field(default=None, max_length=MAX_SUBURB_LENGTH)
+    messages: list[ChatMessage] = Field(default_factory=list)
 
 
 class ChatCitation(BaseModel):
@@ -406,10 +412,11 @@ class CtaChip(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    answer: str
-    suggested_profile: Dict[str, Any]
-    cta_chips: list[CtaChip]
+    answer: str = ""
+    suggested_profile: Dict[str, Any] = Field(default_factory=dict)
+    cta_chips: list[CtaChip] = Field(default_factory=list)
     conversation: list[ChatTurn] = Field(default_factory=list)
+    message: Optional[ChatMessage] = None
     profile_suggestion: Optional[PetProfileSuggestion] = None
     a2ui_messages: list[Dict[str, Any]] = Field(default_factory=list)
     answer_source: str = "fallback"

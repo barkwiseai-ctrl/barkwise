@@ -810,6 +810,71 @@ class MockApiService private constructor() : ApiService {
             note = "Sensitive skin package.",
             status = "in_progress",
         ),
+        BookingResponse(
+            id = "booking_6",
+            ownerUserId = "user_1",
+            providerId = "provider_4",
+            providerOwnerUserId = "user_2",
+            counterpartyUserId = "user_2",
+            threadId = canonicalThreadId("user_1", "user_2"),
+            petName = "Luna",
+            date = LocalDate.now().plusDays(6).toString(),
+            timeSlot = "09:00",
+            note = "Month planner test booking.",
+            status = "provider_confirmed",
+        ),
+        BookingResponse(
+            id = "booking_7",
+            ownerUserId = "user_3",
+            providerId = "provider_3",
+            providerOwnerUserId = "user_2",
+            counterpartyUserId = "user_2",
+            threadId = canonicalThreadId("user_2", "user_3"),
+            petName = "Scout",
+            date = LocalDate.now().plusDays(11).toString(),
+            timeSlot = "11:00",
+            note = "Pack walk follow-up.",
+            status = "provider_confirmed",
+        ),
+        BookingResponse(
+            id = "booking_8",
+            ownerUserId = "user_4",
+            providerId = "provider_4",
+            providerOwnerUserId = "user_2",
+            counterpartyUserId = "user_2",
+            threadId = canonicalThreadId("user_2", "user_4"),
+            petName = "Maple",
+            date = LocalDate.now().plusDays(18).toString(),
+            timeSlot = "13:00",
+            note = "Mid-month coat reset.",
+            status = "requested",
+        ),
+        BookingResponse(
+            id = "booking_9",
+            ownerUserId = "user_1",
+            providerId = "provider_3",
+            providerOwnerUserId = "user_2",
+            counterpartyUserId = "user_2",
+            threadId = canonicalThreadId("user_1", "user_2"),
+            petName = "Tilly",
+            date = LocalDate.now().plusDays(24).toString(),
+            timeSlot = "15:00",
+            note = "Late-month walk block.",
+            status = "provider_confirmed",
+        ),
+        BookingResponse(
+            id = "booking_10",
+            ownerUserId = "user_3",
+            providerId = "provider_4",
+            providerOwnerUserId = "user_2",
+            counterpartyUserId = "user_2",
+            threadId = canonicalThreadId("user_2", "user_3"),
+            petName = "Poppy",
+            date = LocalDate.now().plusDays(29).toString(),
+            timeSlot = "17:00",
+            note = "End-of-month tidy trim.",
+            status = "provider_confirmed",
+        ),
     )
     private val bookingStatusHistoryByBookingId = mutableMapOf<String, MutableList<BookingStatusHistoryEntry>>(
         "booking_1" to mutableListOf(
@@ -919,6 +984,88 @@ class MockApiService private constructor() : ApiService {
                 toStatus = "in_progress",
                 note = "service in progress",
                 createdAt = now.minus(35, ChronoUnit.MINUTES).toString(),
+            ),
+        ),
+        "booking_6" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_12",
+                bookingId = "booking_6",
+                actorUserId = "user_1",
+                fromStatus = "none",
+                toStatus = "requested",
+                note = "booking requested",
+                createdAt = now.minus(4, ChronoUnit.DAYS).toString(),
+            ),
+            BookingStatusHistoryEntry(
+                id = "bsh_13",
+                bookingId = "booking_6",
+                actorUserId = "user_2",
+                fromStatus = "requested",
+                toStatus = "provider_confirmed",
+                note = "confirmed by provider",
+                createdAt = now.minus(3, ChronoUnit.DAYS).toString(),
+            ),
+        ),
+        "booking_7" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_14",
+                bookingId = "booking_7",
+                actorUserId = "user_3",
+                fromStatus = "none",
+                toStatus = "requested",
+                note = "booking requested",
+                createdAt = now.minus(3, ChronoUnit.DAYS).toString(),
+            ),
+            BookingStatusHistoryEntry(
+                id = "bsh_15",
+                bookingId = "booking_7",
+                actorUserId = "user_2",
+                fromStatus = "requested",
+                toStatus = "provider_confirmed",
+                note = "confirmed by provider",
+                createdAt = now.minus(2, ChronoUnit.DAYS).toString(),
+            ),
+        ),
+        "booking_8" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_16",
+                bookingId = "booking_8",
+                actorUserId = "user_4",
+                fromStatus = "none",
+                toStatus = "requested",
+                note = "booking requested",
+                createdAt = now.minus(1, ChronoUnit.DAYS).toString(),
+            ),
+        ),
+        "booking_9" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_17",
+                bookingId = "booking_9",
+                actorUserId = "user_1",
+                fromStatus = "none",
+                toStatus = "requested",
+                note = "booking requested",
+                createdAt = now.minus(12, ChronoUnit.HOURS).toString(),
+            ),
+            BookingStatusHistoryEntry(
+                id = "bsh_18",
+                bookingId = "booking_9",
+                actorUserId = "user_2",
+                fromStatus = "requested",
+                toStatus = "provider_confirmed",
+                note = "confirmed by provider",
+                createdAt = now.minus(8, ChronoUnit.HOURS).toString(),
+            ),
+        ),
+        "booking_10" to mutableListOf(
+            BookingStatusHistoryEntry(
+                id = "bsh_19",
+                bookingId = "booking_10",
+                actorUserId = "user_3",
+                fromStatus = "none",
+                toStatus = "provider_confirmed",
+                note = "seeded as confirmed",
+                createdAt = now.minus(4, ChronoUnit.HOURS).toString(),
             ),
         ),
     )
@@ -1173,8 +1320,8 @@ class MockApiService private constructor() : ApiService {
         readMarkerKey("user_2", canonicalThreadId("user_1", "user_2")) to now.minus(2, ChronoUnit.HOURS),
         readMarkerKey("user_2", canonicalThreadId("user_2", "user_3")) to now.minus(70, ChronoUnit.MINUTES),
     )
-    private var bookingCounter = 6
-    private var bookingStatusHistoryCounter = 12
+    private var bookingCounter = 11
+    private var bookingStatusHistoryCounter = 20
     private var holdCounter = 1
     private var postCounter = 10
     private var eventCounter = 6
@@ -2134,66 +2281,17 @@ class MockApiService private constructor() : ApiService {
 
     override suspend fun chat(payload: ChatRequest): ChatResponse {
         val conversation = conversationByUser.getOrPut(payload.userId) { mutableListOf() }
-        conversation += ChatTurn(role = "user", content = payload.message)
-        val text = payload.message.lowercase()
-        val suburbHint = payload.suburb?.let { " in $it" }.orEmpty()
-        val isFaq = listOf("vaccine", "vaccination", "booster", "groom", "how often").any { token ->
-            text.contains(token)
-        }
-        val isRag = listOf("poison", "xylitol", "grape", "parvo", "vomit", "diarrhea", "diarrhoea").any { token ->
-            text.contains(token)
-        }
-        val answer = when {
-            isFaq -> {
-                "Mock FAQ answer$suburbHint: for common dog care questions, keep routines consistent and confirm timing with your vet."
-            }
-            isRag -> {
-                "Mock RAG answer$suburbHint: I pulled grounded safety context. If toxin exposure is possible, contact a vet immediately."
-            }
-            else -> {
-                "Mock GPT fallback$suburbHint: I can help with practical next steps for your dog, services, or community questions."
-            }
-        }
-        val answerSource = when {
-            isFaq -> "faq"
-            isRag -> "rag"
-            else -> "gpt_fallback"
-        }
-        val answerBadges = when {
-            isFaq -> listOf("FAQ QA", "BarkWise QA")
-            isRag -> listOf("RAG Grounded", "BarkWise AI")
-            else -> listOf("GPT Fallback", "Mock")
-        }
-        val citations = when {
-            isFaq -> listOf(
-                ChatCitation(
-                    title = "Canine Vaccination Guidelines",
-                    source = "AAHA",
-                    url = "https://www.aaha.org/resources/2022-aaha-canine-vaccination-guidelines/",
-                ),
-            )
-            isRag -> listOf(
-                ChatCitation(
-                    title = "Animal Poison Control Guidance",
-                    source = "ASPCA Animal Poison Control",
-                    url = "https://www.aspca.org/pet-care/animal-poison-control",
-                ),
-            )
-            else -> emptyList()
-        }
-        conversation += ChatTurn(
-            role = "assistant",
-            content = answer,
-            answerSource = answerSource,
-            answerBadges = answerBadges,
-            citations = citations,
-        )
+        val transcript = payload.messages.map { ChatTurn(role = it.role, content = it.content) }
+        conversation.clear()
+        conversation += transcript
+        val latestUserMessage = transcript.lastOrNull { it.role == "user" }?.content.orEmpty()
+        val answer = "Mock BarkAI reply: $latestUserMessage"
+        conversation += ChatTurn(role = "assistant", content = answer)
         return ChatResponse(
             answer = answer,
+            message = ChatMessage(role = "assistant", content = answer),
             conversation = conversation.toList(),
-            answerSource = answerSource,
-            answerBadges = answerBadges,
-            citations = citations,
+            answerSource = "assistant",
         )
     }
 

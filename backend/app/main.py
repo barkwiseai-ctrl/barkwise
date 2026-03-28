@@ -102,9 +102,9 @@ def health():
 
 @app.get("/ready")
 def ready():
-    llm_configured = bool(chat.orchestrator.llm_available)
+    llm_configured = bool(chat.chat_service.llm_available)
     return {
         "status": "ready",
         "llm_configured": llm_configured,
-        "llm_mode": "openai" if llm_configured else "fallback",
+        "llm_mode": "openai" if llm_configured else "unconfigured",
     }

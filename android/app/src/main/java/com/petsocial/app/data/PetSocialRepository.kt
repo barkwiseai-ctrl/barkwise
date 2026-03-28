@@ -308,24 +308,37 @@ class PetSocialRepository(
         ),
     )
 
-    suspend fun sendChat(message: String, suburb: String?): ChatResponse = api.chat(
+    fun loadBarkAiConversation(targetUserId: String = userId): List<ChatTurn> {
+        val raw = cachePrefs.getString(barkAiConversationKeyForUser(targetUserId), null) ?: return emptyList()
+        return runCatching { json.decodeFromString<List<ChatTurn>>(raw) }.getOrDefault(emptyList())
+    }
+
+    fun saveBarkAiConversation(conversation: List<ChatTurn>, targetUserId: String = userId) {
+        val normalizedUserId = targetUserId.trim().ifBlank { userId }
+        val encoded = json.encodeToString(conversation)
+        cachePrefs.edit().putString(barkAiConversationKeyForUser(normalizedUserId), encoded).apply()
+    }
+
+    suspend fun sendChat(messages: List<ChatTurn>): ChatResponse = api.chat(
         ChatRequest(
             userId = userId,
-            message = message,
-            suburb = suburb,
+            messages = messages
+                .takeLast(20)
+                .map { ChatMessage(role = it.role, content = it.content) },
         )
     )
 
     suspend fun streamChat(
-        message: String,
-        suburb: String?,
+        messages: List<ChatTurn>,
         onDelta: (String) -> Unit,
     ): ChatResponse = withContext(Dispatchers.IO) {
-        val payload = ChatRequest(userId = userId, message = message, suburb = suburb)
+        val payload = ChatRequest(
+            userId = userId,
+            messages = messages
+                .takeLast(20)
+                .map { ChatMessage(role = it.role, content = it.content) },
+        )
         val streamPrimaryBaseUrl = normalizeBaseUrl(baseUrl) ?: DEFAULT_API_BASE_URL
-        val streamFallbackBaseUrl = normalizeBaseUrl(fallbackBaseUrl)
-        val streamFallbackEnabled =
-            streamFallbackBaseUrl != null && streamFallbackBaseUrl != streamPrimaryBaseUrl
 
         fun readStream(streamBaseUrl: String): ChatResponse {
             val body = json.encodeToString(payload).toRequestBody("application/json".toMediaType())
@@ -339,6 +352,11 @@ class PetSocialRepository(
             val request = Request.Builder()
                 .url(streamUrl)
                 .post(body)
+                .apply {
+                    if (authToken.isNotBlank()) {
+                        header("Authorization", "Bearer $authToken")
+                    }
+                }
                 .build()
 
             return httpClient.newCall(request).execute().use { response ->
@@ -348,6 +366,7 @@ class PetSocialRepository(
 
                 val responseBody = response.body ?: error("Empty stream response")
                 var finalResponse: ChatResponse? = null
+                var streamError: String? = null
 
                 responseBody.source().use { source ->
                     while (!source.exhausted()) {
@@ -368,28 +387,22 @@ class PetSocialRepository(
                                 val finalElement = event["response"] ?: continue
                                 finalResponse = json.decodeFromJsonElement<ChatResponse>(finalElement)
                             }
+
+                            "error" -> {
+                                streamError = event["error"]?.jsonPrimitive?.contentOrNull ?: "BarkAI could not reply."
+                            }
                         }
                     }
                 }
 
+                if (!streamError.isNullOrBlank()) {
+                    error(streamError)
+                }
                 finalResponse ?: error("No final response from stream")
             }
         }
 
-        return@withContext runCatching {
-            readStream(streamPrimaryBaseUrl)
-        }.recoverCatching { error ->
-            if (streamFallbackEnabled && error is IOException) {
-                readStream(streamFallbackBaseUrl!!)
-            } else {
-                throw error
-            }
-        }.getOrElse {
-            // Fallback keeps BarkAI usable in dev/mock mode and when stream endpoint is unavailable.
-            val fallback = api.chat(payload)
-            onDelta(fallback.answer)
-            fallback
-        }
+        return@withContext readStream(streamPrimaryBaseUrl)
     }
 
     private fun normalizeBaseUrl(candidate: String?): String? {
@@ -1422,6 +1435,7 @@ class PetSocialRepository(
 
     private fun cacheKeyForUser(userId: String, suffix: String): String = "home_snapshot_${suffix}_$userId"
     private fun legacyHomeCacheKeyForUser(userId: String): String = "home_snapshot_$userId"
+    private fun barkAiConversationKeyForUser(userId: String): String = "bark_ai_conversation_$userId"
 
     private companion object {
         const val CACHE_PREFS_NAME = "petsocial_cache"

@@ -370,8 +370,7 @@ data class ServiceAvailabilitySlot(
 @Serializable
 data class ChatRequest(
     @SerialName("user_id") val userId: String,
-    val message: String,
-    val suburb: String? = null,
+    val messages: List<ChatMessage>,
 )
 
 @Serializable
@@ -379,6 +378,12 @@ data class ChatCta(
     val label: String,
     val action: String,
     val payload: JsonObject? = null,
+)
+
+@Serializable
+data class ChatMessage(
+    val role: String,
+    val content: String,
 )
 
 @Serializable
@@ -412,7 +417,8 @@ data class PetProfileSuggestion(
 
 @Serializable
 data class ChatResponse(
-    val answer: String,
+    val answer: String = "",
+    val message: ChatMessage? = null,
     @SerialName("suggested_profile") val suggestedProfile: JsonObject? = null,
     @SerialName("cta_chips") val ctaChips: List<ChatCta> = emptyList(),
     val conversation: List<ChatTurn> = emptyList(),
