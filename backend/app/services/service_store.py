@@ -33,7 +33,7 @@ from app.models import (
     VetGroomerVerificationResult,
     VetSpotlightActivationResult,
 )
-from app.services.mvp_bootstrap import mvp_bootstrap_enabled, seeded_providers, seeded_reviews
+from app.services.mvp_bootstrap import mvp_bootstrap_enabled, seeded_bookings, seeded_providers, seeded_reviews
 
 
 BOOKING_ACTIVE_STATUSES = {
@@ -465,6 +465,7 @@ class ServiceStore:
     def _seed_if_needed(self) -> None:
         seeded_provider_rows = seeded_providers()
         seeded_review_rows = seeded_reviews()
+        seeded_booking_rows = seeded_bookings()
         review_ids_by_provider: Dict[str, List[str]] = {}
         for review in seeded_review_rows:
             review_ids_by_provider.setdefault(review.provider_id, []).append(review.id)
@@ -543,10 +544,41 @@ class ServiceStore:
                         "UPDATE providers SET review_count = ? WHERE id = ?",
                         (review_count, provider.id),
                     )
+
+                for booking in seeded_booking_rows:
+                    booking_date = (date.today() + timedelta(days=booking.date_offset_days)).isoformat()
+                    created_at = (datetime.utcnow() + timedelta(days=booking.created_offset_days)).replace(microsecond=0).isoformat()
+                    conn.execute(
+                        """
+                        INSERT INTO bookings (
+                            id, owner_user_id, provider_id, pet_name, booking_date, time_slot, note, status, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            owner_user_id = excluded.owner_user_id,
+                            provider_id = excluded.provider_id,
+                            pet_name = excluded.pet_name,
+                            booking_date = excluded.booking_date,
+                            time_slot = excluded.time_slot,
+                            note = excluded.note,
+                            status = excluded.status,
+                            created_at = excluded.created_at
+                        """,
+                        (
+                            booking.id,
+                            booking.owner_user_id,
+                            booking.provider_id,
+                            booking.pet_name,
+                            booking_date,
+                            booking.time_slot,
+                            booking.note,
+                            booking.status,
+                            created_at,
+                        ),
+                    )
                 conn.commit()
 
         for provider in seeded_provider_rows:
-            self.ensure_availability(provider_id=provider.id, start_date=date.today(), days=21)
+            self.ensure_availability(provider_id=provider.id, start_date=date.today(), days=42)
 
     def _row_to_provider(
         self,

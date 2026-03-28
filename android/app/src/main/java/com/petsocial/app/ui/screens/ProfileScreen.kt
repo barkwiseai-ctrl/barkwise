@@ -86,6 +86,8 @@ import com.petsocial.app.ui.ProviderBooking
 import com.petsocial.app.ui.ProviderListing
 import com.petsocial.app.ui.calendar.calendarEventToCalendarDraft
 import com.petsocial.app.ui.calendar.openCalendarDraft
+import com.petsocial.app.ui.calendar.ownerBookingToCalendarDraft
+import com.petsocial.app.ui.calendar.providerBookingToCalendarDraft
 import com.petsocial.app.ui.qr.QrPayloadAction
 import com.petsocial.app.ui.qr.QrScannerSheet
 import com.petsocial.app.ui.qr.generateQrImageBitmap
@@ -264,6 +266,10 @@ fun ProfileScreen(
     var blackoutDate by rememberSaveable { mutableStateOf(LocalDate.now().plusDays(1).toString()) }
     var blackoutTimeSlot by rememberSaveable { mutableStateOf("09:00") }
     var blackoutReason by rememberSaveable { mutableStateOf("") }
+    var providerScheduleFilterKey by rememberSaveable { mutableStateOf(ProviderScheduleFilter.TODAY.key) }
+    var showProviderCalendarSheet by rememberSaveable { mutableStateOf(false) }
+    var providerCalendarViewKey by rememberSaveable { mutableStateOf(ProviderCalendarView.WEEK.key) }
+    var providerCalendarAnchorDate by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     val settingsPrefs = remember(context) {
         context.getSharedPreferences(HOME_SETTINGS_PREFS, Context.MODE_PRIVATE)
     }
@@ -339,6 +345,72 @@ fun ProfileScreen(
     val pendingProviderQuoteRequests = remember(providerInboxItems) {
         providerInboxItems.count { item -> item.itemType == "quote_request" && item.status == "pending" }
     }
+    val today = LocalDate.now()
+    val selectedProviderScheduleFilter = remember(providerScheduleFilterKey) {
+        ProviderScheduleFilter.fromKey(providerScheduleFilterKey)
+    }
+    val selectedProviderCalendarView = remember(providerCalendarViewKey) {
+        ProviderCalendarView.fromKey(providerCalendarViewKey)
+    }
+    val providerCalendarAnchor = parseCalendarDate(providerCalendarAnchorDate) ?: today
+    val activeProviderBookings = remember(providerBookings, today) {
+        providerBookings
+            .filter { booking ->
+                val bookingDate = booking.scheduleDate() ?: return@filter false
+                !bookingDate.isBefore(today) && !isBookingResolvedStatus(booking.status)
+            }
+            .sortedWith(compareBy<ProviderBooking> { booking -> booking.scheduleDate() ?: LocalDate.MAX }.thenBy { booking -> booking.timeSlot })
+    }
+    val providerSchedulePreviewBookings = remember(activeProviderBookings, today) {
+        val todaysBookings = activeProviderBookings.filter { booking -> booking.scheduleDate() == today }
+        (if (todaysBookings.isNotEmpty()) todaysBookings else activeProviderBookings).take(3)
+    }
+    val providerScheduleGroups = remember(activeProviderBookings, selectedProviderScheduleFilter, today) {
+        activeProviderBookings
+            .filter { booking -> booking.matchesProviderScheduleFilter(selectedProviderScheduleFilter, today) }
+            .groupBy { booking -> booking.scheduleDate() ?: today }
+            .toSortedMap()
+            .map { (date, bookings) -> ProviderScheduleDayGroup(date = date, bookings = bookings) }
+    }
+    val todayProviderBookingCount = remember(activeProviderBookings, today) {
+        activeProviderBookings.count { booking -> booking.scheduleDate() == today }
+    }
+    val nextWeekProviderBookingCount = remember(activeProviderBookings, today) {
+        val weekEnd = today.plusDays(6)
+        activeProviderBookings.count { booking ->
+            val bookingDate = booking.scheduleDate() ?: return@count false
+            !bookingDate.isBefore(today) && !bookingDate.isAfter(weekEnd)
+        }
+    }
+    val pendingProviderBookingCount = remember(providerBookings) {
+        providerBookings.count { booking ->
+            booking.status.lowercase() in setOf("requested", "reschedule_requested")
+        }
+    }
+    val nextCalendarEventCount = remember(calendarEvents, today) {
+        val weekEnd = today.plusDays(6)
+        calendarEvents.count { event ->
+            val eventDate = parseCalendarDate(event.date) ?: return@count false
+            !eventDate.isBefore(today) && !eventDate.isAfter(weekEnd)
+        }
+    }
+    val providerBookingsByDate = remember(providerBookings) {
+        providerBookings
+            .mapNotNull { booking -> booking.scheduleDate()?.let { date -> date to booking } }
+            .groupBy(
+                keySelector = { (date, _) -> date },
+                valueTransform = { (_, booking) -> booking },
+            )
+    }
+    val providerCalendarEventsByDate = remember(calendarEvents) {
+        calendarEvents
+            .mapNotNull { event -> parseCalendarDate(event.date)?.let { date -> date to event } }
+            .groupBy(
+                keySelector = { (date, _) -> date },
+                valueTransform = { (_, event) -> event },
+            )
+    }
+    val nextProviderBooking = activeProviderBookings.firstOrNull()
     val communitySubtitle = remember(upcomingJoinedEvents) {
         buildCommunityPlansSubtitle(upcomingJoinedEvents.size)
     }
@@ -388,6 +460,17 @@ fun ProfileScreen(
     val normalizedProviderListings = remember(providerListings) {
         providerListings
             .sortedWith(compareBy<ProviderListing> { listing -> listing.status == "cancelled" }.thenBy { listing -> listing.title.lowercase() })
+    }
+    val activeProviderListings = remember(normalizedProviderListings) {
+        normalizedProviderListings.filter { listing -> listing.status != "cancelled" }
+    }
+    val primaryProviderListing = remember(normalizedProviderListings, activeProviderListings) {
+        activeProviderListings.firstOrNull() ?: normalizedProviderListings.firstOrNull()
+    }
+    val providerBusinessName = remember(primaryProviderListing, profileInfo.displayName) {
+        primaryProviderListing?.title?.trim().orEmpty().ifBlank {
+            profileInfo.displayName.trim().ifBlank { "Set your business profile" }
+        }
     }
     val plansSheetSection = remember(plansSheetSectionKey) { PlansSheetSection.fromKey(plansSheetSectionKey) }
     val openCreateListingDialog = {
@@ -493,11 +576,79 @@ fun ProfileScreen(
                     }
                 }
 
+                ProviderBusinessProfileCard(
+                    businessName = providerBusinessName,
+                    onClick = {
+                        primaryProviderListing?.let(openEditListingDialog) ?: openCreateListingDialog()
+                    },
+                )
+
                 Text(
                     "Create listings, respond to quotes, and keep availability current without leaving Hub.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                ProviderScheduleOverviewCard(
+                    todayAppointmentCount = todayProviderBookingCount,
+                    pendingConfirmationCount = pendingProviderBookingCount,
+                    nextWeekAppointmentCount = nextWeekProviderBookingCount,
+                    nextCalendarEventCount = nextCalendarEventCount,
+                    nextAppointment = nextProviderBooking,
+                    today = today,
+                    onOpenCalendar = {
+                        providerCalendarViewKey = ProviderCalendarView.WEEK.key
+                        providerCalendarAnchorDate = today.toString()
+                        showProviderCalendarSheet = true
+                    },
+                )
+
+                Text(
+                    if (todayProviderBookingCount > 0) "Today's appointments" else "Next appointments",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                if (providerSchedulePreviewBookings.isEmpty()) {
+                    HomeEmptyCard("Upcoming provider bookings will appear here once owners request a slot.")
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        providerSchedulePreviewBookings.forEach { booking ->
+                            ProviderAppointmentCard(
+                                booking = booking,
+                                today = today,
+                                busy = isSubmittingProviderInboxAction,
+                                onOpenDetails = {
+                                    selectedAppointment = booking.toAppointmentPopupState(sourceLabel = "Provider bookings")
+                                },
+                                onAddToCalendar = {
+                                    providerBookingToCalendarDraft(booking)?.let { draft ->
+                                        context.openCalendarDraft(draft)
+                                    }
+                                },
+                                onConfirm = if (booking.status.lowercase() in setOf("requested", "reschedule_requested")) {
+                                    { onConfirmProviderBooking(booking.id) }
+                                } else {
+                                    null
+                                },
+                                onDecline = if (booking.status.lowercase() in setOf("requested", "reschedule_requested")) {
+                                    { onDeclineProviderBooking(booking.id) }
+                                } else {
+                                    null
+                                },
+                                onReschedule = if (isBookingResolvedStatus(booking.status)) {
+                                    null
+                                } else {
+                                    {
+                                        rescheduleDialogItemId = booking.id
+                                        rescheduleDate = booking.date.toLocalDateString()
+                                        rescheduleTimeSlot = booking.timeSlot
+                                        rescheduleNote = ""
+                                    }
+                                },
+                                onMessage = booking.messageActionOrNull(onOpenMessages),
+                            )
+                        }
+                    }
+                }
 
                 Text("Listings", style = MaterialTheme.typography.titleSmall)
                 if (normalizedProviderListings.isEmpty()) {
@@ -773,11 +924,14 @@ fun ProfileScreen(
                                 subtitle = communitySubtitle,
                                 preview = "See meetup plans",
                                 badgeText = upcomingJoinedEvents.size.takeIf { it > 0 }?.toString(),
-                                icon = { Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                                icon = { Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(24.dp)) },
                                 onClick = {
                                     plansSheetSectionKey = PlansSheetSection.COMMUNITY.key
                                     showPlansSheet = true
                                 },
+                                contentPadding = PaddingValues(8.dp),
+                                compact = true,
+                                previewMaxLines = 1,
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight(),
@@ -787,11 +941,14 @@ fun ProfileScreen(
                                 subtitle = listingsSubtitle,
                                 preview = "Manage bookings",
                                 badgeText = (ownerBookings.size + providerBookings.size).takeIf { it > 0 }?.toString(),
-                                icon = { Icon(Icons.Default.Event, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                                icon = { Icon(Icons.Default.Event, contentDescription = null, modifier = Modifier.size(24.dp)) },
                                 onClick = {
                                     plansSheetSectionKey = PlansSheetSection.LISTINGS.key
                                     showPlansSheet = true
                                 },
+                                contentPadding = PaddingValues(8.dp),
+                                compact = true,
+                                previewMaxLines = 1,
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight(),
@@ -1214,6 +1371,100 @@ fun ProfileScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                Text("Appointments", style = MaterialTheme.typography.titleSmall)
+                                AssistChip(
+                                    onClick = {
+                                        providerScheduleFilterKey = ProviderScheduleFilter.NEXT_7_DAYS.key
+                                    },
+                                    label = { Text("${nextWeekProviderBookingCount} next 7 days") },
+                                )
+                            }
+                        }
+                        item {
+                            Text(
+                                "Review incoming bookings, confirm requests, and keep your calendar in sync.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        item {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            ) {
+                                ProviderScheduleFilter.values().forEach { filter ->
+                                    FilterChip(
+                                        selected = selectedProviderScheduleFilter == filter,
+                                        onClick = { providerScheduleFilterKey = filter.key },
+                                        label = { Text(filter.label) },
+                                    )
+                                }
+                            }
+                        }
+                        if (providerScheduleGroups.isEmpty()) {
+                            item {
+                                val emptyMessage = if (activeProviderBookings.isEmpty()) {
+                                    "No provider appointments are booked yet."
+                                } else {
+                                    "No appointments match this schedule filter."
+                                }
+                                HomeEmptyCard(emptyMessage)
+                            }
+                        } else {
+                            items(providerScheduleGroups, key = { group -> "provider_schedule_${group.date}" }) { group ->
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        buildProviderScheduleDayLabel(group.date, today),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    group.bookings.forEach { booking ->
+                                        ProviderAppointmentCard(
+                                            booking = booking,
+                                            today = today,
+                                            busy = isSubmittingProviderInboxAction,
+                                            onOpenDetails = {
+                                                selectedAppointment = booking.toAppointmentPopupState(sourceLabel = "Provider bookings")
+                                            },
+                                            onAddToCalendar = {
+                                                providerBookingToCalendarDraft(booking)?.let { draft ->
+                                                    context.openCalendarDraft(draft)
+                                                }
+                                            },
+                                            onConfirm = if (booking.status.lowercase() in setOf("requested", "reschedule_requested")) {
+                                                { onConfirmProviderBooking(booking.id) }
+                                            } else {
+                                                null
+                                            },
+                                            onDecline = if (booking.status.lowercase() in setOf("requested", "reschedule_requested")) {
+                                                { onDeclineProviderBooking(booking.id) }
+                                            } else {
+                                                null
+                                            },
+                                            onReschedule = if (isBookingResolvedStatus(booking.status)) {
+                                                null
+                                            } else {
+                                                {
+                                                    rescheduleDialogItemId = booking.id
+                                                    rescheduleDate = booking.date.toLocalDateString()
+                                                    rescheduleTimeSlot = booking.timeSlot
+                                                    rescheduleNote = ""
+                                                }
+                                            },
+                                            onMessage = booking.messageActionOrNull(onOpenMessages),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (isProviderSurface) {
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
                                 Text("Provider listings", style = MaterialTheme.typography.titleSmall)
                                 AssistChip(
                                     onClick = openCreateListingDialog,
@@ -1415,7 +1666,7 @@ fun ProfileScreen(
                                                 if (item.status.lowercase() !in setOf("cancelled", "completed")) {
                                                     TextButton(
                                                         onClick = {
-                                                            rescheduleDialogItemId = item.id
+                                                            rescheduleDialogItemId = item.bookingId
                                                             rescheduleDate = firstIsoDateFromText(item.subtitle)
                                                                 ?: LocalDate.now().plusDays(1).toString()
                                                             rescheduleTimeSlot = firstTimeSlotFromText(item.subtitle) ?: "09:00"
@@ -1509,7 +1760,22 @@ fun ProfileScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
-                                    StatusBadge(booking.status)
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        TextButton(
+                                            onClick = {
+                                                ownerBookingToCalendarDraft(booking)?.let { draft ->
+                                                    context.openCalendarDraft(draft)
+                                                }
+                                            },
+                                            modifier = Modifier.wrapContentWidth(),
+                                        ) {
+                                            Text("Add")
+                                        }
+                                        StatusBadge(booking.status)
+                                    }
                                 }
                             }
                         }
@@ -1527,35 +1793,96 @@ fun ProfileScreen(
                             item { HomeEmptyCard("No provider bookings yet.") }
                         } else {
                             items(providerBookings.take(20), key = { booking -> "provider_booking_${booking.id}" }) { booking ->
-                                Card(
-                                    onClick = {
+                                ProviderAppointmentCard(
+                                    booking = booking,
+                                    today = today,
+                                    busy = isSubmittingProviderInboxAction,
+                                    onOpenDetails = {
                                         selectedAppointment = booking.toAppointmentPopupState(sourceLabel = "Provider bookings")
                                     },
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            Text(booking.serviceName, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                            Text(
-                                                "${booking.date.toLocalDateString()} ${booking.timeSlot}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
+                                    onAddToCalendar = {
+                                        providerBookingToCalendarDraft(booking)?.let { draft ->
+                                            context.openCalendarDraft(draft)
                                         }
-                                        StatusBadge(booking.status)
-                                    }
-                                }
+                                    },
+                                    onConfirm = if (booking.status.lowercase() in setOf("requested", "reschedule_requested")) {
+                                        { onConfirmProviderBooking(booking.id) }
+                                    } else {
+                                        null
+                                    },
+                                    onDecline = if (booking.status.lowercase() in setOf("requested", "reschedule_requested")) {
+                                        { onDeclineProviderBooking(booking.id) }
+                                    } else {
+                                        null
+                                    },
+                                    onReschedule = if (isBookingResolvedStatus(booking.status)) {
+                                        null
+                                    } else {
+                                        {
+                                            rescheduleDialogItemId = booking.id
+                                            rescheduleDate = booking.date.toLocalDateString()
+                                            rescheduleTimeSlot = booking.timeSlot
+                                            rescheduleNote = ""
+                                        }
+                                    },
+                                    onMessage = booking.messageActionOrNull(onOpenMessages),
+                                )
                             }
                         }
                     }
                 }
             }
+        }
+    }
+
+    if (showProviderCalendarSheet) {
+        ModalBottomSheet(onDismissRequest = { showProviderCalendarSheet = false }) {
+            ProviderCalendarSheet(
+                today = today,
+                currentView = selectedProviderCalendarView,
+                anchorDate = providerCalendarAnchor,
+                bookingsByDate = providerBookingsByDate,
+                calendarEventsByDate = providerCalendarEventsByDate,
+                isSubmittingProviderAction = isSubmittingProviderInboxAction,
+                onSelectView = { view -> providerCalendarViewKey = view.key },
+                onMoveWindow = { step ->
+                    providerCalendarAnchorDate = selectedProviderCalendarView
+                        .moveAnchor(anchor = providerCalendarAnchor, step = step)
+                        .toString()
+                },
+                onJumpToToday = {
+                    providerCalendarAnchorDate = today.toString()
+                },
+                onSelectDate = { date ->
+                    providerCalendarAnchorDate = date.toString()
+                },
+                onOpenBooking = { booking ->
+                    showProviderCalendarSheet = false
+                    selectedAppointment = booking.toAppointmentPopupState(sourceLabel = "Provider bookings")
+                },
+                onAddBookingToCalendar = { booking ->
+                    providerBookingToCalendarDraft(booking)?.let { draft ->
+                        context.openCalendarDraft(draft)
+                    }
+                },
+                onConfirmBooking = { booking -> onConfirmProviderBooking(booking.id) },
+                onDeclineBooking = { booking -> onDeclineProviderBooking(booking.id) },
+                onRescheduleBooking = { booking ->
+                    showProviderCalendarSheet = false
+                    rescheduleDialogItemId = booking.id
+                    rescheduleDate = booking.date.toLocalDateString()
+                    rescheduleTimeSlot = booking.timeSlot
+                    rescheduleNote = ""
+                },
+                onMessageBooking = { booking ->
+                    booking.messageActionOrNull(onOpenMessages)?.invoke()
+                },
+                onAddCalendarEvent = { event ->
+                    calendarEventToCalendarDraft(event)?.let { draft ->
+                        context.openCalendarDraft(draft)
+                    }
+                },
+            )
         }
     }
 
@@ -2154,10 +2481,10 @@ fun ProfileScreen(
         )
     }
 
-    val rescheduleDialogItem = rescheduleDialogItemId?.let { id ->
-        providerInboxItems.firstOrNull { item -> item.id == id }
+    val rescheduleDialogBooking = rescheduleDialogItemId?.let { id ->
+        providerBookings.firstOrNull { booking -> booking.id == id }
     }
-    if (rescheduleDialogItem != null && !rescheduleDialogItem.bookingId.isNullOrBlank()) {
+    if (rescheduleDialogBooking != null) {
         val validDate = isIsoDateInput(rescheduleDate)
         val validTimeSlot = isTimeSlotInput(rescheduleTimeSlot)
         val canSubmitReschedule = validDate && validTimeSlot && !isSubmittingProviderInboxAction
@@ -2169,7 +2496,7 @@ fun ProfileScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "${rescheduleDialogItem.providerName} • ${rescheduleDialogItem.title}",
+                        "${rescheduleDialogBooking.serviceName} • Pet ${rescheduleDialogBooking.petName}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2205,7 +2532,7 @@ fun ProfileScreen(
                     enabled = canSubmitReschedule,
                     onClick = {
                         onRescheduleProviderBooking(
-                            rescheduleDialogItem.bookingId,
+                            rescheduleDialogBooking.id,
                             rescheduleDate.trim(),
                             rescheduleTimeSlot.trim(),
                             rescheduleNote.trim(),
@@ -3151,6 +3478,8 @@ private fun HomeTileCard(
     topTrailing: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(10.dp),
+    compact: Boolean = false,
+    previewMaxLines: Int = 2,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -3162,7 +3491,7 @@ private fun HomeTileCard(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 4.dp),
         ) {
             val showHeaderRow = icon != null || topTrailing != null || !badgeText.isNullOrBlank()
             if (showHeaderRow) {
@@ -3208,10 +3537,52 @@ private fun HomeTileCard(
                     preview,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = previewMaxLines,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ProviderBusinessProfileCard(
+    businessName: String,
+    onClick: () -> Unit,
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    "Business profile",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    businessName,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -3291,6 +3662,44 @@ internal data class AppointmentPopupState(
     val messageThreadId: String? = null,
     val deepLink: String? = null,
 )
+
+private data class ProviderScheduleDayGroup(
+    val date: LocalDate,
+    val bookings: List<ProviderBooking>,
+)
+
+private enum class ProviderScheduleFilter(
+    val key: String,
+    val label: String,
+) {
+    TODAY("today", "Today"),
+    TOMORROW("tomorrow", "Tomorrow"),
+    NEXT_7_DAYS("next_7_days", "Next 7 days"),
+    ALL_UPCOMING("all_upcoming", "All upcoming"),
+    ;
+
+    companion object {
+        fun fromKey(key: String): ProviderScheduleFilter {
+            return values().firstOrNull { filter -> filter.key == key } ?: TODAY
+        }
+    }
+}
+
+private enum class ProviderCalendarView(
+    val key: String,
+    val label: String,
+) {
+    MONTH("month", "Month"),
+    WEEK("week", "Week"),
+    SCHEDULE("schedule", "Schedule"),
+    ;
+
+    companion object {
+        fun fromKey(key: String): ProviderCalendarView {
+            return values().firstOrNull { view -> view.key == key } ?: WEEK
+        }
+    }
+}
 
 internal data class BookingMessageTarget(
     val userId: String? = null,
@@ -3377,6 +3786,21 @@ private fun ProviderBooking.toAppointmentPopupState(sourceLabel: String): Appoin
     )
 }
 
+private fun ProviderBooking.scheduleDate(): LocalDate? = parseCalendarDate(date)
+
+private fun ProviderBooking.matchesProviderScheduleFilter(
+    filter: ProviderScheduleFilter,
+    today: LocalDate,
+): Boolean {
+    val bookingDate = scheduleDate() ?: return false
+    return when (filter) {
+        ProviderScheduleFilter.TODAY -> bookingDate == today
+        ProviderScheduleFilter.TOMORROW -> bookingDate == today.plusDays(1)
+        ProviderScheduleFilter.NEXT_7_DAYS -> !bookingDate.isBefore(today) && !bookingDate.isAfter(today.plusDays(6))
+        ProviderScheduleFilter.ALL_UPCOMING -> !bookingDate.isBefore(today)
+    }
+}
+
 internal fun OwnerBooking.resolveMessageTarget(): BookingMessageTarget {
     return BookingMessageTarget(
         userId = providerUserId.takeIf { value -> value.isNotBlank() },
@@ -3391,6 +3815,16 @@ internal fun ProviderBooking.resolveMessageTarget(): BookingMessageTarget {
     )
 }
 
+private fun ProviderBooking.messageActionOrNull(
+    onOpenMessages: (String?, String?) -> Unit,
+): (() -> Unit)? {
+    val target = resolveMessageTarget()
+    if (target.userId.isNullOrBlank() && target.threadId.isNullOrBlank()) return null
+    return {
+        onOpenMessages(target.userId, target.threadId)
+    }
+}
+
 private fun String.toReadableLabel(): String {
     return split("_")
         .filter { part -> part.isNotBlank() }
@@ -3400,10 +3834,64 @@ private fun String.toReadableLabel(): String {
         .ifBlank { this }
 }
 
+private fun isBookingResolvedStatus(status: String): Boolean {
+    return status.lowercase() in setOf(
+        "cancelled",
+        "cancelled_by_owner",
+        "cancelled_by_provider",
+        "provider_declined",
+        "completed",
+    )
+}
+
 private fun parseCalendarDate(date: String): LocalDate? = try {
     LocalDate.parse(date.take(10))
 } catch (_: DateTimeParseException) {
     null
+}
+
+private fun buildProviderScheduleDayLabel(
+    date: LocalDate,
+    today: LocalDate,
+): String {
+    val relativeLabel = when {
+        date == today -> "Today"
+        date == today.plusDays(1) -> "Tomorrow"
+        else -> null
+    }
+    return listOfNotNull(relativeLabel, date.toString())
+        .joinToString(" • ")
+}
+
+private fun ProviderCalendarView.moveAnchor(
+    anchor: LocalDate,
+    step: Int,
+): LocalDate {
+    return when (this) {
+        ProviderCalendarView.MONTH -> anchor.plusMonths(step.toLong()).withDayOfMonth(1)
+        ProviderCalendarView.WEEK -> anchor.plusWeeks(step.toLong())
+        ProviderCalendarView.SCHEDULE -> anchor.plusDays(step * 7L)
+    }
+}
+
+private fun LocalDate.startOfWeek(): LocalDate {
+    return minusDays((dayOfWeek.value - 1).toLong())
+}
+
+private fun buildMonthGrid(anchor: LocalDate): List<List<LocalDate?>> {
+    val monthStart = anchor.withDayOfMonth(1)
+    val leadingEmptyDays = monthStart.dayOfWeek.value - 1
+    val daysInMonth = monthStart.lengthOfMonth()
+    val cells = buildList<LocalDate?> {
+        repeat(leadingEmptyDays) { add(null) }
+        repeat(daysInMonth) { offset ->
+            add(monthStart.plusDays(offset.toLong()))
+        }
+        while (size % 7 != 0) {
+            add(null)
+        }
+    }
+    return cells.chunked(7)
 }
 
 private fun String.toLocalDateString(): String {
@@ -3489,6 +3977,485 @@ private fun HomeEmptyCard(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun ProviderScheduleOverviewCard(
+    todayAppointmentCount: Int,
+    pendingConfirmationCount: Int,
+    nextWeekAppointmentCount: Int,
+    nextCalendarEventCount: Int,
+    nextAppointment: ProviderBooking?,
+    today: LocalDate,
+    onOpenCalendar: () -> Unit,
+) {
+    Card(
+        onClick = onOpenCalendar,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Booking calendar", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    nextAppointment?.let { booking ->
+                        val dateLabel = booking.scheduleDate()?.let { date ->
+                            buildProviderScheduleDayLabel(date, today)
+                        } ?: booking.date.toLocalDateString()
+                        "Next up: ${booking.serviceName} • $dateLabel ${booking.timeSlot}"
+                    } ?: "No upcoming appointments booked yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
+                ProfileStatChip(label = "Today", value = todayAppointmentCount.toString())
+                ProfileStatChip(label = "Pending", value = pendingConfirmationCount.toString())
+                ProfileStatChip(label = "Next 7 days", value = nextWeekAppointmentCount.toString())
+                ProfileStatChip(label = "Calendar items", value = nextCalendarEventCount.toString())
+            }
+            Button(onClick = onOpenCalendar) {
+                Text("Open calendar")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderCalendarSheet(
+    today: LocalDate,
+    currentView: ProviderCalendarView,
+    anchorDate: LocalDate,
+    bookingsByDate: Map<LocalDate, List<ProviderBooking>>,
+    calendarEventsByDate: Map<LocalDate, List<CalendarEvent>>,
+    isSubmittingProviderAction: Boolean,
+    onSelectView: (ProviderCalendarView) -> Unit,
+    onMoveWindow: (Int) -> Unit,
+    onJumpToToday: () -> Unit,
+    onSelectDate: (LocalDate) -> Unit,
+    onOpenBooking: (ProviderBooking) -> Unit,
+    onAddBookingToCalendar: (ProviderBooking) -> Unit,
+    onConfirmBooking: (ProviderBooking) -> Unit,
+    onDeclineBooking: (ProviderBooking) -> Unit,
+    onRescheduleBooking: (ProviderBooking) -> Unit,
+    onMessageBooking: (ProviderBooking) -> Unit,
+    onAddCalendarEvent: (CalendarEvent) -> Unit,
+) {
+    val weekStart = anchorDate.startOfWeek()
+    val windowLabel = when (currentView) {
+        ProviderCalendarView.MONTH -> {
+            val month = anchorDate.withDayOfMonth(1).month.name.lowercase()
+                .replaceFirstChar { char -> if (char.isLowerCase()) char.titlecase() else char.toString() }
+            "$month ${anchorDate.year}"
+        }
+        ProviderCalendarView.WEEK -> "${weekStart} to ${weekStart.plusDays(6)}"
+        ProviderCalendarView.SCHEDULE -> "From $anchorDate"
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Provider calendar", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "Switch views the same way you would in Google Calendar, but keep booking actions close at hand.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) {
+            ProviderCalendarView.values().forEach { view ->
+                FilterChip(
+                    selected = currentView == view,
+                    onClick = { onSelectView(view) },
+                    label = { Text(view.label) },
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(windowLabel, style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { onMoveWindow(-1) }) {
+                    Text("Prev")
+                }
+                TextButton(onClick = onJumpToToday) {
+                    Text("Today")
+                }
+                TextButton(onClick = { onMoveWindow(1) }) {
+                    Text("Next")
+                }
+            }
+        }
+        when (currentView) {
+            ProviderCalendarView.MONTH -> {
+                val monthGrid = buildMonthGrid(anchorDate)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun").forEach { label ->
+                        Text(
+                            label,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    monthGrid.forEach { week ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            week.forEach { date ->
+                                if (date == null) {
+                                    Spacer(modifier = Modifier.weight(1f).height(76.dp))
+                                } else {
+                                    ProviderCalendarMonthDayCell(
+                                        date = date,
+                                        today = today,
+                                        selected = date == anchorDate,
+                                        bookingCount = bookingsByDate[date].orEmpty().size,
+                                        calendarEventCount = calendarEventsByDate[date].orEmpty().size,
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { onSelectDate(date) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                ProviderCalendarDayAgenda(
+                    date = anchorDate,
+                    today = today,
+                    bookings = bookingsByDate[anchorDate].orEmpty(),
+                    calendarEvents = calendarEventsByDate[anchorDate].orEmpty(),
+                    isSubmittingProviderAction = isSubmittingProviderAction,
+                    onOpenBooking = onOpenBooking,
+                    onAddBookingToCalendar = onAddBookingToCalendar,
+                    onConfirmBooking = onConfirmBooking,
+                    onDeclineBooking = onDeclineBooking,
+                    onRescheduleBooking = onRescheduleBooking,
+                    onMessageBooking = onMessageBooking,
+                    onAddCalendarEvent = onAddCalendarEvent,
+                )
+            }
+            ProviderCalendarView.WEEK -> {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    repeat(7) { offset ->
+                        val date = weekStart.plusDays(offset.toLong())
+                        ProviderCalendarDayAgenda(
+                            date = date,
+                            today = today,
+                            bookings = bookingsByDate[date].orEmpty(),
+                            calendarEvents = calendarEventsByDate[date].orEmpty(),
+                            isSubmittingProviderAction = isSubmittingProviderAction,
+                            onOpenBooking = onOpenBooking,
+                            onAddBookingToCalendar = onAddBookingToCalendar,
+                            onConfirmBooking = onConfirmBooking,
+                            onDeclineBooking = onDeclineBooking,
+                            onRescheduleBooking = onRescheduleBooking,
+                            onMessageBooking = onMessageBooking,
+                            onAddCalendarEvent = onAddCalendarEvent,
+                        )
+                    }
+                }
+            }
+            ProviderCalendarView.SCHEDULE -> {
+                val scheduleDays = (0..13)
+                    .map { offset -> anchorDate.plusDays(offset.toLong()) }
+                    .filter { date ->
+                        bookingsByDate[date].orEmpty().isNotEmpty() || calendarEventsByDate[date].orEmpty().isNotEmpty()
+                    }
+                if (scheduleDays.isEmpty()) {
+                    HomeEmptyCard("No provider bookings or calendar items in the next two weeks.")
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        scheduleDays.forEach { date ->
+                            ProviderCalendarDayAgenda(
+                                date = date,
+                                today = today,
+                                bookings = bookingsByDate[date].orEmpty(),
+                                calendarEvents = calendarEventsByDate[date].orEmpty(),
+                                isSubmittingProviderAction = isSubmittingProviderAction,
+                                onOpenBooking = onOpenBooking,
+                                onAddBookingToCalendar = onAddBookingToCalendar,
+                                onConfirmBooking = onConfirmBooking,
+                                onDeclineBooking = onDeclineBooking,
+                                onRescheduleBooking = onRescheduleBooking,
+                                onMessageBooking = onMessageBooking,
+                                onAddCalendarEvent = onAddCalendarEvent,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun ProviderCalendarMonthDayCell(
+    date: LocalDate,
+    today: LocalDate,
+    selected: Boolean,
+    bookingCount: Int,
+    calendarEventCount: Int,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val containerColor = when {
+        selected -> MaterialTheme.colorScheme.primaryContainer
+        date == today -> MaterialTheme.colorScheme.secondaryContainer
+        else -> MaterialTheme.colorScheme.surfaceContainer
+    }
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(76.dp)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(date.dayOfMonth.toString(), style = MaterialTheme.typography.labelLarge)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (bookingCount > 0) {
+                    Text("$bookingCount appt", style = MaterialTheme.typography.labelSmall)
+                }
+                if (calendarEventCount > 0) {
+                    Text("$calendarEventCount item", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderCalendarDayAgenda(
+    date: LocalDate,
+    today: LocalDate,
+    bookings: List<ProviderBooking>,
+    calendarEvents: List<CalendarEvent>,
+    isSubmittingProviderAction: Boolean,
+    onOpenBooking: (ProviderBooking) -> Unit,
+    onAddBookingToCalendar: (ProviderBooking) -> Unit,
+    onConfirmBooking: (ProviderBooking) -> Unit,
+    onDeclineBooking: (ProviderBooking) -> Unit,
+    onRescheduleBooking: (ProviderBooking) -> Unit,
+    onMessageBooking: (ProviderBooking) -> Unit,
+    onAddCalendarEvent: (CalendarEvent) -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(buildProviderScheduleDayLabel(date, today), style = MaterialTheme.typography.titleSmall)
+                val summary = listOfNotNull(
+                    bookings.size.takeIf { count -> count > 0 }?.let { "$it bookings" },
+                    calendarEvents.size.takeIf { count -> count > 0 }?.let { "$it calendar" },
+                ).joinToString(" • ")
+                if (summary.isNotBlank()) {
+                    Text(
+                        summary,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (bookings.isEmpty() && calendarEvents.isEmpty()) {
+                Text(
+                    "Nothing scheduled.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                bookings
+                    .sortedBy { booking -> booking.timeSlot }
+                    .forEach { booking ->
+                        ProviderAppointmentCard(
+                            booking = booking,
+                            today = today,
+                            busy = isSubmittingProviderAction,
+                            onOpenDetails = { onOpenBooking(booking) },
+                            onAddToCalendar = { onAddBookingToCalendar(booking) },
+                            onConfirm = if (booking.status.lowercase() in setOf("requested", "reschedule_requested")) {
+                                { onConfirmBooking(booking) }
+                            } else {
+                                null
+                            },
+                            onDecline = if (booking.status.lowercase() in setOf("requested", "reschedule_requested")) {
+                                { onDeclineBooking(booking) }
+                            } else {
+                                null
+                            },
+                            onReschedule = if (isBookingResolvedStatus(booking.status)) {
+                                null
+                            } else {
+                                { onRescheduleBooking(booking) }
+                            },
+                            onMessage = booking.messageActionOrNull { userId, threadId ->
+                                onMessageBooking(booking.copy(ownerUserId = userId ?: booking.ownerUserId, threadId = threadId))
+                            },
+                        )
+                    }
+                calendarEvents
+                    .sortedWith(compareBy<CalendarEvent> { event -> event.timeSlot.orEmpty() }.thenBy { event -> event.title })
+                    .forEach { event ->
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(event.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                    Text(
+                                        listOfNotNull(event.timeSlot, event.status.toReadableLabel()).joinToString(" • "),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                TextButton(onClick = { onAddCalendarEvent(event) }) {
+                                    Text("Add")
+                                }
+                            }
+                        }
+                    }
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun ProviderAppointmentCard(
+    booking: ProviderBooking,
+    today: LocalDate,
+    busy: Boolean,
+    onOpenDetails: () -> Unit,
+    onAddToCalendar: () -> Unit,
+    onConfirm: (() -> Unit)?,
+    onDecline: (() -> Unit)?,
+    onReschedule: (() -> Unit)?,
+    onMessage: (() -> Unit)?,
+) {
+    val scheduleLabel = booking.scheduleDate()?.let { date ->
+        "${buildProviderScheduleDayLabel(date, today)} • ${booking.timeSlot}"
+    } ?: "${booking.date.toLocalDateString()} • ${booking.timeSlot}"
+    val metadata = buildList {
+        add("Pet ${booking.petName}")
+        booking.ownerUserId
+            .takeIf { value -> value.isNotBlank() }
+            ?.let { ownerId -> add("Owner $ownerId") }
+    }.joinToString(" • ")
+    val canRespond = onConfirm != null && onDecline != null
+    Card(
+        onClick = onOpenDetails,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(booking.serviceName, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                    Text(
+                        scheduleLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        metadata,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                StatusBadge(booking.status)
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
+                if (canRespond) {
+                    Button(
+                        onClick = { onConfirm?.invoke() },
+                        enabled = !busy,
+                    ) {
+                        Text("Confirm")
+                    }
+                    TextButton(
+                        onClick = { onDecline?.invoke() },
+                        enabled = !busy,
+                    ) {
+                        Text("Decline")
+                    }
+                }
+                onReschedule?.let { action ->
+                    TextButton(onClick = action, enabled = !busy) {
+                        Text("Reschedule")
+                    }
+                }
+                TextButton(onClick = onAddToCalendar) {
+                    Text("Calendar")
+                }
+                onMessage?.let { action ->
+                    TextButton(onClick = action) {
+                        Text("Message")
+                    }
+                }
+            }
+        }
     }
 }
 

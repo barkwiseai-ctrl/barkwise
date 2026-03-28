@@ -119,6 +119,8 @@ fun ServicesScreen(
     onViewDetails: (String) -> Unit,
     onLoadAvailability: (providerId: String, date: String) -> Unit,
     onCloseDetails: () -> Unit,
+    providerWorkspaceMode: Boolean = false,
+    onOpenProviderHub: () -> Unit = {},
 ) {
     if (selectedDetails == null) {
         ServicesListPage(
@@ -141,6 +143,8 @@ fun ServicesScreen(
             onFilterChange = onFilterChange,
             onRequestQuote = onRequestQuote,
             onViewDetails = onViewDetails,
+            providerWorkspaceMode = providerWorkspaceMode,
+            onOpenProviderHub = onOpenProviderHub,
         )
     } else {
         ServiceDetailsPage(
@@ -176,6 +180,8 @@ private fun ServicesListPage(
     onFilterChange: (Float?, Int?) -> Unit,
     onRequestQuote: (category: String, preferredWindow: String, petDetails: String, note: String) -> Unit,
     onViewDetails: (String) -> Unit,
+    providerWorkspaceMode: Boolean,
+    onOpenProviderHub: () -> Unit,
 ) {
     val categories = listOf(
         null to "All",
@@ -271,13 +277,13 @@ private fun ServicesListPage(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
-                            "Trusted local listings",
+                            if (providerWorkspaceMode) "Your business listings" else "Trusted local listings",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        recommendationLabel?.let { text ->
+                        recommendationLabel?.takeUnless { providerWorkspaceMode }?.let { text ->
                             Text(
                                 text,
                                 style = MaterialTheme.typography.labelSmall,
@@ -288,7 +294,11 @@ private fun ServicesListPage(
                         }
                         if (providers.isEmpty()) {
                             Text(
-                                "Listings are still loading. You can open quotes now and the latest provider availability will sync in.",
+                                if (providerWorkspaceMode) {
+                                    "No business listings yet. Open Hub to create the first one."
+                                } else {
+                                    "Listings are still loading. You can open quotes now and the latest provider availability will sync in."
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -298,36 +308,42 @@ private fun ServicesListPage(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(ServicesSpaceXs)) {
-                                FilterChip(
-                                    modifier = Modifier.testTag("services_view_mode_list_chip"),
-                                    selected = viewMode == "list",
-                                    onClick = { onChangeViewMode("list") },
-                                    label = { Text("List") },
-                                )
-                                FilterChip(
-                                    modifier = Modifier.testTag("services_view_mode_map_chip"),
-                                    selected = viewMode == "map",
-                                    onClick = { onChangeViewMode("map") },
-                                    label = { Text("Map") },
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                IconButton(
-                                    onClick = {
-                                        quoteCategory = resolveDefaultQuoteCategory(
-                                            selectedCategory = selectedCategory,
-                                            providers = providers,
-                                        )
-                                        showQuoteSheet = true
-                                    },
-                                ) {
-                                    Icon(Icons.Default.RequestQuote, contentDescription = "Request quote to up to 3 providers")
+                            if (providerWorkspaceMode) {
+                                Button(onClick = onOpenProviderHub) {
+                                    Text("Open Hub")
                                 }
-                                IconButton(
-                                    onClick = { showRefineSheet = true },
-                                ) {
-                                    Icon(Icons.Default.Search, contentDescription = "Refine search")
+                            } else {
+                                Row(horizontalArrangement = Arrangement.spacedBy(ServicesSpaceXs)) {
+                                    FilterChip(
+                                        modifier = Modifier.testTag("services_view_mode_list_chip"),
+                                        selected = viewMode == "list",
+                                        onClick = { onChangeViewMode("list") },
+                                        label = { Text("List") },
+                                    )
+                                    FilterChip(
+                                        modifier = Modifier.testTag("services_view_mode_map_chip"),
+                                        selected = viewMode == "map",
+                                        onClick = { onChangeViewMode("map") },
+                                        label = { Text("Map") },
+                                    )
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    IconButton(
+                                        onClick = {
+                                            quoteCategory = resolveDefaultQuoteCategory(
+                                                selectedCategory = selectedCategory,
+                                                providers = providers,
+                                            )
+                                            showQuoteSheet = true
+                                        },
+                                    ) {
+                                        Icon(Icons.Default.RequestQuote, contentDescription = "Request quote to up to 3 providers")
+                                    }
+                                    IconButton(
+                                        onClick = { showRefineSheet = true },
+                                    ) {
+                                        Icon(Icons.Default.Search, contentDescription = "Refine search")
+                                    }
                                 }
                             }
                         }
@@ -336,6 +352,7 @@ private fun ServicesListPage(
             }
 
             item {
+                if (providerWorkspaceMode) return@item
                 if (activeFilterCount > 0 || searchQuery.isNotBlank() || selectedCategory != null) {
                     Text(
                         "Filters applied • Tap search to refine",
@@ -345,7 +362,7 @@ private fun ServicesListPage(
                 }
             }
 
-            if (viewMode == "map") {
+            if (!providerWorkspaceMode && viewMode == "map") {
                 item {
                     ServicesMapPanel(
                         providers = providers,
@@ -369,11 +386,25 @@ private fun ServicesListPage(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(
-                            text = "No listings yet.",
+                        Column(
                             modifier = Modifier.padding(14.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = if (providerWorkspaceMode) "No business listings yet." else "No listings yet.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            if (providerWorkspaceMode) {
+                                Text(
+                                    "Create and manage your customer-facing business listings from Hub.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Button(onClick = onOpenProviderHub) {
+                                    Text("Open Hub")
+                                }
+                            }
+                        }
                     }
                 }
             } else {
@@ -392,7 +423,7 @@ private fun ServicesListPage(
 
     }
 
-    if (showQuoteSheet) {
+    if (!providerWorkspaceMode && showQuoteSheet) {
         ModalBottomSheet(
             onDismissRequest = { showQuoteSheet = false },
             sheetState = quoteSheetState,
@@ -485,7 +516,7 @@ private fun ServicesListPage(
         }
     }
 
-    if (showRefineSheet) {
+    if (!providerWorkspaceMode && showRefineSheet) {
         ModalBottomSheet(
             onDismissRequest = { showRefineSheet = false },
             sheetState = refineSheetState,

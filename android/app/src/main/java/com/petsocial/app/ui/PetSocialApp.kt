@@ -492,12 +492,26 @@ fun PetSocialApp(initialDeepLink: String? = null) {
         var otpCode by rememberSaveable { mutableStateOf("") }
         val canRequestOtp = inviteId.trim().isNotBlank() && email.trim().contains("@") && !authState.inFlight
         val canVerifyOtp = canRequestOtp && otpCode.trim().length >= 4 && authState.otpRequested && !authState.inFlight
+        val authTitle = if (isProviderSurface) "Sign in to BW Provider" else "Sign in to BarkWise"
+        val authDescription = if (BuildConfig.ENVIRONMENT.equals("prod", ignoreCase = true)) {
+            if (isProviderSurface) {
+                "Sign in with your invite ID and email OTP. Use the same invite and email as BarkWise if this is the same account."
+            } else {
+                "Sign in with your invite ID and email OTP. Use the same invite and email in BW Provider if this is the same account."
+            }
+        } else {
+            if (isProviderSurface) {
+                "Closed beta access requires an invite ID and email OTP. Use the same invite and email as BarkWise if this is the same account."
+            } else {
+                "Closed beta access requires an invite ID and email OTP. Use the same invite and email in BW Provider if this is the same account."
+            }
+        }
         AlertDialog(
             onDismissRequest = {},
-            title = { Text("Sign in to BarkWise") },
+            title = { Text(authTitle) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (BuildConfig.ENVIRONMENT.equals("prod", ignoreCase = true)) "Sign in with your invite ID and email OTP." else "Closed beta access requires an invite ID and email OTP.")
+                    Text(authDescription)
                     OutlinedTextField(
                         value = inviteId,
                         onValueChange = { inviteId = it },
@@ -663,8 +677,17 @@ fun PetSocialApp(initialDeepLink: String? = null) {
 private fun ServicesTabRoute(vm: PetSocialViewModel) {
     DebugRecomposeCounter(tag = "ServicesTabRoute")
     val state by vm.servicesUiState.collectAsStateWithLifecycle()
+    val shellState by vm.shellUiState.collectAsStateWithLifecycle()
+    val isProviderSurface = BuildConfig.APP_SURFACE.equals("provider", ignoreCase = true)
+    val visibleProviders = remember(state.providers, shellState.activeUserId, isProviderSurface) {
+        if (isProviderSurface) {
+            state.providers.filter { provider -> provider.ownerUserId == shellState.activeUserId }
+        } else {
+            state.providers
+        }
+    }
     ServicesScreen(
-        providers = state.providers,
+        providers = visibleProviders,
         nearbyPetBusinesses = state.nearbyPetBusinesses,
         groomerPetRosters = state.groomerPetRosters,
         recommendationSuburb = state.recommendationSuburb,
@@ -689,6 +712,8 @@ private fun ServicesTabRoute(vm: PetSocialViewModel) {
         onViewDetails = vm::loadProviderDetails,
         onLoadAvailability = vm::loadAvailability,
         onCloseDetails = vm::closeProviderDetails,
+        providerWorkspaceMode = isProviderSurface,
+        onOpenProviderHub = { vm.switchTab(AppTab.Profile) },
     )
 }
 
@@ -701,6 +726,7 @@ private fun BarkAiTabRoute(vm: PetSocialViewModel) {
         chatResponse = state.chatResponse,
         conversation = state.conversation,
         streamingAssistantText = state.streamingAssistantText,
+        error = state.error,
         profileSuggestion = state.profileSuggestion,
         a2uiProfileCard = state.a2uiProfileCard,
         a2uiProviderCard = state.a2uiProviderCard,

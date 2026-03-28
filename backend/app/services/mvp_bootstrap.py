@@ -32,6 +32,19 @@ class SeededReviewRecord:
 
 
 @dataclass(frozen=True)
+class SeededBookingRecord:
+    id: str
+    owner_user_id: str
+    provider_id: str
+    pet_name: str
+    time_slot: str
+    status: str
+    date_offset_days: int
+    created_offset_days: int
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class SeededGroupRecord:
     id: str
     name: str
@@ -156,6 +169,21 @@ def seeded_providers() -> tuple[SeededProviderRecord, ...]:
             review_count=1,
             image_urls=default_images,
         ),
+        SeededProviderRecord(
+            id="svc_6",
+            owner_user_id="user_2",
+            name="Snowy Studio Calendar Care",
+            category="grooming",
+            suburb="Newtown",
+            description="Quiet appointment-led grooming blocks for provider calendar testing.",
+            full_description="Quiet appointment-led grooming blocks with predictable timing, tidy handover notes, and enough spread across the month to exercise provider scheduling views.",
+            price_from=58,
+            latitude=-33.8971,
+            longitude=151.1768,
+            rating=4.8,
+            review_count=2,
+            image_urls=default_images,
+        ),
     )
 
 
@@ -170,6 +198,90 @@ def seeded_reviews() -> tuple[SeededReviewRecord, ...]:
         SeededReviewRecord("r_7", "svc_3", "Jamie", 4, "Lovely result and patient with our older dog."),
         SeededReviewRecord("r_8", "svc_4", "Harper", 5, "Quick tidy-up and friendly check-in."),
         SeededReviewRecord("r_9", "svc_5", "Drew", 4, "Dependable walking service."),
+        SeededReviewRecord("r_10", "svc_6", "Sky", 5, "Very calm sessions and excellent timing."),
+        SeededReviewRecord("r_11", "svc_6", "Bailey", 4, "Easy to coordinate and great notes afterward."),
+    )
+
+
+def seeded_bookings() -> tuple[SeededBookingRecord, ...]:
+    return (
+        SeededBookingRecord(
+            id="bk_seed_1",
+            owner_user_id="user_1",
+            provider_id="svc_6",
+            pet_name="Luna",
+            time_slot="09:00",
+            status="requested",
+            date_offset_days=1,
+            created_offset_days=-1,
+            note="First tidy-up of the month. Please keep it low noise.",
+        ),
+        SeededBookingRecord(
+            id="bk_seed_2",
+            owner_user_id="user_3",
+            provider_id="svc_6",
+            pet_name="Poppy",
+            time_slot="11:00",
+            status="provider_confirmed",
+            date_offset_days=4,
+            created_offset_days=-2,
+            note="Bath and de-shed. Owner requests text update at pickup.",
+        ),
+        SeededBookingRecord(
+            id="bk_seed_3",
+            owner_user_id="user_4",
+            provider_id="svc_6",
+            pet_name="Maple",
+            time_slot="14:00",
+            status="provider_confirmed",
+            date_offset_days=8,
+            created_offset_days=-3,
+            note="Senior dog, shorter standing blocks please.",
+        ),
+        SeededBookingRecord(
+            id="bk_seed_4",
+            owner_user_id="user_1",
+            provider_id="svc_6",
+            pet_name="Scout",
+            time_slot="16:00",
+            status="reschedule_requested",
+            date_offset_days=12,
+            created_offset_days=-4,
+            note="Owner asked to shift later if possible.",
+        ),
+        SeededBookingRecord(
+            id="bk_seed_5",
+            owner_user_id="user_3",
+            provider_id="svc_6",
+            pet_name="Milo",
+            time_slot="09:00",
+            status="provider_confirmed",
+            date_offset_days=17,
+            created_offset_days=-5,
+            note="Sensitive skin wash package.",
+        ),
+        SeededBookingRecord(
+            id="bk_seed_6",
+            owner_user_id="user_4",
+            provider_id="svc_6",
+            pet_name="Nala",
+            time_slot="11:00",
+            status="provider_confirmed",
+            date_offset_days=23,
+            created_offset_days=-6,
+            note="Full groom before travel.",
+        ),
+        SeededBookingRecord(
+            id="bk_seed_7",
+            owner_user_id="user_1",
+            provider_id="svc_6",
+            pet_name="Tilly",
+            time_slot="14:00",
+            status="provider_confirmed",
+            date_offset_days=29,
+            created_offset_days=-7,
+            note="Month-end follow-up trim.",
+        ),
     )
 
 

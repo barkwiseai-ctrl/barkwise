@@ -39,6 +39,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeParseException
+import kotlin.math.max
 import kotlin.random.Random
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
@@ -59,6 +60,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
+
+private const val STREAMING_UI_FLUSH_INTERVAL_MS = 75L
 
 enum class AppTab {
     Services,
@@ -608,6 +611,7 @@ data class BarkAiTabUiState(
     val chatResponse: ChatResponse? = null,
     val conversation: List<ChatTurn> = emptyList(),
     val streamingAssistantText: String = "",
+    val error: String? = null,
     val profileSuggestion: PetProfileSuggestion? = null,
     val a2uiProfileCard: A2uiCardState? = null,
     val a2uiProviderCard: A2uiCardState? = null,
@@ -765,13 +769,14 @@ private fun UiState.toBarkAiTabUiState(): BarkAiTabUiState = BarkAiTabUiState(
     chatResponse = chat,
     conversation = conversation,
     streamingAssistantText = streamingAssistantText,
+    error = error,
     profileSuggestion = profileSuggestion,
     a2uiProfileCard = a2uiProfileCard,
     a2uiProviderCard = a2uiProviderCard,
     barkThreads = barkThreads,
     selectedBarkThreadId = selectedBarkThreadId,
-    onboardingMode = onboardingActive,
-    onboardingNeedsPhoto = onboardingActive && onboardingStep >= 2 && !onboardingPhotoCaptured,
+    onboardingMode = false,
+    onboardingNeedsPhoto = false,
 )
 
 private fun UiState.toCommunityTabUiState(): CommunityTabUiState = CommunityTabUiState(
@@ -1004,6 +1009,7 @@ class PetSocialViewModel(
         val persistedUserId = repository.activeUserId()
         val persistedTestProfileMode = normalizeTestProfileMode(repository.testProfileMode())
         val persistedProfileHeaderVisible = repository.isTestProfileHeaderVisible()
+        val persistedConversation = repository.loadBarkAiConversation(persistedUserId)
         _uiState.value = _uiState.value.copy(
             activeUserId = persistedUserId,
             testProfileMode = persistedTestProfileMode,
@@ -1012,6 +1018,13 @@ class PetSocialViewModel(
             canLoadProviderInbox = IS_PROVIDER_OS_SURFACE || _uiState.value.canLoadProviderInbox,
             isCommunityModerator = persistedUserId in COMMUNITY_MODERATOR_IDS,
             authRequired = false,
+            conversation = persistedConversation,
+            barkThreads = barkAiThreadsForConversation(persistedConversation),
+            chat = null,
+            profileSuggestion = null,
+            a2uiProfileCard = null,
+            a2uiProviderCard = null,
+            streamingAssistantText = "",
         )
         repository.setActiveUser(persistedUserId)
         applyTestProfileMode(
@@ -1020,7 +1033,6 @@ class PetSocialViewModel(
             triggerHomeReload = false,
             showToast = false,
         )
-        initializeOnboardingFlowIfNeeded()
         refreshMockCommunityWeather()
         startMockWeatherTicker()
         startMessageRefreshTicker()
@@ -1038,6 +1050,7 @@ class PetSocialViewModel(
             runCatching { repository.tryTrustedDeviceLogin() }
                 .onSuccess { response ->
                     repository.setActiveUser(response.userId)
+                    val persistedConversation = repository.loadBarkAiConversation(response.userId)
                     _uiState.value = _uiState.value.copy(
                         activeUserId = response.userId,
                         authRequired = false,
@@ -1047,6 +1060,13 @@ class PetSocialViewModel(
                         authOtpExpiresAt = null,
                         authInFlight = false,
                         isCommunityModerator = response.userId in COMMUNITY_MODERATOR_IDS,
+                        conversation = persistedConversation,
+                        barkThreads = barkAiThreadsForConversation(persistedConversation),
+                        chat = null,
+                        profileSuggestion = null,
+                        a2uiProfileCard = null,
+                        a2uiProviderCard = null,
+                        streamingAssistantText = "",
                     )
                     loadHomeData(_uiState.value.selectedCategory, allowAuthRetry = false)
                 }
@@ -1983,6 +2003,7 @@ class PetSocialViewModel(
                     durationMs = elapsedMs(startedAtNs).toInt(),
                 )
                 repository.setActiveUser(response.userId)
+                val persistedConversation = repository.loadBarkAiConversation(response.userId)
                 _uiState.value = _uiState.value.withNavigation { copy(selectedMessageThreadId = null) }.copy(
                     activeUserId = response.userId,
                     providerModeEnabled = IS_PROVIDER_OS_SURFACE,
@@ -2002,6 +2023,13 @@ class PetSocialViewModel(
                     readLocalNotificationIds = emptySet(),
                     acknowledgedCommunityNotificationIds = emptySet(),
                     acknowledgedMessageNotificationIds = emptySet(),
+                    conversation = persistedConversation,
+                    barkThreads = barkAiThreadsForConversation(persistedConversation),
+                    chat = null,
+                    profileSuggestion = null,
+                    a2uiProfileCard = null,
+                    a2uiProviderCard = null,
+                    streamingAssistantText = "",
                     notifyFollowedGroupAlerts = true,
                     notifySavedPostUpdates = true,
                     notifySafetyAlerts = true,
@@ -2089,6 +2117,7 @@ class PetSocialViewModel(
                     durationMs = elapsedMs(startedAtNs).toInt(),
                 )
                 repository.setActiveUser(response.userId)
+                val persistedConversation = repository.loadBarkAiConversation(response.userId)
                 _uiState.value = _uiState.value.withNavigation {
                     copy(
                         pendingInvite = null,
@@ -2100,6 +2129,13 @@ class PetSocialViewModel(
                     hasProviderListings = false,
                     canLoadProviderInbox = IS_PROVIDER_OS_SURFACE,
                     selectedSuburb = invite.suburb,
+                    conversation = persistedConversation,
+                    barkThreads = barkAiThreadsForConversation(persistedConversation),
+                    chat = null,
+                    profileSuggestion = null,
+                    a2uiProfileCard = null,
+                    a2uiProviderCard = null,
+                    streamingAssistantText = "",
                     loading = false,
                     toastMessage = "Joined ${invite.groupName} as ${response.userId}",
                 )
@@ -2408,6 +2444,7 @@ class PetSocialViewModel(
         viewModelScope.launch {
             val authOk = repository.authenticateAsUser(userId)
             repository.setActiveUser(userId)
+            val persistedConversation = repository.loadBarkAiConversation(userId)
             val persistedTestProfileMode = normalizeTestProfileMode(repository.testProfileMode())
             val persistedProfileHeaderVisible = repository.isTestProfileHeaderVisible()
             val (providerModeEnabled, hasProviderListings, canLoadProviderInbox) = clearedProviderState(
@@ -2448,6 +2485,13 @@ class PetSocialViewModel(
                 followedGroupIds = emptySet(),
                 friendProfiles = emptyList(),
                 isCommunityModerator = userId in COMMUNITY_MODERATOR_IDS,
+                conversation = persistedConversation,
+                barkThreads = barkAiThreadsForConversation(persistedConversation),
+                chat = null,
+                profileSuggestion = null,
+                a2uiProfileCard = null,
+                a2uiProviderCard = null,
+                streamingAssistantText = "",
                 toastMessage = if (authOk) "Switched to $userId" else "Switched to $userId (guest auth)",
             )
             applyTestProfileMode(
@@ -3298,56 +3342,91 @@ class PetSocialViewModel(
     fun sendChat(message: String) {
         val trimmedMessage = message.trim()
         if (trimmedMessage.isBlank()) return
-        if (isOnboardingScriptEnabled() && _uiState.value.onboardingActive) {
-            handleOnboardingTextReply(trimmedMessage)
-            return
-        }
-        if (tryHandleLocalServicesIntent(trimmedMessage)) return
         val state = _uiState.value
-        val suburb = state.selectedSuburb
-        val selectedThreadId = state.selectedBarkThreadId
-        val activeThread = state.barkThreads.firstOrNull { it.id == selectedThreadId } ?: state.barkThreads.first()
-        val nextConversation = activeThread.conversation + ChatTurn(role = "user", content = trimmedMessage)
-        val nextThread = activeThread.copy(
-            title = resolveBarkThreadTitle(activeThread.title, nextConversation),
-            conversation = nextConversation,
-            updatedAt = System.currentTimeMillis(),
-        )
-        val nextThreads = upsertBarkThread(state.barkThreads, nextThread)
+        val nextConversation = state.conversation + ChatTurn(role = "user", content = trimmedMessage)
+        repository.saveBarkAiConversation(nextConversation)
         viewModelScope.launch {
+            val streamingBuffer = StringBuilder()
+            var lastStreamingFlushAt = 0L
+
+            fun flushStreamingText(force: Boolean = false) {
+                val now = System.currentTimeMillis()
+                if (!force && now - lastStreamingFlushAt < STREAMING_UI_FLUSH_INTERVAL_MS) {
+                    return
+                }
+                val nextText = streamingBuffer.toString()
+                if (_uiState.value.streamingAssistantText == nextText) {
+                    lastStreamingFlushAt = max(lastStreamingFlushAt, now)
+                    return
+                }
+                lastStreamingFlushAt = now
+                _uiState.value = _uiState.value.copy(streamingAssistantText = nextText)
+            }
+
             _uiState.value = _uiState.value.withNavigation {
                 copy(
                     selectedTab = AppTab.BarkAI,
-                    selectedBarkThreadId = nextThread.id,
+                    selectedBarkThreadId = "bark_thread_1",
                 )
             }.copy(
                 loading = true,
                 error = null,
                 streamingAssistantText = "",
-                barkThreads = nextThreads,
+                chat = null,
+                profileSuggestion = null,
+                a2uiProfileCard = null,
+                a2uiProviderCard = null,
+                barkThreads = barkAiThreadsForConversation(nextConversation),
                 conversation = nextConversation,
             )
             runCatching {
                 repository.streamChat(
-                    message = trimmedMessage,
-                    suburb = suburb,
+                    messages = nextConversation,
                     onDelta = { delta ->
-                        _uiState.value = _uiState.value.copy(
-                            streamingAssistantText = _uiState.value.streamingAssistantText + delta,
-                        )
+                        streamingBuffer.append(delta)
+                        flushStreamingText()
                     },
                 )
-            }.onSuccess { applyChatResponse(it) }
-                .onFailure { error ->
-                    applyChatResponse(
-                        buildFallbackChatResponse(
-                            userMessage = trimmedMessage,
-                            priorConversation = nextConversation,
-                        ),
-                        toast = "BarkAI network issue: using offline guidance",
-                    )
-                    _uiState.value = _uiState.value.copy(error = null)
-                }
+            }.onSuccess { response ->
+                flushStreamingText(force = true)
+                val assistantText = response.message?.content?.trim()
+                    ?.ifBlank { null }
+                    ?: response.answer.trim().ifBlank { null }
+                    ?: error("BarkAI returned an empty response")
+                val updatedConversation = nextConversation + ChatTurn(
+                    role = response.message?.role ?: "assistant",
+                    content = assistantText,
+                )
+                repository.saveBarkAiConversation(updatedConversation)
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    error = null,
+                    streamingAssistantText = "",
+                    conversation = updatedConversation,
+                    chat = response,
+                    barkThreads = barkAiThreadsForConversation(updatedConversation, chat = response),
+                    profileSuggestion = null,
+                    a2uiProfileCard = null,
+                    a2uiProviderCard = null,
+                )
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    error = error.message ?: "BarkAI could not reply. Please retry.",
+                    streamingAssistantText = "",
+                    conversation = nextConversation,
+                    chat = null,
+                    barkThreads = barkAiThreadsForConversation(nextConversation),
+                    profileSuggestion = null,
+                    a2uiProfileCard = null,
+                    a2uiProviderCard = null,
+                )
+                Log.w(
+                    "BarkAI",
+                    "Chat request failed",
+                    error,
+                )
+            }
         }
     }
 
@@ -3413,7 +3492,7 @@ class PetSocialViewModel(
             loading = false,
             streamingAssistantText = "",
             error = null,
-            toastMessage = "You're all set. Home is on the far right if you want to review or edit your profile.",
+            toastMessage = "You're all set. Home is on the far left if you want to review or edit your profile.",
         )
         repository.setTestProfileMode(TEST_PROFILE_MODE_READY)
         _uiState.value = _uiState.value.copy(testProfileMode = TEST_PROFILE_MODE_READY)
@@ -5200,6 +5279,19 @@ private fun mergeProfileInfoFromAiResponse(profile: ProfileInfo, response: ChatR
     }
     return next
 }
+
+private fun barkAiThreadsForConversation(
+    conversation: List<ChatTurn>,
+    chat: ChatResponse? = null,
+): List<BarkThread> = listOf(
+    BarkThread(
+        id = "bark_thread_1",
+        title = "BarkAI",
+        conversation = conversation,
+        chat = chat,
+        updatedAt = System.currentTimeMillis(),
+    ),
+)
 
 private fun upsertBarkThread(threads: List<BarkThread>, updated: BarkThread): List<BarkThread> {
     val filtered = threads.filterNot { it.id == updated.id }

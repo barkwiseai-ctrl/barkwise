@@ -67,6 +67,7 @@ fun ChatScreen(
     chatResponse: ChatResponse?,
     conversation: List<ChatTurn>,
     streamingAssistantText: String,
+    error: String?,
     profileSuggestion: PetProfileSuggestion?,
     a2uiProfileCard: A2uiCardState?,
     a2uiProviderCard: A2uiCardState?,
@@ -84,42 +85,11 @@ fun ChatScreen(
 ) {
     var input by rememberSaveable { mutableStateOf("") }
     var inputFocused by rememberSaveable { mutableStateOf(false) }
-    var showThreadMenu by rememberSaveable { mutableStateOf(false) }
-    val context = LocalContext.current
-    var launchCameraAfterPermission by rememberSaveable { mutableStateOf(false) }
     val conversationListState = rememberLazyListState()
     val isShowingStreaming = loading && streamingAssistantText.isNotBlank()
-    val hasQuickActions = chatResponse?.ctaChips?.isNotEmpty() == true
-    val hasProfileCard = ((a2uiProfileCard?.fields?.isNotEmpty() == true) || profileSuggestion != null)
-    val hasProviderCard = a2uiProviderCard != null
-    val hasCameraPermission = remember(context) {
-        ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-    }
-    val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview(),
-    ) { bitmap ->
-        val capturedPhotoUri = bitmap?.let { captured ->
-            persistOnboardingDogPhoto(context = context, bitmap = captured)
-        }
-        onOnboardingPhotoCaptured(capturedPhotoUri != null, capturedPhotoUri)
-    }
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted && launchCameraAfterPermission) {
-            launchCameraAfterPermission = false
-            runCatching { cameraLauncher.launch(null) }
-                .onFailure { onOnboardingPhotoCaptured(false, null) }
-        } else if (!granted) {
-            launchCameraAfterPermission = false
-            onOnboardingPhotoCaptured(false, null)
-        }
-    }
     val listCount = conversation.size +
         (if (isShowingStreaming) 1 else 0) +
-        (if (hasProviderCard) 1 else 0) +
-        (if (hasProfileCard) 1 else 0) +
-        (if (hasQuickActions) 1 else 0) +
+        (if (!error.isNullOrBlank()) 1 else 0) +
         (if (conversation.isEmpty() && !loading) 1 else 0)
     val composerEnabled = resolveBarkAiComposerEnabled(
         loading = loading,
@@ -128,12 +98,7 @@ fun ChatScreen(
 
     LaunchedEffect(
         listCount,
-        streamingAssistantText,
-        chatResponse?.answer,
-        chatResponse?.ctaChips?.size,
-        a2uiProfileCard,
-        a2uiProviderCard,
-        profileSuggestion,
+        error,
     ) {
         if (listCount > 0) {
             conversationListState.scrollToItem(listCount - 1)
@@ -146,61 +111,6 @@ fun ChatScreen(
             .navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (!onboardingMode) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(modifier = Modifier.weight(1f)) {
-                    Button(
-                        onClick = { showThreadMenu = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .widthIn(max = 320.dp),
-                    ) {
-                        Text(
-                            barkThreads.firstOrNull { it.id == selectedBarkThreadId }?.title ?: "Select thread",
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                        Icon(
-                            imageVector = Icons.Default.ArrowDropDown,
-                            contentDescription = "Show older threads",
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = showThreadMenu,
-                        onDismissRequest = { showThreadMenu = false },
-                    ) {
-                        barkThreads.forEach { thread ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (thread.id == selectedBarkThreadId) "Current: ${thread.title}" else thread.title,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                onClick = {
-                                    showThreadMenu = false
-                                    onSelectBarkThread(thread.id)
-                                },
-                            )
-                        }
-                    }
-                }
-                FilledIconButton(onClick = onNewBarkThread) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Start new BarkAI thread",
-                    )
-                }
-            }
-        }
-
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -223,7 +133,7 @@ fun ChatScreen(
                 if (conversation.isEmpty() && !loading) {
                     item {
                         Text(
-                            text = "Ask BarkAI anything about your dog, local services, or community plans.",
+                            text = "Start a conversation with BarkAI.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
@@ -244,60 +154,20 @@ fun ChatScreen(
                         MessageBubble(ChatTurn(role = "assistant", content = streamingAssistantText))
                     }
                 }
-                a2uiProviderCard?.let { providerCard ->
+                if (!error.isNullOrBlank()) {
                     item {
-                        A2uiCard(
-                            title = providerCard.title,
-                            fields = providerCard.fields,
-                            actionLabel = "Submit Provider Listing",
-                            onAction = onSubmitProvider,
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.errorContainer,
+                                    RoundedCornerShape(12.dp),
+                                )
+                                .padding(12.dp),
                         )
-                    }
-                }
-                val profileCardSource = a2uiProfileCard?.fields?.takeIf { it.isNotEmpty() } ?: profileSuggestion?.let {
-                    buildMap {
-                        it.petName?.let { value -> put("pet_name", value) }
-                        it.petType?.let { value -> put("pet_type", value) }
-                        it.breed?.let { value -> put("breed", value) }
-                        it.ageYears?.let { value -> put("age_years", value.toString()) }
-                        it.weightKg?.let { value -> put("weight_kg", value.toString()) }
-                        it.suburb?.let { value -> put("suburb", value) }
-                        if (it.concerns.isNotEmpty()) put("concerns", it.concerns.joinToString(", "))
-                    }
-                }
-                if (profileCardSource != null && profileCardSource.isNotEmpty()) {
-                    item {
-                        A2uiCard(
-                            title = a2uiProfileCard?.title ?: "Suggested Pet Profile",
-                            fields = profileCardSource,
-                            actionLabel = "Accept Profile",
-                            onAction = onAcceptProfile,
-                        )
-                    }
-                }
-                chatResponse?.let { response ->
-                    if (response.ctaChips.isNotEmpty()) {
-                        item {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Quick actions", style = MaterialTheme.typography.labelLarge)
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()),
-                                ) {
-                                    response.ctaChips.forEach { cta ->
-                                        AssistChip(
-                                            onClick = { onCtaClick(cta) },
-                                            label = {
-                                                Text(
-                                                    if (cta.action == "new_bark_thread") "New Thread" else cta.label,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                )
-                                            },
-                                        )
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -324,29 +194,8 @@ fun ChatScreen(
                     minLines = 1,
                     maxLines = if (inputFocused) 4 else 1,
                 )
-                if (onboardingMode && onboardingNeedsPhoto) {
-                    Button(
-                        enabled = composerEnabled,
-                        onClick = {
-                            val permissionGranted = ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.CAMERA,
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (permissionGranted || hasCameraPermission) {
-                                runCatching { cameraLauncher.launch(null) }
-                                    .onFailure { onOnboardingPhotoCaptured(false, null) }
-                            } else {
-                                launchCameraAfterPermission = true
-                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                            }
-                        },
-                        modifier = Modifier.width(92.dp),
-                    ) {
-                        Text("Camera", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
                 Button(
-                    enabled = composerEnabled,
+                    enabled = composerEnabled && input.isNotBlank(),
                     onClick = {
                         onSend(input)
                         input = ""
@@ -370,11 +219,6 @@ private fun MessageBubble(turn: ChatTurn) {
     val isUser = turn.role == "user"
     val bg = if (isUser) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceContainer
     val align = if (isUser) Arrangement.End else Arrangement.Start
-    val visibleBadges = turn.answerBadges.filterNot { badge ->
-        badge.equals("onboarding_script", ignoreCase = true) ||
-            badge.contains("onboarding script", ignoreCase = true) ||
-            badge.contains("onboard script", ignoreCase = true)
-    }
 
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = align) {
         Column(
@@ -388,34 +232,6 @@ private fun MessageBubble(turn: ChatTurn) {
                 text = turn.content,
                 style = MaterialTheme.typography.bodyMedium,
             )
-            if (!isUser && visibleBadges.isNotEmpty()) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()),
-                ) {
-                    visibleBadges.forEach { badge ->
-                        AssistChip(onClick = {}, label = { Text(badge) })
-                    }
-                }
-            }
-            if (!isUser && turn.citations.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Sources",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    turn.citations.take(3).forEachIndexed { index, citation ->
-                        val authority = citation.source.ifBlank { "BarkWise" }
-                        val url = citation.url?.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty()
-                        Text(
-                            text = "${index + 1}. ${citation.title} ($authority)$url",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
         }
     }
 }
