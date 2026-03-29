@@ -15,6 +15,7 @@ from app.models import (
     GroupChallenge,
     GroupJoinRecord,
 )
+from app.serialization import dump_json
 
 
 class CommunityStore:
@@ -59,7 +60,7 @@ class CommunityStore:
         return payload if isinstance(payload, dict) else None
 
     def save_state(self, payload: dict[str, Any]) -> None:
-        encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
+        encoded = dump_json(payload, ensure_ascii=True)
         with self._lock:
             with self._connect() as conn:
                 conn.execute(

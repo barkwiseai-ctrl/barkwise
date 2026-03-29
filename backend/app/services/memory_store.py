@@ -7,6 +7,8 @@ from threading import Lock, local
 from time import perf_counter
 from typing import Any, Dict, List, Tuple
 
+from app.serialization import dump_json
+
 logger = logging.getLogger(__name__)
 
 
@@ -129,10 +131,10 @@ class MemoryStore:
                     """,
                     (
                         user_id,
-                        json.dumps(profile_memory),
+                        dump_json(profile_memory),
                         1 if profile_accepted else 0,
-                        json.dumps(field_locks),
-                        json.dumps(provider_state),
+                        dump_json(field_locks),
+                        dump_json(provider_state),
                     ),
                 )
                 conn.commit()

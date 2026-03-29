@@ -2,13 +2,14 @@ import importlib
 import os
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from app.services.community_store import CommunityStore
 from app.services.memory_store import MemoryStore
 from app.services.rate_limiting import SlidingWindowHitStore, read_positive_int_env
 
@@ -65,6 +66,65 @@ def test_memory_store_handles_invalid_json_state(tmp_path):
     assert state["field_locks"] == {}
     assert state["provider_state"] == {}
     assert state["profile_accepted"] is True
+
+
+def test_memory_store_serializes_jsonable_state(tmp_path):
+    db_path = tmp_path / "memory-jsonable.sqlite3"
+    store = MemoryStore(db_path=str(db_path))
+    created_at = datetime(2026, 3, 29, 9, 30, tzinfo=timezone.utc)
+
+    store.save_user_state(
+        "u_jsonable",
+        profile_memory={
+            "last_seen_at": created_at,
+            "traits": {"friendly", "curious"},
+        },
+        profile_accepted=True,
+        field_locks={"profile_complete": True},
+        provider_state={
+            "draft_steps": ("intro", "photos"),
+        },
+    )
+
+    state = store.load_user_state("u_jsonable")
+    assert state["profile_accepted"] is True
+    assert state["profile_memory"]["last_seen_at"] == "2026-03-29T09:30:00Z"
+    assert set(state["profile_memory"]["traits"]) == {"friendly", "curious"}
+    assert state["provider_state"]["draft_steps"] == ["intro", "photos"]
+
+
+def test_community_store_serializes_jsonable_snapshot_payload(tmp_path):
+    db_path = tmp_path / "community.sqlite3"
+    store = CommunityStore(db_path=str(db_path))
+    created_at = datetime(2026, 3, 29, 10, 45, tzinfo=timezone.utc)
+
+    store.save_state(
+        {
+            "community_analytics_events": [
+                {
+                    "event": "activation_qr_scan_attempted",
+                    "metadata": {
+                        "created_at": created_at,
+                        "tags": {"scan", "camera"},
+                    },
+                }
+            ],
+            "community_diagnostic_events": [
+                {
+                    "message": "activation_qr_scan_failed",
+                    "context": {
+                        "steps": ("camera", "permission"),
+                    },
+                }
+            ],
+        }
+    )
+
+    payload = store.load_state()
+    assert payload is not None
+    assert payload["community_analytics_events"][0]["metadata"]["created_at"] == "2026-03-29T10:45:00Z"
+    assert set(payload["community_analytics_events"][0]["metadata"]["tags"]) == {"scan", "camera"}
+    assert payload["community_diagnostic_events"][0]["context"]["steps"] == ["camera", "permission"]
 
 
 def test_auth_login_rate_limit_env_invalid_falls_back(monkeypatch):
