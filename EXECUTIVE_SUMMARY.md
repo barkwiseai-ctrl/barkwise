@@ -1,6 +1,6 @@
 # Executive Summary
 
-Last updated: 2026-03-25
+Last updated: 2026-03-28
 
 Primary launch plan: [MVP_PLAY_BETA_LAUNCH_PLAN.md](/Users/yingxu/public-repos/pet-social-app/MVP_PLAY_BETA_LAUNCH_PLAN.md)
 
@@ -64,3 +64,6 @@ Completed major features:
 - Trusted-device authentication and dual-phone MVP bootstrap flow, including OTP-linked trusted device registration, `/auth/device/login` and `/auth/device/reset` endpoints, and Android auth-session seeding scripts for owner/provider installs.
 - BarkWiseAI canine symptom triage hardening with taxonomy-backed symptom detection, conservative monitor/urgent/emergency severity classification, immediate-steps response formatting, and provider-mode toggle tooling.
 - Android deterministic state-resolution layer for onboarding completion, notification/deep-link routing, provider inbox visibility, and exact booking/quote open flows, reinforced by new unit and Compose regression test suites.
+- Provider workspace scheduling suite in Android profile/workspace surfaces, including appointment overview cards, day/week schedule views, booking actions (confirm/decline/reschedule), and calendar handoff for provider bookings.
+- Transcript-based BarkAI chat contract across backend and Android, including multi-turn `messages` payload support, streaming/non-streaming response alignment, and readiness/status wiring for the simplified chat service.
+- Simplified BarkAI service architecture with a single OpenAI-backed chat path replacing orchestration/RAG branching, while preserving legacy profile-accept/provider-submit actions and adding focused API/SSE regression coverage.
