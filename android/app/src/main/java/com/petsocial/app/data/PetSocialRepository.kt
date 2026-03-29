@@ -7,6 +7,7 @@ import com.petsocial.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -1396,13 +1397,25 @@ class PetSocialRepository(
         val calendarSlice = HomeCalendarCacheSlice(
             calendarEvents = snapshot.calendarEvents,
         )
+        val sessionSlice = HomeSessionCacheSlice(
+            providerInboxItems = snapshot.providerInboxItems,
+            messageThreads = snapshot.messageThreads,
+            selectedMessageThreadId = snapshot.selectedMessageThreadId,
+            selectedThreadMessages = snapshot.selectedThreadMessages,
+            notifications = snapshot.notifications,
+            profileInfo = snapshot.profileInfo,
+            blockedUserIds = snapshot.blockedUserIds,
+            moderationReports = snapshot.moderationReports,
+        )
         val encodedDiscovery = runCatching { json.encodeToString(discoverySlice) }.getOrNull() ?: return
         val encodedBookings = runCatching { json.encodeToString(bookingsSlice) }.getOrNull() ?: return
         val encodedCalendar = runCatching { json.encodeToString(calendarSlice) }.getOrNull() ?: return
+        val encodedSession = runCatching { json.encodeToString(sessionSlice) }.getOrNull() ?: return
         cachePrefs.edit()
             .putString(cacheKeyForUser(userId, HOME_CACHE_DISCOVERY_SUFFIX), encodedDiscovery)
             .putString(cacheKeyForUser(userId, HOME_CACHE_BOOKINGS_SUFFIX), encodedBookings)
             .putString(cacheKeyForUser(userId, HOME_CACHE_CALENDAR_SUFFIX), encodedCalendar)
+            .putString(cacheKeyForUser(userId, HOME_CACHE_SESSION_SUFFIX), encodedSession)
             .remove(legacyHomeCacheKeyForUser(userId))
             .apply()
     }
@@ -1414,6 +1427,9 @@ class PetSocialRepository(
             ?.let { raw -> runCatching { json.decodeFromString<HomeBookingsCacheSlice>(raw) }.getOrNull() }
         val calendar = cachePrefs.getString(cacheKeyForUser(userId, HOME_CACHE_CALENDAR_SUFFIX), null)
             ?.let { raw -> runCatching { json.decodeFromString<HomeCalendarCacheSlice>(raw) }.getOrNull() }
+        val session = cachePrefs.getString(cacheKeyForUser(userId, HOME_CACHE_SESSION_SUFFIX), null)
+            ?.let { raw -> runCatching { json.decodeFromString<HomeSessionCacheSlice>(raw) }.getOrNull() }
+            ?: HomeSessionCacheSlice()
         if (discovery != null && bookings != null && calendar != null) {
             return HomeCacheSnapshot(
                 providers = discovery.providers,
@@ -1425,6 +1441,14 @@ class PetSocialRepository(
                 ownerBookings = bookings.ownerBookings,
                 providerBookings = bookings.providerBookings,
                 calendarEvents = calendar.calendarEvents,
+                providerInboxItems = session.providerInboxItems,
+                messageThreads = session.messageThreads,
+                selectedMessageThreadId = session.selectedMessageThreadId,
+                selectedThreadMessages = session.selectedThreadMessages,
+                notifications = session.notifications,
+                profileInfo = session.profileInfo,
+                blockedUserIds = session.blockedUserIds,
+                moderationReports = session.moderationReports,
             )
         }
         val legacyRaw = cachePrefs.getString(legacyHomeCacheKeyForUser(userId), null) ?: return null
@@ -1433,9 +1457,46 @@ class PetSocialRepository(
         return legacySnapshot
     }
 
+    fun saveUserUiPrefs(snapshot: UserUiPrefsSnapshot) {
+        val normalizedUserId = snapshot.userId.trim().ifBlank { userId }
+        val encoded = runCatching {
+            json.encodeToString(
+                snapshot.copy(
+                    userId = normalizedUserId,
+                    favoriteProviderIds = snapshot.favoriteProviderIds.distinct(),
+                    pendingLocalProviders = snapshot.pendingLocalProviders.distinctBy { provider -> provider.id },
+                ),
+            )
+        }.getOrNull() ?: return
+        cachePrefs.edit()
+            .putString(userUiPrefsKeyForUser(normalizedUserId), encoded)
+            .apply()
+    }
+
+    fun loadUserUiPrefs(targetUserId: String = userId): UserUiPrefsSnapshot {
+        val normalizedUserId = targetUserId.trim().ifBlank { userId }
+        val raw = cachePrefs.getString(userUiPrefsKeyForUser(normalizedUserId), null)
+        val decoded = raw?.let { value ->
+            runCatching { json.decodeFromString<UserUiPrefsSnapshot>(value) }.getOrNull()
+        }
+        return decoded?.copy(
+            userId = normalizedUserId,
+            favoriteProviderIds = decoded.favoriteProviderIds.distinct(),
+            pendingLocalProviders = decoded.pendingLocalProviders.distinctBy { provider -> provider.id },
+        ) ?: UserUiPrefsSnapshot(userId = normalizedUserId)
+    }
+
+    fun clearUserUiPrefs(targetUserId: String = userId) {
+        val normalizedUserId = targetUserId.trim().ifBlank { userId }
+        cachePrefs.edit()
+            .remove(userUiPrefsKeyForUser(normalizedUserId))
+            .apply()
+    }
+
     private fun cacheKeyForUser(userId: String, suffix: String): String = "home_snapshot_${suffix}_$userId"
     private fun legacyHomeCacheKeyForUser(userId: String): String = "home_snapshot_$userId"
     private fun barkAiConversationKeyForUser(userId: String): String = "bark_ai_conversation_$userId"
+    private fun userUiPrefsKeyForUser(userId: String): String = "user_ui_prefs_$userId"
 
     private companion object {
         const val CACHE_PREFS_NAME = "petsocial_cache"
@@ -1450,6 +1511,7 @@ class PetSocialRepository(
         const val HOME_CACHE_DISCOVERY_SUFFIX = "discovery"
         const val HOME_CACHE_BOOKINGS_SUFFIX = "bookings"
         const val HOME_CACHE_CALENDAR_SUFFIX = "calendar"
+        const val HOME_CACHE_SESSION_SUFFIX = "session"
         const val DEFAULT_API_BASE_URL = "https://api.barkwiseai.com/"
     }
 

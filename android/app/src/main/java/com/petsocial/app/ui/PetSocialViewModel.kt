@@ -28,11 +28,13 @@ import com.petsocial.app.data.HomeCacheSnapshot
 import com.petsocial.app.data.NearbyPetBusiness
 import com.petsocial.app.data.PetProfileSuggestion
 import com.petsocial.app.data.PetSocialRepository
+import com.petsocial.app.data.ProfileInfoCacheSnapshot
 import com.petsocial.app.data.ProviderInboxItem
 import com.petsocial.app.data.ServiceProvider
 import com.petsocial.app.data.ServiceProviderDetailsResponse
 import com.petsocial.app.data.ServiceAvailabilitySlot
 import com.petsocial.app.data.ProviderBlackout
+import com.petsocial.app.data.UserUiPrefsSnapshot
 import com.petsocial.app.data.UserProfileResponse
 import com.petsocial.app.location.LocationSnapshot
 import java.time.Instant
@@ -49,7 +51,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -479,6 +483,8 @@ data class UiState(
     val postsSortBy: String = "relevance",
     val communityOpenOnly: Boolean = false,
     val communityRecentHours: Int? = null,
+    val likedCommunityPostIds: Set<String> = emptySet(),
+    val reportedCommunityPostIds: Set<String> = emptySet(),
     val savedCommunityPostIds: Set<String> = emptySet(),
     val savedCommunityEventIds: Set<String> = emptySet(),
     val mutedCommunityKeywords: Set<String> = emptySet(),
@@ -502,6 +508,7 @@ data class UiState(
     val ownerBookings: List<OwnerBooking> = emptyList(),
     val joinedEvents: List<JoinedEvent> = emptyList(),
     val favoriteProviderIds: List<String> = emptyList(),
+    val pendingLocalProviders: List<ServiceProvider> = emptyList(),
     val providerListings: List<ProviderListing> = emptyList(),
     val providerBlackoutsByProvider: Map<String, List<ProviderBlackout>> = emptyMap(),
     val bookingHistoryByBookingId: Map<String, List<BookingStatusHistoryEntry>> = emptyMap(),
@@ -634,6 +641,8 @@ data class CommunityTabUiState(
     val groupPetRosters: Map<String, List<PetRosterItem>> = emptyMap(),
     val latestGroupInvites: Map<String, GroupInvite> = emptyMap(),
     val blockedUserIds: List<String> = emptyList(),
+    val likedPostIds: Set<String> = emptySet(),
+    val reportedPostIds: Set<String> = emptySet(),
     val savedPostIds: Set<String> = emptySet(),
     val savedEventIds: Set<String> = emptySet(),
     val mutedKeywords: Set<String> = emptySet(),
@@ -792,6 +801,8 @@ private fun UiState.toCommunityTabUiState(): CommunityTabUiState = CommunityTabU
     groupPetRosters = groupPetRosters,
     latestGroupInvites = latestGroupInvites,
     blockedUserIds = blockedUserIds,
+    likedPostIds = likedCommunityPostIds,
+    reportedPostIds = reportedCommunityPostIds,
     savedPostIds = savedCommunityPostIds,
     savedEventIds = savedCommunityEventIds,
     mutedKeywords = mutedCommunityKeywords,
@@ -990,6 +1001,7 @@ class PetSocialViewModel(
     private var weatherTickerJob: Job? = null
     private var messageRefreshJob: Job? = null
     private val recentParkPresenceSignals = mutableMapOf<String, MutableList<ParkPresenceSignal>>()
+    private var suppressUserUiPrefsPersistence = true
 
     init {
         if (IS_PROVIDER_OS_SURFACE) {
@@ -1010,6 +1022,7 @@ class PetSocialViewModel(
         val persistedTestProfileMode = normalizeTestProfileMode(repository.testProfileMode())
         val persistedProfileHeaderVisible = repository.isTestProfileHeaderVisible()
         val persistedConversation = repository.loadBarkAiConversation(persistedUserId)
+        val persistedUiPrefs = repository.loadUserUiPrefs(persistedUserId)
         _uiState.value = _uiState.value.copy(
             activeUserId = persistedUserId,
             testProfileMode = persistedTestProfileMode,
@@ -1025,8 +1038,9 @@ class PetSocialViewModel(
             a2uiProfileCard = null,
             a2uiProviderCard = null,
             streamingAssistantText = "",
-        )
+        ).applyUserUiPrefsSnapshot(persistedUiPrefs)
         repository.setActiveUser(persistedUserId)
+        startUserUiPrefsPersistence()
         applyTestProfileMode(
             mode = persistedTestProfileMode,
             persist = false,
@@ -1051,22 +1065,17 @@ class PetSocialViewModel(
                 .onSuccess { response ->
                     repository.setActiveUser(response.userId)
                     val persistedConversation = repository.loadBarkAiConversation(response.userId)
-                    _uiState.value = _uiState.value.copy(
-                        activeUserId = response.userId,
-                        authRequired = false,
-                        authOtpRequested = false,
-                        authInviteId = "",
-                        authEmail = "",
-                        authOtpExpiresAt = null,
-                        authInFlight = false,
-                        isCommunityModerator = response.userId in COMMUNITY_MODERATOR_IDS,
-                        conversation = persistedConversation,
-                        barkThreads = barkAiThreadsForConversation(persistedConversation),
-                        chat = null,
-                        profileSuggestion = null,
-                        a2uiProfileCard = null,
-                        a2uiProviderCard = null,
-                        streamingAssistantText = "",
+                    val persistedUiPrefs = repository.loadUserUiPrefs(response.userId)
+                    val testProfileMode = normalizeTestProfileMode(repository.testProfileMode())
+                    val profileHeaderVisible = repository.isTestProfileHeaderVisible()
+                    _uiState.value = preparedSessionState(
+                        current = _uiState.value,
+                        userId = response.userId,
+                        persistedConversation = persistedConversation,
+                        persistedUiPrefs = persistedUiPrefs,
+                        testProfileMode = testProfileMode,
+                        profileHeaderVisible = profileHeaderVisible,
+                        toastMessage = "",
                     )
                     loadHomeData(_uiState.value.selectedCategory, allowAuthRetry = false)
                 }
@@ -1077,6 +1086,227 @@ class PetSocialViewModel(
                     )
                 }
         }
+    }
+
+    private fun startUserUiPrefsPersistence() {
+        uiState
+            .map { state -> state.toUserUiPrefsSnapshot() }
+            .distinctUntilChanged()
+            .onEach { snapshot ->
+                if (!suppressUserUiPrefsPersistence) {
+                    repository.saveUserUiPrefs(snapshot)
+                }
+            }
+            .launchIn(viewModelScope)
+        suppressUserUiPrefsPersistence = false
+    }
+
+    private inline fun updateUiStateWithoutPersistingUserPrefs(update: () -> Unit) {
+        val previous = suppressUserUiPrefsPersistence
+        suppressUserUiPrefsPersistence = true
+        try {
+            update()
+        } finally {
+            suppressUserUiPrefsPersistence = previous
+        }
+    }
+
+    private fun preparedSessionState(
+        current: UiState,
+        userId: String,
+        persistedConversation: List<ChatTurn>,
+        persistedUiPrefs: UserUiPrefsSnapshot,
+        testProfileMode: String,
+        profileHeaderVisible: Boolean,
+        toastMessage: String,
+        selectedTab: AppTab? = null,
+        selectedSuburbOverride: String? = null,
+        clearPendingInvite: Boolean = true,
+    ): UiState {
+        val (providerModeEnabled, hasProviderListings, canLoadProviderInbox) = clearedProviderState(
+            providerOsSurface = IS_PROVIDER_OS_SURFACE,
+        )
+        val fallbackSuburb = selectedSuburbOverride
+            ?.trim()
+            ?.ifBlank { null }
+            ?: persistedUiPrefs.selectedSuburb.trim().ifBlank { current.selectedSuburb }
+        return current.withNavigation {
+            copy(
+                selectedProviderDetails = null,
+                selectedMessageThreadId = null,
+                selectedCommunityGroupId = null,
+                pendingInvite = if (clearPendingInvite) null else pendingInvite,
+                selectedTab = selectedTab ?: this.selectedTab,
+                profileNotificationFilter = "all",
+            )
+        }.copy(
+            activeUserId = userId,
+            providers = emptyList(),
+            nearbyPetBusinesses = emptyList(),
+            groups = emptyList(),
+            posts = emptyList(),
+            communityCommentsByPostId = emptyMap(),
+            loadingCommentPostIds = emptySet(),
+            communityEvents = emptyList(),
+            availableSlots = emptyList(),
+            availabilityDate = null,
+            servicesRecommendationSuburb = null,
+            servicesRecommendationSource = "none",
+            chat = null,
+            conversation = persistedConversation,
+            profileSuggestion = null,
+            a2uiProfileCard = null,
+            a2uiProviderCard = null,
+            barkThreads = barkAiThreadsForConversation(persistedConversation),
+            testProfileMode = testProfileMode,
+            profileIdentityHeaderVisible = profileHeaderVisible,
+            friendQrPayload = "",
+            friendQrExpiresAt = null,
+            friendQrLoading = false,
+            friendProfiles = emptyList(),
+            messageThreads = emptyList(),
+            directMessages = emptyList(),
+            readDirectMessageIds = emptySet(),
+            mutedMessageThreadIds = emptySet(),
+            pinnedMessageThreadIds = emptySet(),
+            streamingAssistantText = "",
+            authRequired = false,
+            authOtpRequested = false,
+            authInviteId = "",
+            authEmail = "",
+            authOtpExpiresAt = null,
+            authInFlight = false,
+            profileInfo = buildFreshOnboardingProfile(
+                activeUserId = userId,
+                suburb = fallbackSuburb,
+            ),
+            providerModeEnabled = providerModeEnabled,
+            hasProviderListings = hasProviderListings,
+            canLoadProviderInbox = canLoadProviderInbox,
+            ownerBookings = emptyList(),
+            joinedEvents = emptyList(),
+            favoriteProviderIds = emptyList(),
+            pendingLocalProviders = emptyList(),
+            providerListings = emptyList(),
+            providerBlackoutsByProvider = emptyMap(),
+            bookingHistoryByBookingId = emptyMap(),
+            loadingBookingHistoryIds = emptySet(),
+            providerRescheduleSlotsByKey = emptyMap(),
+            loadingProviderRescheduleKeys = emptySet(),
+            providerBookings = emptyList(),
+            providerInboxItems = emptyList(),
+            loadingProviderInbox = false,
+            sendingQuoteOfferItemIds = emptySet(),
+            calendarEvents = emptyList(),
+            headerRosterPet = null,
+            groupPetRosters = emptyMap(),
+            groomerPetRosters = emptyMap(),
+            latestGroupInvites = emptyMap(),
+            hasPendingSync = false,
+            isOfflineMode = false,
+            loading = false,
+            error = null,
+            latestHomeLoadMetrics = null,
+            homeLoadHistory = emptyList(),
+            notifications = emptyList(),
+            readLocalNotificationIds = emptySet(),
+            acknowledgedCommunityNotificationIds = emptySet(),
+            acknowledgedMessageNotificationIds = emptySet(),
+            notifyFollowedGroupAlerts = true,
+            notifySavedPostUpdates = true,
+            notifySafetyAlerts = true,
+            blockedUserIds = emptyList(),
+            moderationReports = emptyList(),
+            communityFunnelMetrics = null,
+            activationFunnelMetrics = null,
+            isCommunityModerator = userId in COMMUNITY_MODERATOR_IDS,
+            toastMessage = toastMessage,
+        ).applyUserUiPrefsSnapshot(persistedUiPrefs)
+    }
+
+    private fun UiState.toUserUiPrefsSnapshot(): UserUiPrefsSnapshot = UserUiPrefsSnapshot(
+        userId = activeUserId.trim().ifBlank { "user_2" },
+        likedCommunityPostIds = likedCommunityPostIds,
+        reportedCommunityPostIds = reportedCommunityPostIds,
+        savedCommunityPostIds = savedCommunityPostIds,
+        savedCommunityEventIds = savedCommunityEventIds,
+        mutedCommunityKeywords = mutedCommunityKeywords,
+        followedGroupIds = followedGroupIds,
+        notifyFollowedGroupAlerts = notifyFollowedGroupAlerts,
+        notifySavedPostUpdates = notifySavedPostUpdates,
+        notifySafetyAlerts = notifySafetyAlerts,
+        mutedMessageThreadIds = mutedMessageThreadIds,
+        pinnedMessageThreadIds = pinnedMessageThreadIds,
+        favoriteProviderIds = favoriteProviderIds,
+        readLocalNotificationIds = readLocalNotificationIds,
+        acknowledgedCommunityNotificationIds = acknowledgedCommunityNotificationIds,
+        acknowledgedMessageNotificationIds = acknowledgedMessageNotificationIds,
+        pendingLocalProviders = pendingLocalProviders,
+        servicesViewMode = servicesViewMode,
+        servicesSortBy = servicesSortBy,
+        serviceMinRating = serviceMinRating,
+        serviceMaxDistanceKm = serviceMaxDistanceKm,
+        postsSortBy = postsSortBy,
+        communityOpenOnly = communityOpenOnly,
+        communityRecentHours = communityRecentHours,
+        selectedSuburb = selectedSuburb,
+        selectedRangeCenter = selectedRangeCenter,
+        currentLocationSuburb = currentLocationSuburb,
+        currentLatitude = currentLatitude,
+        currentLongitude = currentLongitude,
+        locationAutoDetected = locationAutoDetected,
+        providerAvailableTimeSlots = providerConfig.availableTimeSlots,
+        providerPreferredSuburbs = providerConfig.preferredSuburbs,
+        selectedCalendarRole = selectedCalendarRole,
+        autoParkCheckInEnabled = autoParkCheckInEnabled,
+        autoParkCheckInRequireCrowd = autoParkCheckInRequireCrowd,
+    )
+
+    private fun UiState.applyUserUiPrefsSnapshot(snapshot: UserUiPrefsSnapshot): UiState {
+        val normalizedRangeCenter = snapshot.selectedRangeCenter
+            .trim()
+            .lowercase()
+            .takeIf { value -> value == "current" || value == "manual" }
+            ?: "manual"
+        val normalizedSuburb = snapshot.selectedSuburb.trim().ifBlank { selectedSuburb }
+        return copy(
+            likedCommunityPostIds = snapshot.likedCommunityPostIds,
+            reportedCommunityPostIds = snapshot.reportedCommunityPostIds,
+            savedCommunityPostIds = snapshot.savedCommunityPostIds,
+            savedCommunityEventIds = snapshot.savedCommunityEventIds,
+            mutedCommunityKeywords = snapshot.mutedCommunityKeywords,
+            followedGroupIds = snapshot.followedGroupIds,
+            notifyFollowedGroupAlerts = snapshot.notifyFollowedGroupAlerts,
+            notifySavedPostUpdates = snapshot.notifySavedPostUpdates,
+            notifySafetyAlerts = snapshot.notifySafetyAlerts,
+            mutedMessageThreadIds = snapshot.mutedMessageThreadIds,
+            pinnedMessageThreadIds = snapshot.pinnedMessageThreadIds,
+            favoriteProviderIds = snapshot.favoriteProviderIds.distinct(),
+            readLocalNotificationIds = snapshot.readLocalNotificationIds,
+            acknowledgedCommunityNotificationIds = snapshot.acknowledgedCommunityNotificationIds,
+            acknowledgedMessageNotificationIds = snapshot.acknowledgedMessageNotificationIds,
+            pendingLocalProviders = snapshot.pendingLocalProviders.distinctBy { provider -> provider.id },
+            servicesViewMode = if (snapshot.servicesViewMode == "map") "map" else "list",
+            servicesSortBy = snapshot.servicesSortBy.ifBlank { servicesSortBy },
+            serviceMinRating = snapshot.serviceMinRating,
+            serviceMaxDistanceKm = snapshot.serviceMaxDistanceKm,
+            postsSortBy = normalizeCommunitySort(snapshot.postsSortBy),
+            communityOpenOnly = snapshot.communityOpenOnly,
+            communityRecentHours = snapshot.communityRecentHours,
+            selectedSuburb = if (isStagingTestBuild()) STAGING_TEST_SUBURB else normalizedSuburb,
+            selectedRangeCenter = if (isStagingTestBuild()) "manual" else normalizedRangeCenter,
+            currentLocationSuburb = snapshot.currentLocationSuburb?.trim()?.ifBlank { null },
+            currentLatitude = snapshot.currentLatitude,
+            currentLongitude = snapshot.currentLongitude,
+            locationAutoDetected = snapshot.locationAutoDetected,
+            providerConfig = ProviderConfig(
+                availableTimeSlots = snapshot.providerAvailableTimeSlots,
+                preferredSuburbs = snapshot.providerPreferredSuburbs,
+            ),
+            selectedCalendarRole = snapshot.selectedCalendarRole.ifBlank { "all" },
+            autoParkCheckInEnabled = snapshot.autoParkCheckInEnabled,
+            autoParkCheckInRequireCrowd = snapshot.autoParkCheckInRequireCrowd,
+        )
     }
 
     private fun initializeOnboardingFlowIfNeeded() {
@@ -1256,19 +1486,7 @@ class PetSocialViewModel(
                 )
             }.onSuccess { payload ->
                 val fetchMs = elapsedMs(fetchStartNs)
-                repository.saveHomeCache(
-                    HomeCacheSnapshot(
-                        providers = payload.providers,
-                        ownerListingProviders = payload.ownerListingProviders,
-                        nearbyPetBusinesses = payload.nearbyPetBusinesses,
-                        groups = payload.groups,
-                        posts = payload.posts,
-                        events = payload.events,
-                        ownerBookings = payload.ownerBookings,
-                        providerBookings = payload.providerBookings,
-                        calendarEvents = payload.calendarEvents,
-                    ),
-                )
+                repository.saveHomeCache(payload.toHomeCacheSnapshot())
                 val applyStartNs = System.nanoTime()
                 applyHomePayload(
                     payload = payload,
@@ -1318,28 +1536,10 @@ class PetSocialViewModel(
                     val fetchMs = elapsedMs(fetchStartNs)
                     val applyStartNs = System.nanoTime()
                     applyHomePayload(
-                        payload = HomePayload(
-                            providers = cached.providers,
-                            ownerListingProviders = cached.ownerListingProviders,
-                            recommendationSuburb = _uiState.value.servicesRecommendationSuburb,
-                            recommendationSource = _uiState.value.servicesRecommendationSource,
-                            nearbyPetBusinesses = cached.nearbyPetBusinesses,
-                            groups = cached.groups,
-                            posts = cached.posts,
-                            events = cached.events,
-                            ownerBookings = cached.ownerBookings,
-                            providerBookings = cached.providerBookings,
-                            providerInboxItems = _uiState.value.providerInboxItems,
-                            calendarEvents = cached.calendarEvents,
-                            messageThreads = emptyList(),
-                            selectedMessageThreadId = null,
-                            selectedThreadMessages = emptyList(),
-                            notifications = emptyList(),
-                            profileInfo = _uiState.value.profileInfo.copy(suburb = suburb),
-                            blockedUserIds = _uiState.value.blockedUserIds,
-                            moderationReports = _uiState.value.moderationReports,
-                            communityFunnelMetrics = _uiState.value.communityFunnelMetrics,
-                            activationFunnelMetrics = _uiState.value.activationFunnelMetrics,
+                        payload = homePayloadFromCacheSnapshot(
+                            snapshot = cached,
+                            state = _uiState.value,
+                            suburb = suburb,
                         ),
                         suburb = suburb,
                         errorMessage = error.message ?: "Network unavailable",
@@ -1392,6 +1592,7 @@ class PetSocialViewModel(
         metrics: HomeLoadMetrics? = null,
     ) {
         val current = _uiState.value
+        val effectivePendingSync = hasPendingSync || current.pendingLocalProviders.isNotEmpty()
         val applySnapshot = buildHomeApplySnapshot(
             current = current,
             payload = payload,
@@ -1403,7 +1604,7 @@ class PetSocialViewModel(
             snapshot = applySnapshot,
             errorMessage = errorMessage,
             isOfflineMode = isOfflineMode,
-            hasPendingSync = hasPendingSync,
+            hasPendingSync = effectivePendingSync,
             metrics = metrics,
         )
         maybeRunAutoParkCheckIn(reason = "home_payload_applied")
@@ -2004,41 +2205,16 @@ class PetSocialViewModel(
                 )
                 repository.setActiveUser(response.userId)
                 val persistedConversation = repository.loadBarkAiConversation(response.userId)
-                _uiState.value = _uiState.value.withNavigation { copy(selectedMessageThreadId = null) }.copy(
-                    activeUserId = response.userId,
-                    providerModeEnabled = IS_PROVIDER_OS_SURFACE,
-                    hasProviderListings = false,
-                    canLoadProviderInbox = IS_PROVIDER_OS_SURFACE,
-                    authRequired = false,
-                    authOtpRequested = false,
-                    authInviteId = "",
-                    authEmail = "",
-                    authOtpExpiresAt = null,
-                    authInFlight = false,
-                    readDirectMessageIds = emptySet(),
-                    mutedMessageThreadIds = emptySet(),
-                    pinnedMessageThreadIds = emptySet(),
-                    latestHomeLoadMetrics = null,
-                    homeLoadHistory = emptyList(),
-                    readLocalNotificationIds = emptySet(),
-                    acknowledgedCommunityNotificationIds = emptySet(),
-                    acknowledgedMessageNotificationIds = emptySet(),
-                    conversation = persistedConversation,
-                    barkThreads = barkAiThreadsForConversation(persistedConversation),
-                    chat = null,
-                    profileSuggestion = null,
-                    a2uiProfileCard = null,
-                    a2uiProviderCard = null,
-                    streamingAssistantText = "",
-                    notifyFollowedGroupAlerts = true,
-                    notifySavedPostUpdates = true,
-                    notifySafetyAlerts = true,
-                    savedCommunityPostIds = emptySet(),
-                    savedCommunityEventIds = emptySet(),
-                    mutedCommunityKeywords = emptySet(),
-                    followedGroupIds = emptySet(),
-                    friendProfiles = emptyList(),
-                    isCommunityModerator = response.userId in COMMUNITY_MODERATOR_IDS,
+                val persistedUiPrefs = repository.loadUserUiPrefs(response.userId)
+                val testProfileMode = normalizeTestProfileMode(repository.testProfileMode())
+                val profileHeaderVisible = repository.isTestProfileHeaderVisible()
+                _uiState.value = preparedSessionState(
+                    current = _uiState.value,
+                    userId = response.userId,
+                    persistedConversation = persistedConversation,
+                    persistedUiPrefs = persistedUiPrefs,
+                    testProfileMode = testProfileMode,
+                    profileHeaderVisible = profileHeaderVisible,
                     toastMessage = "Signed in as ${response.userId}",
                 )
                 if (isOnboardingScriptEnabled()) {
@@ -2118,26 +2294,20 @@ class PetSocialViewModel(
                 )
                 repository.setActiveUser(response.userId)
                 val persistedConversation = repository.loadBarkAiConversation(response.userId)
-                _uiState.value = _uiState.value.withNavigation {
-                    copy(
-                        pendingInvite = null,
-                        selectedTab = AppTab.Community,
-                    )
-                }.copy(
-                    activeUserId = response.userId,
-                    providerModeEnabled = IS_PROVIDER_OS_SURFACE,
-                    hasProviderListings = false,
-                    canLoadProviderInbox = IS_PROVIDER_OS_SURFACE,
-                    selectedSuburb = invite.suburb,
-                    conversation = persistedConversation,
-                    barkThreads = barkAiThreadsForConversation(persistedConversation),
-                    chat = null,
-                    profileSuggestion = null,
-                    a2uiProfileCard = null,
-                    a2uiProviderCard = null,
-                    streamingAssistantText = "",
-                    loading = false,
+                val persistedUiPrefs = repository.loadUserUiPrefs(response.userId)
+                val testProfileMode = normalizeTestProfileMode(repository.testProfileMode())
+                val profileHeaderVisible = repository.isTestProfileHeaderVisible()
+                _uiState.value = preparedSessionState(
+                    current = _uiState.value,
+                    userId = response.userId,
+                    persistedConversation = persistedConversation,
+                    persistedUiPrefs = persistedUiPrefs,
+                    testProfileMode = testProfileMode,
+                    profileHeaderVisible = profileHeaderVisible,
                     toastMessage = "Joined ${invite.groupName} as ${response.userId}",
+                    selectedTab = AppTab.Community,
+                    selectedSuburbOverride = invite.suburb,
+                    clearPendingInvite = true,
                 )
                 loadHomeData(_uiState.value.selectedCategory)
             }.onFailure { error ->
@@ -2210,6 +2380,24 @@ class PetSocialViewModel(
             communityRecentHours = recentHours,
         )
         loadHomeData(_uiState.value.selectedCategory)
+    }
+
+    fun toggleLikeCommunityPost(postId: String) {
+        if (postId.isBlank()) return
+        val state = _uiState.value
+        val nextLikedIds = if (postId in state.likedCommunityPostIds) {
+            state.likedCommunityPostIds - postId
+        } else {
+            state.likedCommunityPostIds + postId
+        }
+        _uiState.value = state.copy(
+            likedCommunityPostIds = nextLikedIds,
+            toastMessage = if (postId in state.likedCommunityPostIds) {
+                "Like removed"
+            } else {
+                "Post liked"
+            },
+        )
     }
 
     fun toggleSaveCommunityPost(postId: String) {
@@ -2445,53 +2633,16 @@ class PetSocialViewModel(
             val authOk = repository.authenticateAsUser(userId)
             repository.setActiveUser(userId)
             val persistedConversation = repository.loadBarkAiConversation(userId)
+            val persistedUiPrefs = repository.loadUserUiPrefs(userId)
             val persistedTestProfileMode = normalizeTestProfileMode(repository.testProfileMode())
             val persistedProfileHeaderVisible = repository.isTestProfileHeaderVisible()
-            val (providerModeEnabled, hasProviderListings, canLoadProviderInbox) = clearedProviderState(
-                providerOsSurface = IS_PROVIDER_OS_SURFACE,
-            )
-            _uiState.value = _uiState.value.withNavigation {
-                copy(
-                    selectedMessageThreadId = null,
-                    profileNotificationFilter = "all",
-                )
-            }.copy(
-                activeUserId = userId,
+            _uiState.value = preparedSessionState(
+                current = _uiState.value,
+                userId = userId,
+                persistedConversation = persistedConversation,
+                persistedUiPrefs = persistedUiPrefs,
                 testProfileMode = persistedTestProfileMode,
-                profileIdentityHeaderVisible = persistedProfileHeaderVisible,
-                providerModeEnabled = providerModeEnabled,
-                hasProviderListings = hasProviderListings,
-                canLoadProviderInbox = canLoadProviderInbox,
-                authRequired = false,
-                authOtpRequested = false,
-                authInviteId = "",
-                authEmail = "",
-                authOtpExpiresAt = null,
-                authInFlight = false,
-                readDirectMessageIds = emptySet(),
-                latestHomeLoadMetrics = null,
-                homeLoadHistory = emptyList(),
-                readLocalNotificationIds = emptySet(),
-                acknowledgedCommunityNotificationIds = emptySet(),
-                acknowledgedMessageNotificationIds = emptySet(),
-                notifyFollowedGroupAlerts = true,
-                notifySavedPostUpdates = true,
-                notifySafetyAlerts = true,
-                mutedMessageThreadIds = emptySet(),
-                pinnedMessageThreadIds = emptySet(),
-                savedCommunityPostIds = emptySet(),
-                savedCommunityEventIds = emptySet(),
-                mutedCommunityKeywords = emptySet(),
-                followedGroupIds = emptySet(),
-                friendProfiles = emptyList(),
-                isCommunityModerator = userId in COMMUNITY_MODERATOR_IDS,
-                conversation = persistedConversation,
-                barkThreads = barkAiThreadsForConversation(persistedConversation),
-                chat = null,
-                profileSuggestion = null,
-                a2uiProfileCard = null,
-                a2uiProviderCard = null,
-                streamingAssistantText = "",
+                profileHeaderVisible = persistedProfileHeaderVisible,
                 toastMessage = if (authOk) "Switched to $userId" else "Switched to $userId (guest auth)",
             )
             applyTestProfileMode(
@@ -2515,7 +2666,9 @@ class PetSocialViewModel(
                 activeUserId = state.activeUserId,
                 toastMessage = if (success) "Signed out" else "Signed out locally",
             )
-            _uiState.value = applySessionResetResolution(state, reset)
+            updateUiStateWithoutPersistingUserPrefs {
+                _uiState.value = applySessionResetResolution(state, reset)
+            }
             if (!requiresOtpAuth()) {
                 loadHomeData(_uiState.value.selectedCategory)
             }
@@ -2533,7 +2686,9 @@ class PetSocialViewModel(
                 activeUserId = state.activeUserId,
                 toastMessage = if (success) "Device sign-in reset" else "Signed out locally",
             )
-            _uiState.value = applySessionResetResolution(state, reset)
+            updateUiStateWithoutPersistingUserPrefs {
+                _uiState.value = applySessionResetResolution(state, reset)
+            }
         }
     }
 
@@ -2544,11 +2699,13 @@ class PetSocialViewModel(
             _uiState.value = state.copy(loading = true, error = null)
             runCatching { repository.deleteAccount(targetUserId = targetUserId) }
                 .onSuccess {
+                    repository.clearUserUiPrefs(targetUserId)
                     val fallbackUserId = "user_2"
                     if (!requiresOtpAuth()) {
                         repository.setActiveUser(fallbackUserId)
                         runCatching { repository.authenticateAsUser(fallbackUserId) }
                     }
+                    val fallbackUiPrefs = repository.loadUserUiPrefs(fallbackUserId)
                     val reset = resolveSessionResetState(
                         state = state,
                         providerOsSurface = IS_PROVIDER_OS_SURFACE,
@@ -2557,6 +2714,7 @@ class PetSocialViewModel(
                         toastMessage = "Account deleted",
                     )
                     _uiState.value = applySessionResetResolution(state.copy(activeUserId = fallbackUserId), reset)
+                        .applyUserUiPrefsSnapshot(fallbackUiPrefs)
                     if (!requiresOtpAuth()) {
                         loadHomeData(_uiState.value.selectedCategory)
                     }
@@ -3065,6 +3223,7 @@ class PetSocialViewModel(
                     _uiState.value = state.withNavigation { copy(selectedTab = AppTab.Services) }.copy(
                         loading = false,
                         providers = updatedProviders,
+                        pendingLocalProviders = (state.pendingLocalProviders + localProvider).distinctBy { provider -> provider.id },
                         providerListings = updatedListings,
                         hasProviderListings = true,
                         canLoadProviderInbox = true,
@@ -4341,6 +4500,7 @@ class PetSocialViewModel(
             }.onSuccess {
                 _uiState.value = _uiState.value.copy(
                     loading = false,
+                    reportedCommunityPostIds = _uiState.value.reportedCommunityPostIds + postId,
                     toastMessage = "Report submitted",
                 )
                 loadHomeData(_uiState.value.selectedCategory)
@@ -6423,6 +6583,7 @@ private data class ProviderHomeSnapshot(
     val ownerBookings: List<OwnerBooking>,
     val providerBookings: List<ProviderBooking>,
     val providerIdsInScope: Set<String>,
+    val pendingLocalProviders: List<ServiceProvider>,
 )
 
 private data class MessagingHomeSnapshot(
@@ -6440,6 +6601,8 @@ private data class NotificationHomeSnapshot(
 
 private data class CommunityHomeSnapshot(
     val joinedEvents: List<JoinedEvent>,
+    val validLikedPostIds: Set<String>,
+    val validReportedPostIds: Set<String>,
     val validSavedPostIds: Set<String>,
     val validSavedEventIds: Set<String>,
     val validFollowedGroupIds: Set<String>,
@@ -6465,7 +6628,7 @@ private data class HomeApplySnapshot(
     val profileInfo: ProfileInfo,
 )
 
-private data class HomePayload(
+internal data class HomePayload(
     val providers: List<ServiceProvider>,
     val ownerListingProviders: List<ServiceProvider>,
     val recommendationSuburb: String? = null,
@@ -6487,6 +6650,26 @@ private data class HomePayload(
     val moderationReports: List<CommunityReport>,
     val communityFunnelMetrics: CommunityFunnelMetrics?,
     val activationFunnelMetrics: CommunityActivationFunnel?,
+)
+
+private fun mergePendingLocalProviders(
+    remoteProviders: List<ServiceProvider>,
+    pendingLocalProviders: List<ServiceProvider>,
+): List<ServiceProvider> {
+    return (pendingLocalProviders + remoteProviders)
+        .filter { provider -> provider.id.isNotBlank() }
+        .distinctBy { provider -> provider.id }
+}
+
+private fun ServiceProvider.toProviderListing(): ProviderListing = ProviderListing(
+    id = id,
+    title = name,
+    category = category.replace("_", " "),
+    status = status,
+    priceFrom = priceFrom,
+    description = description,
+    suburb = suburb,
+    imageUrls = imageUrls,
 )
 
 private suspend fun loadHomePayload(
@@ -7002,9 +7185,13 @@ private fun currentHomePayload(
     state: UiState,
     suburb: String,
 ): HomePayload {
+    val mergedProviders = mergePendingLocalProviders(
+        remoteProviders = state.providers,
+        pendingLocalProviders = state.pendingLocalProviders,
+    )
     return HomePayload(
-        providers = state.providers,
-        ownerListingProviders = state.providers.filter { provider -> provider.ownerUserId == state.activeUserId },
+        providers = mergedProviders,
+        ownerListingProviders = mergedProviders.filter { provider -> provider.ownerUserId == state.activeUserId },
         recommendationSuburb = state.servicesRecommendationSuburb,
         recommendationSource = state.servicesRecommendationSource,
         nearbyPetBusinesses = state.nearbyPetBusinesses,
@@ -7029,6 +7216,61 @@ private fun currentHomePayload(
     )
 }
 
+private fun HomePayload.toHomeCacheSnapshot(): HomeCacheSnapshot {
+    return HomeCacheSnapshot(
+        providers = providers,
+        ownerListingProviders = ownerListingProviders,
+        nearbyPetBusinesses = nearbyPetBusinesses,
+        groups = groups,
+        posts = posts,
+        events = events,
+        ownerBookings = ownerBookings,
+        providerBookings = providerBookings,
+        calendarEvents = calendarEvents,
+        providerInboxItems = providerInboxItems,
+        messageThreads = messageThreads,
+        selectedMessageThreadId = selectedMessageThreadId,
+        selectedThreadMessages = selectedThreadMessages,
+        notifications = notifications,
+        profileInfo = profileInfo.toCacheSnapshot(),
+        blockedUserIds = blockedUserIds,
+        moderationReports = moderationReports,
+    )
+}
+
+internal fun homePayloadFromCacheSnapshot(
+    snapshot: HomeCacheSnapshot,
+    state: UiState,
+    suburb: String,
+): HomePayload {
+    return HomePayload(
+        providers = snapshot.providers,
+        ownerListingProviders = snapshot.ownerListingProviders,
+        recommendationSuburb = state.servicesRecommendationSuburb,
+        recommendationSource = state.servicesRecommendationSource,
+        nearbyPetBusinesses = snapshot.nearbyPetBusinesses,
+        groups = snapshot.groups,
+        posts = snapshot.posts,
+        events = snapshot.events,
+        ownerBookings = snapshot.ownerBookings,
+        providerBookings = snapshot.providerBookings,
+        providerInboxItems = snapshot.providerInboxItems,
+        calendarEvents = snapshot.calendarEvents,
+        messageThreads = snapshot.messageThreads,
+        selectedMessageThreadId = snapshot.selectedMessageThreadId,
+        selectedThreadMessages = snapshot.selectedThreadMessages,
+        notifications = snapshot.notifications,
+        profileInfo = snapshot.profileInfo.toProfileInfo(
+            activeUserId = state.activeUserId,
+            fallbackSuburb = suburb,
+        ),
+        blockedUserIds = snapshot.blockedUserIds,
+        moderationReports = snapshot.moderationReports,
+        communityFunnelMetrics = state.communityFunnelMetrics,
+        activationFunnelMetrics = state.activationFunnelMetrics,
+    )
+}
+
 private fun buildProviderHomeSnapshot(
     current: UiState,
     payload: HomePayload,
@@ -7040,20 +7282,11 @@ private fun buildProviderHomeSnapshot(
     } else {
         current.favoriteProviderIds.filter { id -> providers.any { provider -> provider.id == id } }
     }
-    val syncedListings = payload.ownerListingProviders
-        .filter { provider -> provider.ownerUserId == current.activeUserId }
-        .map { provider ->
-            ProviderListing(
-                id = provider.id,
-                title = provider.name,
-                category = provider.category.replace("_", " "),
-                status = provider.status,
-                priceFrom = provider.priceFrom,
-                description = provider.description,
-                suburb = provider.suburb,
-                imageUrls = provider.imageUrls,
-            )
-        }
+    val ownedProviders = mergePendingLocalProviders(
+        remoteProviders = payload.ownerListingProviders.filter { provider -> provider.ownerUserId == current.activeUserId },
+        pendingLocalProviders = current.pendingLocalProviders.filter { provider -> provider.ownerUserId == current.activeUserId },
+    )
+    val syncedListings = ownedProviders.map { provider -> provider.toProviderListing() }
     val ownerBookings = payload.ownerBookings.map { booking ->
         val provider = providerById[booking.providerId]
         OwnerBooking(
@@ -7106,6 +7339,7 @@ private fun buildProviderHomeSnapshot(
         ownerBookings = ownerBookings,
         providerBookings = providerBookings,
         providerIdsInScope = providerIdsInScope,
+        pendingLocalProviders = current.pendingLocalProviders,
     )
 }
 
@@ -7225,6 +7459,8 @@ private fun buildCommunityHomeSnapshot(
 
     return CommunityHomeSnapshot(
         joinedEvents = joinedEvents,
+        validLikedPostIds = current.likedCommunityPostIds.intersect(posts.map { post -> post.id }.toSet()),
+        validReportedPostIds = current.reportedCommunityPostIds.intersect(posts.map { post -> post.id }.toSet()),
         validSavedPostIds = current.savedCommunityPostIds.intersect(posts.map { post -> post.id }.toSet()),
         validSavedEventIds = current.savedCommunityEventIds.intersect(events.map { event -> event.id }.toSet()),
         validFollowedGroupIds = current.followedGroupIds.intersect(groups.map { group -> group.id }.toSet()),
@@ -7243,7 +7479,10 @@ private fun buildHomeApplySnapshot(
     suburb: String,
     isStagingTestBuild: Boolean,
 ): HomeApplySnapshot {
-    val providers = payload.providers
+    val providers = mergePendingLocalProviders(
+        remoteProviders = payload.providers,
+        pendingLocalProviders = current.pendingLocalProviders,
+    )
     val groups = payload.groups
     val posts = payload.posts
     val events = payload.events
@@ -7339,12 +7578,15 @@ private fun UiState.applyHomePayloadSnapshot(
         friendProfiles = reuseIfEquivalent(friendProfiles, snapshot.messagingSnapshot.friendProfiles),
         directMessages = reuseIfEquivalent(directMessages, snapshot.messagingSnapshot.selectedThreadMessages),
         readDirectMessageIds = snapshot.messagingSnapshot.validReadMessageIds,
+        likedCommunityPostIds = snapshot.communitySnapshot.validLikedPostIds,
+        reportedCommunityPostIds = snapshot.communitySnapshot.validReportedPostIds,
         savedCommunityPostIds = snapshot.communitySnapshot.validSavedPostIds,
         savedCommunityEventIds = snapshot.communitySnapshot.validSavedEventIds,
         mutedCommunityKeywords = mutedCommunityKeywords,
         followedGroupIds = snapshot.communitySnapshot.validFollowedGroupIds,
         joinedEvents = reuseIfEquivalent(joinedEvents, snapshot.communitySnapshot.joinedEvents),
         favoriteProviderIds = reuseIfEquivalent(favoriteProviderIds, snapshot.providerSnapshot.syncedFavorites),
+        pendingLocalProviders = reuseIfEquivalent(pendingLocalProviders, snapshot.providerSnapshot.pendingLocalProviders),
         providerListings = reuseIfEquivalent(providerListings, snapshot.providerSnapshot.syncedListings),
         providerBlackoutsByProvider = providerBlackoutsByProvider.filterKeys(snapshot.validListingIds::contains),
         bookingHistoryByBookingId = bookingHistoryByBookingId.filterKeys(snapshot.validBookingIds::contains),
@@ -7426,6 +7668,87 @@ private fun DirectMessage.toApiDirectMessage(): ApiDirectMessage = ApiDirectMess
     body = body,
     createdAt = Instant.now().toString(),
 )
+
+private fun ProfileInfo.toCacheSnapshot(): ProfileInfoCacheSnapshot = ProfileInfoCacheSnapshot(
+    displayName = displayName,
+    email = email,
+    phone = phone,
+    humanPronouns = humanPronouns,
+    humanRoleLabel = humanRoleLabel,
+    serviceProviderMode = serviceProviderMode,
+    dogName = dogName,
+    dogAgeMonths = dogAgeMonths,
+    dogBreedMix = dogBreedMix,
+    dogGender = dogGender,
+    dogWeightKg = dogWeightKg,
+    dogPhotoUrls = dogPhotoUrls,
+    secondaryDogName = secondaryDogName,
+    secondaryDogAgeMonths = secondaryDogAgeMonths,
+    secondaryDogGender = secondaryDogGender,
+    secondaryDogWeightKg = secondaryDogWeightKg,
+    bio = bio,
+    suburb = suburb,
+    favoriteSuburbs = favoriteSuburbs,
+    playEnergyLevel = playEnergyLevel,
+    playStyle = playStyle,
+    socialConfidence = socialConfidence,
+    triggerNotes = triggerNotes,
+    idealMatch = idealMatch,
+    walkPreferences = walkPreferences,
+    trainingStyle = trainingStyle,
+    feedingRules = feedingRules,
+    consentBoundaries = consentBoundaries,
+    vaccinationStatus = vaccinationStatus,
+    microchipped = microchipped,
+    recallTrained = recallTrained,
+    leashReliability = leashReliability,
+    emergencyContactName = emergencyContactName,
+    emergencyContactPhone = emergencyContactPhone,
+    fieldVisibility = fieldVisibility,
+)
+
+private fun ProfileInfoCacheSnapshot.toProfileInfo(
+    activeUserId: String,
+    fallbackSuburb: String,
+): ProfileInfo {
+    return ProfileInfo(
+        displayName = displayName.trim().ifBlank { accountLabel(activeUserId) },
+        email = email.trim().ifBlank { "$activeUserId@barkwise.test" },
+        phone = phone,
+        humanPronouns = humanPronouns,
+        humanRoleLabel = humanRoleLabel.ifBlank { "Member" },
+        serviceProviderMode = serviceProviderMode,
+        dogName = dogName,
+        dogAgeMonths = dogAgeMonths,
+        dogBreedMix = dogBreedMix,
+        dogGender = dogGender,
+        dogWeightKg = dogWeightKg,
+        dogPhotoUrls = dogPhotoUrls,
+        secondaryDogName = secondaryDogName,
+        secondaryDogAgeMonths = secondaryDogAgeMonths,
+        secondaryDogGender = secondaryDogGender,
+        secondaryDogWeightKg = secondaryDogWeightKg,
+        bio = bio,
+        suburb = suburb.trim().ifBlank { fallbackSuburb },
+        favoriteSuburbs = favoriteSuburbs,
+        playEnergyLevel = playEnergyLevel,
+        playStyle = playStyle,
+        socialConfidence = socialConfidence,
+        triggerNotes = triggerNotes,
+        idealMatch = idealMatch,
+        walkPreferences = walkPreferences,
+        trainingStyle = trainingStyle,
+        feedingRules = feedingRules,
+        consentBoundaries = consentBoundaries,
+        vaccinationStatus = vaccinationStatus,
+        microchipped = microchipped,
+        recallTrained = recallTrained,
+        leashReliability = leashReliability,
+        emergencyContactName = emergencyContactName,
+        emergencyContactPhone = emergencyContactPhone,
+        fieldVisibility = fieldVisibility,
+    )
+}
 
 private fun UserProfileResponse.toProfileInfo(
     activeUserId: String,

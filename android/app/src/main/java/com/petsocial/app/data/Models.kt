@@ -844,6 +844,14 @@ data class HomeCacheSnapshot(
     val ownerBookings: List<BookingResponse>,
     val providerBookings: List<BookingResponse>,
     val calendarEvents: List<CalendarEvent>,
+    @SerialName("provider_inbox_items") val providerInboxItems: List<ProviderInboxItem> = emptyList(),
+    @SerialName("message_threads") val messageThreads: List<ApiMessageThread> = emptyList(),
+    @SerialName("selected_message_thread_id") val selectedMessageThreadId: String? = null,
+    @SerialName("selected_thread_messages") val selectedThreadMessages: List<ApiDirectMessage> = emptyList(),
+    val notifications: List<AppNotification> = emptyList(),
+    @SerialName("profile_info") val profileInfo: ProfileInfoCacheSnapshot = ProfileInfoCacheSnapshot(),
+    @SerialName("blocked_user_ids") val blockedUserIds: List<String> = emptyList(),
+    @SerialName("moderation_reports") val moderationReports: List<CommunityReport> = emptyList(),
 )
 
 @Serializable
@@ -865,6 +873,96 @@ data class HomeBookingsCacheSlice(
 @Serializable
 data class HomeCalendarCacheSlice(
     val calendarEvents: List<CalendarEvent>,
+)
+
+@Serializable
+data class HomeSessionCacheSlice(
+    @SerialName("provider_inbox_items") val providerInboxItems: List<ProviderInboxItem> = emptyList(),
+    @SerialName("message_threads") val messageThreads: List<ApiMessageThread> = emptyList(),
+    @SerialName("selected_message_thread_id") val selectedMessageThreadId: String? = null,
+    @SerialName("selected_thread_messages") val selectedThreadMessages: List<ApiDirectMessage> = emptyList(),
+    val notifications: List<AppNotification> = emptyList(),
+    @SerialName("profile_info") val profileInfo: ProfileInfoCacheSnapshot = ProfileInfoCacheSnapshot(),
+    @SerialName("blocked_user_ids") val blockedUserIds: List<String> = emptyList(),
+    @SerialName("moderation_reports") val moderationReports: List<CommunityReport> = emptyList(),
+)
+
+@Serializable
+data class ProfileInfoCacheSnapshot(
+    @SerialName("display_name") val displayName: String = "",
+    val email: String = "",
+    val phone: String = "",
+    @SerialName("human_pronouns") val humanPronouns: String = "",
+    @SerialName("human_role_label") val humanRoleLabel: String = "Member",
+    @SerialName("service_provider_mode") val serviceProviderMode: Boolean = false,
+    @SerialName("dog_name") val dogName: String = "",
+    @SerialName("dog_age_months") val dogAgeMonths: Int = 0,
+    @SerialName("dog_breed_mix") val dogBreedMix: String = "",
+    @SerialName("dog_gender") val dogGender: String = "",
+    @SerialName("dog_weight_kg") val dogWeightKg: String = "",
+    @SerialName("dog_photo_urls") val dogPhotoUrls: List<String> = emptyList(),
+    @SerialName("secondary_dog_name") val secondaryDogName: String = "",
+    @SerialName("secondary_dog_age_months") val secondaryDogAgeMonths: Int = 0,
+    @SerialName("secondary_dog_gender") val secondaryDogGender: String = "",
+    @SerialName("secondary_dog_weight_kg") val secondaryDogWeightKg: String = "",
+    val bio: String = "",
+    val suburb: String = "",
+    @SerialName("favorite_suburbs") val favoriteSuburbs: List<String> = emptyList(),
+    @SerialName("play_energy_level") val playEnergyLevel: String = "",
+    @SerialName("play_style") val playStyle: String = "",
+    @SerialName("social_confidence") val socialConfidence: String = "",
+    @SerialName("trigger_notes") val triggerNotes: String = "",
+    @SerialName("ideal_match") val idealMatch: String = "",
+    @SerialName("walk_preferences") val walkPreferences: String = "",
+    @SerialName("training_style") val trainingStyle: String = "",
+    @SerialName("feeding_rules") val feedingRules: String = "",
+    @SerialName("consent_boundaries") val consentBoundaries: String = "",
+    @SerialName("vaccination_status") val vaccinationStatus: String = "",
+    @SerialName("microchipped") val microchipped: Boolean = false,
+    @SerialName("recall_trained") val recallTrained: Boolean = false,
+    @SerialName("leash_reliability") val leashReliability: String = "",
+    @SerialName("emergency_contact_name") val emergencyContactName: String = "",
+    @SerialName("emergency_contact_phone") val emergencyContactPhone: String = "",
+    @SerialName("field_visibility") val fieldVisibility: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class UserUiPrefsSnapshot(
+    @SerialName("user_id") val userId: String,
+    @SerialName("liked_community_post_ids") val likedCommunityPostIds: Set<String> = emptySet(),
+    @SerialName("reported_community_post_ids") val reportedCommunityPostIds: Set<String> = emptySet(),
+    @SerialName("saved_community_post_ids") val savedCommunityPostIds: Set<String> = emptySet(),
+    @SerialName("saved_community_event_ids") val savedCommunityEventIds: Set<String> = emptySet(),
+    @SerialName("muted_community_keywords") val mutedCommunityKeywords: Set<String> = emptySet(),
+    @SerialName("followed_group_ids") val followedGroupIds: Set<String> = emptySet(),
+    @SerialName("notify_followed_group_alerts") val notifyFollowedGroupAlerts: Boolean = true,
+    @SerialName("notify_saved_post_updates") val notifySavedPostUpdates: Boolean = true,
+    @SerialName("notify_safety_alerts") val notifySafetyAlerts: Boolean = true,
+    @SerialName("muted_message_thread_ids") val mutedMessageThreadIds: Set<String> = emptySet(),
+    @SerialName("pinned_message_thread_ids") val pinnedMessageThreadIds: Set<String> = emptySet(),
+    @SerialName("favorite_provider_ids") val favoriteProviderIds: List<String> = emptyList(),
+    @SerialName("read_local_notification_ids") val readLocalNotificationIds: Set<String> = emptySet(),
+    @SerialName("acknowledged_community_notification_ids") val acknowledgedCommunityNotificationIds: Set<String> = emptySet(),
+    @SerialName("acknowledged_message_notification_ids") val acknowledgedMessageNotificationIds: Set<String> = emptySet(),
+    @SerialName("pending_local_providers") val pendingLocalProviders: List<ServiceProvider> = emptyList(),
+    @SerialName("services_view_mode") val servicesViewMode: String = "list",
+    @SerialName("services_sort_by") val servicesSortBy: String = "relevance",
+    @SerialName("service_min_rating") val serviceMinRating: Float? = null,
+    @SerialName("service_max_distance_km") val serviceMaxDistanceKm: Int? = null,
+    @SerialName("posts_sort_by") val postsSortBy: String = "relevance",
+    @SerialName("community_open_only") val communityOpenOnly: Boolean = false,
+    @SerialName("community_recent_hours") val communityRecentHours: Int? = null,
+    @SerialName("selected_suburb") val selectedSuburb: String = "Surry Hills",
+    @SerialName("selected_range_center") val selectedRangeCenter: String = "manual",
+    @SerialName("current_location_suburb") val currentLocationSuburb: String? = null,
+    @SerialName("current_latitude") val currentLatitude: Double? = null,
+    @SerialName("current_longitude") val currentLongitude: Double? = null,
+    @SerialName("location_auto_detected") val locationAutoDetected: Boolean = false,
+    @SerialName("provider_available_time_slots") val providerAvailableTimeSlots: String = "Weekdays 9:00-17:00, Sat 9:00-12:00",
+    @SerialName("provider_preferred_suburbs") val providerPreferredSuburbs: String = "Surry Hills, Redfern, Newtown",
+    @SerialName("selected_calendar_role") val selectedCalendarRole: String = "all",
+    @SerialName("auto_park_check_in_enabled") val autoParkCheckInEnabled: Boolean = false,
+    @SerialName("auto_park_check_in_require_crowd") val autoParkCheckInRequireCrowd: Boolean = true,
 )
 
 @Serializable
