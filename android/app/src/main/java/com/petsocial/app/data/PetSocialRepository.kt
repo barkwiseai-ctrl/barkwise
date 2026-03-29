@@ -706,7 +706,12 @@ class PetSocialRepository(
     suspend fun createCommunityPost(payload: CommunityPostCreate): CommunityPost =
         createCommunityPostWithFallback(payload.copy(userId = payload.userId ?: userId))
 
-    suspend fun createCommunityGroupPost(title: String, body: String, suburb: String): CommunityPost =
+    suspend fun createCommunityGroupPost(
+        title: String,
+        body: String,
+        suburb: String,
+        photoUrls: List<String> = emptyList(),
+    ): CommunityPost =
         createCommunityPostWithFallback(
             CommunityPostCreate(
                 type = "group_post",
@@ -714,6 +719,7 @@ class PetSocialRepository(
                 title = title,
                 body = body,
                 suburb = suburb,
+                photoUrls = photoUrls,
             ),
         )
 

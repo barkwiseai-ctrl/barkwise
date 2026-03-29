@@ -10,6 +10,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddCircle
@@ -128,6 +131,8 @@ fun CommunityScreen(
     groupPetRosters: Map<String, List<PetRosterItem>>,
     latestGroupInvites: Map<String, GroupInvite>,
     blockedUserIds: List<String>,
+    likedPostIds: Set<String>,
+    reportedPostIds: Set<String>,
     savedPostIds: Set<String>,
     savedEventIds: Set<String>,
     mutedKeywords: Set<String>,
@@ -152,7 +157,7 @@ fun CommunityScreen(
     onClearGroupInvite: (String) -> Unit,
     onCreateGroup: (String, String) -> Unit,
     onPostsSortChange: (String) -> Unit,
-    onCreateGroupPost: (title: String, body: String, suburb: String) -> Unit,
+    onCreateGroupPost: (title: String, body: String, suburb: String, photoUrls: List<String>) -> Unit,
     onCreateLostFound: (CommunityPostCreate) -> Unit,
     onCreateSharePoint: (CommunityPostCreate) -> Unit,
     onCreateEvent: (
@@ -194,6 +199,7 @@ fun CommunityScreen(
     onReportEvent: (eventId: String, reason: String, details: String) -> Unit,
     onBlockUser: (targetUserId: String) -> Unit,
     onDeletePost: (postId: String) -> Unit,
+    onToggleLikePost: (postId: String) -> Unit,
     onToggleSavePost: (postId: String) -> Unit,
     onToggleSaveEvent: (eventId: String) -> Unit,
     onSetMutedKeywords: (Set<String>) -> Unit,
@@ -219,11 +225,12 @@ fun CommunityScreen(
     var showCreateGroupDialog by rememberSaveable { mutableStateOf(false) }
     var createGroupName by rememberSaveable { mutableStateOf("") }
     var createGroupSuburb by rememberSaveable(suburb) { mutableStateOf(suburb) }
+    var createGroupTone by rememberSaveable { mutableStateOf("") }
     var showMeetupPlannerSheet by rememberSaveable { mutableStateOf(false) }
     var meetupPlannerMode by rememberSaveable { mutableStateOf(MeetupPlannerMode.CreateEvent.name) }
     var plannerTitle by rememberSaveable { mutableStateOf("") }
     var plannerDescription by rememberSaveable { mutableStateOf("") }
-    var plannerDate by rememberSaveable { mutableStateOf("2026-02-28T10:00:00Z") }
+    var plannerDate by rememberSaveable { mutableStateOf(defaultCommunityEventDate()) }
     var plannerGroupId by rememberSaveable { mutableStateOf("") }
     var plannerPhotoUrls by rememberSaveable { mutableStateOf("") }
     var plannerPublic by rememberSaveable { mutableStateOf(true) }
@@ -234,17 +241,30 @@ fun CommunityScreen(
     var plannerRecurrence by rememberSaveable { mutableStateOf("none") }
     var plannerRecurrenceInterval by rememberSaveable { mutableStateOf("1") }
     var showCreatePostDialog by rememberSaveable { mutableStateOf(false) }
+    var showCreateEventDialog by rememberSaveable { mutableStateOf(false) }
+    var showCreateLostFoundDialog by rememberSaveable { mutableStateOf(false) }
+    var showLocationShareSettingsDialog by rememberSaveable { mutableStateOf(false) }
     var createPostType by rememberSaveable { mutableStateOf("group_post") }
     var createPostTitle by rememberSaveable { mutableStateOf("") }
     var createPostBody by rememberSaveable { mutableStateOf("") }
-    var createEventDate by rememberSaveable { mutableStateOf("2026-02-28T10:00:00Z") }
+    var createPostImageUrls by rememberSaveable { mutableStateOf("") }
+    var createPostTargetSuburb by rememberSaveable(suburb) { mutableStateOf(suburb) }
+    var createEventTitle by rememberSaveable { mutableStateOf("") }
+    var createEventDetail by rememberSaveable { mutableStateOf("") }
+    var createEventDate by rememberSaveable { mutableStateOf(defaultCommunityEventDate()) }
     var createEventGroupId by rememberSaveable { mutableStateOf("") }
+    var createEventInvitees by rememberSaveable { mutableStateOf("") }
+    var createEventOpenAccess by rememberSaveable { mutableStateOf(true) }
     var createEventLocationEnabled by rememberSaveable { mutableStateOf(false) }
     var createEventLocationName by rememberSaveable { mutableStateOf("") }
     var createEventLocationLatitude by rememberSaveable { mutableStateOf("") }
     var createEventLocationLongitude by rememberSaveable { mutableStateOf("") }
     var createEventRecurrence by rememberSaveable { mutableStateOf("none") }
     var createEventRecurrenceInterval by rememberSaveable { mutableStateOf("1") }
+    var createLostFoundTitle by rememberSaveable { mutableStateOf("") }
+    var createLostFoundDetail by rememberSaveable { mutableStateOf("") }
+    var createLostFoundLatitude by rememberSaveable { mutableStateOf("") }
+    var createLostFoundLongitude by rememberSaveable { mutableStateOf("") }
     var createSharePointLocationName by rememberSaveable { mutableStateOf("") }
     var createSharePointLatitude by rememberSaveable { mutableStateOf("") }
     var createSharePointLongitude by rememberSaveable { mutableStateOf("") }
@@ -259,6 +279,8 @@ fun CommunityScreen(
     var createLostFoundLastSeenAt by rememberSaveable { mutableStateOf("") }
     var createLostFoundContactPref by rememberSaveable { mutableStateOf("") }
     var createLostFoundPhotoUrls by rememberSaveable { mutableStateOf("") }
+    var ownerTabName by rememberSaveable { mutableStateOf(OwnerCommunityTab.Discover.name) }
+    var previewGroupId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPost by remember { mutableStateOf<CommunityPost?>(null) }
     var selectedLens by rememberSaveable(postsSortBy) {
         mutableStateOf(
@@ -277,6 +299,7 @@ fun CommunityScreen(
     var selectedEvent by remember { mutableStateOf<CommunityEvent?>(null) }
     var editingEvent by remember { mutableStateOf<CommunityEvent?>(null) }
     var eventCommentInput by rememberSaveable { mutableStateOf("") }
+    var locationSharePreviewActive by rememberSaveable { mutableStateOf(false) }
     var sortDropdownExpanded by rememberSaveable { mutableStateOf(false) }
     var lastPlannerSubmitAt by rememberSaveable { mutableStateOf(0L) }
     var lastCreatePostSubmitAt by rememberSaveable { mutableStateOf(0L) }
@@ -426,6 +449,36 @@ fun CommunityScreen(
     val suggestedJoinGroup = remember(suggestedJoinGroupId, groupById) {
         suggestedJoinGroupId?.let { groupId -> groupById[groupId] }
     }
+    val selectedOwnerTab = remember(ownerTabName) {
+        OwnerCommunityTab.entries.firstOrNull { it.name == ownerTabName } ?: OwnerCommunityTab.Discover
+    }
+    val discoverGroups = remember(featuredGroups, joinedGroupIds) {
+        featuredGroups
+            .filterNot { group -> group.id in joinedGroupIds }
+            .ifEmpty { featuredGroups }
+            .take(2)
+    }
+    val recommendedEvent = remember(approvedUpcomingEvents) { approvedUpcomingEvents.firstOrNull() }
+    val activeAlerts = remember(visiblePosts) {
+        visiblePosts
+            .filter { post -> post.type == "lost_found" && (post.alertStatus ?: "open") == "open" }
+            .sortedByDescending { post -> parseIsoInstant(post.createdAt) ?: Instant.EPOCH }
+    }
+    val previewGroup = remember(previewGroupId, groupById) { previewGroupId?.let(groupById::get) }
+    val joinedGroupUpcomingCounts = remember(joinedGroups, events) {
+        joinedGroups.associate { group ->
+            group.id to events.count { event ->
+                event.groupId == group.id && !isEventInPast(event.date)
+            }
+        }
+    }
+    val joinedGroupPostCounts = remember(joinedGroups, visiblePosts) {
+        joinedGroups.associate { group ->
+            group.id to visiblePosts.count { post ->
+                post.type == "group_post" && post.suburb.equals(group.suburb, ignoreCase = true)
+            }
+        }
+    }
     val handleRsvpEvent: (String, Boolean) -> Unit = remember(
         onRsvpEvent,
         eventById,
@@ -450,188 +503,212 @@ fun CommunityScreen(
         contentPadding = PaddingValues(bottom = 90.dp),
     ) {
         item {
-            MeetupHeroCard(
-                suburb = suburb,
-                totalGroups = groups.size,
-                totalEvents = events.size,
-                totalDiscussions = posts.size,
-                joinedGroups = joinedGroups.size,
-            )
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(CommunitySpaceSm),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CompactCommunityActionButton(
-                    enabled = !loading,
-                    onClick = { showInviteQrScanner = true },
-                    icon = { Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan Invite QR") },
-                )
-                CompactCommunityActionButton(
-                    enabled = !loading,
-                    onClick = {
-                        createGroupName = ""
-                        createGroupSuburb = suburb
-                        showCreateGroupDialog = true
-                    },
-                    icon = { Icon(Icons.Default.AddCircle, contentDescription = "Create group") },
-                )
-                CompactCommunityActionButton(
-                    enabled = !loading,
-                    onClick = { showGroupDiscoverySheet = true },
-                    icon = { Icon(Icons.Default.Groups, contentDescription = "Find your groups") },
-                )
-                CompactCommunityActionButton(
-                    enabled = !loading,
-                    onClick = { showMeetupPlannerSheet = true },
-                    icon = { Icon(Icons.Default.Event, contentDescription = "Meetup planner") },
-                )
-            }
-        }
-
-        scannerStatusMessage?.let { message ->
-            item {
+            Column(verticalArrangement = Arrangement.spacedBy(CommunitySpaceSm)) {
+                Text("Community", style = MaterialTheme.typography.headlineMedium)
                 Text(
-                    message,
-                    style = MaterialTheme.typography.labelSmall,
+                    text = when (selectedOwnerTab) {
+                        OwnerCommunityTab.Discover -> "Discover nearby events and groups with one clear next step."
+                        OwnerCommunityTab.MyGroups -> "Your joined groups and group-management entry points."
+                        OwnerCommunityTab.Alerts -> "Safety tools and active alerts in one simplified home."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(OwnerCommunityTab.entries.toList(), key = { tab -> tab.name }) { tab ->
+                        FilterChip(
+                            selected = selectedOwnerTab == tab,
+                            onClick = { ownerTabName = tab.name },
+                            label = { Text(tab.label) },
+                        )
+                    }
+                }
             }
         }
 
-        if (featuredGroups.isNotEmpty()) {
-            item {
-                Text("Groups", style = MaterialTheme.typography.titleSmall)
-            }
-            items(featuredGroups.take(8), key = { group -> "group_lane_${group.id}" }) { group ->
-                GroupPriorityCard(
-                    group = group,
-                    loading = loading,
-                    events = eventsByGroupId[group.id].orEmpty(),
-                    posts = postsByGroupId[group.id].orEmpty(),
-                    savedEventIds = savedEventIds,
-                    onOpenGroup = onOpenGroup,
-                    onJoinGroup = onJoinGroup,
-                    onRsvpEvent = handleRsvpEvent,
-                    onReportEvent = onReportEvent,
-                    onToggleSaveEvent = onToggleSaveEvent,
-                    onOpenMessages = onOpenMessages,
-                    onOpenEventDetails = { event, presetComment ->
-                        selectedEvent = event
-                        eventCommentInput = presetComment.orEmpty()
-                    },
-                    onOpenPost = { post -> selectedPost = post },
-                )
-            }
-        }
-
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Feed", style = MaterialTheme.typography.titleSmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(CommunitySpaceXs), verticalAlignment = Alignment.CenterVertically) {
-                        Box {
-                            FilterChip(
-                                selected = sortDropdownExpanded,
-                                onClick = { sortDropdownExpanded = true },
-                                label = { Text(communitySortLabel(postsSortBy)) },
+        when (selectedOwnerTab) {
+            OwnerCommunityTab.Discover -> {
+                item {
+                    BarkwiseCommunityCard(
+                        title = recommendedEvent?.title ?: "No nearby event yet",
+                        body = recommendedEvent?.let {
+                            "Start with one nearby event. Open the details first, then preview nearby groups if you want to join one."
+                        } ?: "Events will show up here once there is an approved local activity to join.",
+                        eyebrow = if (recommendedEvent != null) "Recommended event" else null,
+                        tone = BarkwiseCommunityCardTone.Neutral,
+                    ) {
+                        recommendedEvent?.let { event ->
+                            Text(
+                                text = "${event.locationName ?: event.suburb} · ${formatIsoDateTime(event.date)} · ${event.attendeeCount} attending",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            androidx.compose.material3.DropdownMenu(
-                                expanded = sortDropdownExpanded,
-                                onDismissRequest = { sortDropdownExpanded = false },
+                            OutlinedButton(
+                                enabled = !loading,
+                                onClick = { selectedEvent = event },
                             ) {
-                                listOf(
-                                    "relevance" to "Relevant",
-                                    "latest" to "Latest",
-                                    "trending" to "Trending",
-                                ).forEach { (value, label) ->
-                                    androidx.compose.material3.DropdownMenuItem(
-                                        text = { Text(label) },
-                                        onClick = {
-                                            sortDropdownExpanded = false
-                                            onPostsSortChange(value)
-                                        },
-                                    )
-                                }
+                                Text("View event")
                             }
-                        }
-                        IconButton(onClick = { showFeedSettingsSheet = true }) {
-                            Icon(Icons.Default.Tune, contentDescription = "Feed settings")
                         }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(CommunitySpaceXs)) {
-                    FilterChip(
-                        selected = selectedLens == CommunityLens.Posts,
-                        onClick = { selectedLens = CommunityLens.Posts },
-                        label = { Text("Posts") },
-                    )
-                    FilterChip(
-                        selected = selectedLens == CommunityLens.LostFound,
-                        onClick = { selectedLens = CommunityLens.LostFound },
-                        label = { Text("Lost & Found") },
-                    )
+                item {
+                    BarkwiseCommunityCard(
+                        title = "Suggested groups near you",
+                        body = "Non-member owners preview a group first, then decide whether to join it.",
+                        tone = BarkwiseCommunityCardTone.Neutral,
+                    ) {
+                        discoverGroups.forEach { group ->
+                            BarkwiseSummaryCard(
+                                title = group.name,
+                                body = "${group.memberCount} members · ${eventsByGroupId[group.id].orEmpty().size} local events · ${if (group.official) "Vet-checked admins" else group.suburb}",
+                                actionLabel = "Preview group",
+                                onClick = { previewGroupId = group.id },
+                            )
+                        }
+                    }
+                }
+                item {
+                    BarkwiseCommunityCard(
+                        title = "Park weather + privacy",
+                        body = buildString {
+                            append("${communityWeather.condition.ifBlank { "Clear skies" }}, ${communityWeather.temperatureC}°C.")
+                            append(" Alerts stay separate from group discovery.")
+                        },
+                        tone = BarkwiseCommunityCardTone.Soft,
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(enabled = !loading, onClick = onRefreshWeather) { Text("Refresh weather") }
+                            OutlinedButton(
+                                onClick = {
+                                    context.startActivity(
+                                        Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse(BARKWISE_PRIVACY_POLICY_URL),
+                                        ),
+                                    )
+                                },
+                            ) {
+                                Text("Privacy rules")
+                            }
+                        }
+                    }
                 }
             }
-        }
 
-        if (loading && feedItems.isEmpty()) {
-            items(3, key = { index -> "community_feed_skeleton_$index" }) {
-                CommunityFeedSkeletonCard()
-            }
-        } else if (feedItems.isEmpty()) {
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                    Text(
-                        text = "No community activity yet.",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+            OwnerCommunityTab.MyGroups -> {
+                item {
+                    BarkwiseCommunityCard(
+                        title = "Create a group",
+                        body = "Start a new local owner group when the right one does not exist yet.",
+                        tone = BarkwiseCommunityCardTone.Highlight,
+                    ) {
+                        Button(
+                            enabled = !loading,
+                            onClick = {
+                                createGroupName = ""
+                                createGroupSuburb = suburb
+                                createGroupTone = ""
+                                showCreateGroupDialog = true
+                            },
+                        ) {
+                            Text("Create group")
+                        }
+                    }
+                }
+                item {
+                    BarkwiseCommunityCard(
+                        title = "Joined groups",
+                        body = if (joinedGroups.isEmpty()) {
+                            "You have not joined a group yet. Discover a nearby group first."
+                        } else {
+                            "Open a joined group to manage events and posts."
+                        },
+                        tone = BarkwiseCommunityCardTone.Neutral,
+                    ) {
+                        joinedGroups.forEach { group ->
+                            BarkwiseSummaryCard(
+                                title = group.name,
+                                body = "${group.memberCount} members · ${joinedGroupUpcomingCounts[group.id] ?: 0} upcoming events · ${joinedGroupPostCounts[group.id] ?: 0} posts",
+                                actionLabel = "Open group",
+                                onClick = { onOpenGroup(group.id) },
+                            )
+                        }
+                    }
                 }
             }
-        } else {
-            items(feedItems, key = { item -> item.stableId }) { item ->
-                when (item) {
-                    is CommunityFeedItem.PostItem -> {
-                        val authorUserId = item.post.createdBy?.trim().orEmpty()
-                        val isFriendActivity = authorUserId.isNotBlank() && authorUserId in friendUserIds
-                        DiscussionFeedCard(
-                            post = item.post,
-                            createdAtLabel = postCreatedAtLabelById[item.post.id] ?: formatIsoDateTime(item.post.createdAt),
-                            commentHint = postCommentHintById[item.post.id] ?: 8,
-                            isFriendActivity = isFriendActivity,
-                            groupName = selectedGroupId
-                                ?.let { groupId -> groupById[groupId]?.name }
-                                ?: groupNameBySuburb[item.post.suburb.trim().lowercase()],
-                            authorLabel = item.post.createdBy,
-                            onOpenPost = { selectedPost = item.post },
-                            isSaved = item.post.id in savedPostIds,
-                            onQuickReport = {
-                                onReportPost(
-                                    item.post.id,
-                                    if (item.post.type == "lost_found") "Suspicious lost and found post" else "Harassment or abuse",
-                                    "Reported from feed card",
-                                )
+
+            OwnerCommunityTab.Alerts -> {
+                item {
+                    BarkwiseCommunityCard(
+                        title = "Active alerts",
+                        body = "View current lost/found and local safety notices here. Location sharing lives in a separate settings screen.",
+                        eyebrow = "Safety first",
+                        tone = BarkwiseCommunityCardTone.Alert,
+                    ) {
+                        Button(
+                            enabled = !loading,
+                            onClick = {
+                                createLostFoundAlertType = "lost"
+                                createLostFoundTitle = ""
+                                createLostFoundDetail = ""
+                                createLostFoundLastSeenLocation = currentLocationSuburb.orEmpty()
+                                createLostFoundLatitude = currentLatitude?.let { String.format(Locale.US, "%.6f", it) }.orEmpty()
+                                createLostFoundLongitude = currentLongitude?.let { String.format(Locale.US, "%.6f", it) }.orEmpty()
+                                showCreateLostFoundDialog = true
                             },
-                            onQuickBlock = {
-                                item.post.createdBy
-                                    ?.takeIf { userId -> userId.isNotBlank() }
-                                    ?.let(onBlockUser)
+                        ) {
+                            Text("Report lost/found")
+                        }
+                    }
+                }
+                item {
+                    BarkwiseCommunityCard(
+                        title = "Location sharing",
+                        body = "A separate utility for temporary visibility and privacy controls.",
+                        tone = BarkwiseCommunityCardTone.Soft,
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                enabled = !loading,
+                                onClick = {
+                                    locationSharePreviewActive = false
+                                    showLocationShareSettingsDialog = true
+                                },
+                            ) {
+                                Text("Manage location share")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    context.startActivity(
+                                        Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse(BARKWISE_PRIVACY_POLICY_URL),
+                                        ),
+                                    )
+                                },
+                            ) {
+                                Text("Privacy rules")
+                            }
+                        }
+                    }
+                }
+                if (activeAlerts.isNotEmpty()) {
+                    item {
+                        BarkwiseCommunityCard(
+                            title = activeAlerts.first().title,
+                            body = buildString {
+                                append(activeAlerts.first().petName ?: "Missing dog notice")
+                                activeAlerts.first().lastSeenLocation?.let { append(", last seen near $it") }
+                                activeAlerts.first().lastSeenAt?.let { append(" at ${formatIsoDateTime(it)}") }
                             },
-                            onToggleSave = { onToggleSavePost(item.post.id) },
-                            onMessageAuthor = item.post.createdBy
-                                ?.takeIf { userId -> userId.isNotBlank() }
-                                ?.let { authorId -> { onOpenMessages(authorId) } },
-                        )
+                            eyebrow = "Open 1",
+                            tone = BarkwiseCommunityCardTone.Neutral,
+                        ) {
+                            OutlinedButton(enabled = !loading, onClick = { selectedPost = activeAlerts.first() }) {
+                                Text("Open alert")
+                            }
+                        }
                     }
                 }
             }
@@ -785,8 +862,16 @@ fun CommunityScreen(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                     )
+                    OutlinedTextField(
+                        value = createGroupTone,
+                        onValueChange = { createGroupTone = it.take(140) },
+                        label = { Text("Description") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 3,
+                    )
                     Text(
-                        "Tip: This creates a local group immediately so members can join and post.",
+                        "Describe the local tone or expectations for new members. This note stays client-side for now while the backend only stores name and suburb.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -799,14 +884,87 @@ fun CommunityScreen(
                         onCreateGroup(normalizedName, normalizedSuburb)
                         showCreateGroupDialog = false
                         createGroupName = ""
+                        createGroupTone = ""
                     },
                 ) {
-                    Text("Create")
+                    Text("Create group")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateGroupDialog = false }) {
-                    Text("Cancel")
+                    Text("Save draft")
+                }
+            },
+        )
+    }
+
+    previewGroup?.let { group ->
+        val previewEvent = eventsByGroupId[group.id].orEmpty().firstOrNull()
+        AlertDialog(
+            onDismissRequest = { previewGroupId = null },
+            title = { Text(group.name) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "${group.suburb} • ${group.memberCount} members",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = if (group.official) {
+                            "Official group with vet-checked admins and a reliable local routine."
+                        } else {
+                            "Friendly local group for owners in ${group.suburb}."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    previewEvent?.let { event ->
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text("Next event", style = MaterialTheme.typography.titleSmall)
+                                Text(event.title, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${formatRelativeDay(event.date)} • ${formatIsoDateTime(event.date)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !loading,
+                    onClick = {
+                        previewGroupId = null
+                        onJoinGroup(group.id)
+                        onOpenGroup(group.id)
+                    },
+                ) {
+                    Text("Join group")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    previewEvent?.let { event ->
+                        TextButton(
+                            onClick = {
+                                selectedEvent = event
+                                previewGroupId = null
+                            },
+                        ) {
+                            Text("View upcoming event")
+                        }
+                    }
+                    TextButton(onClick = { previewGroupId = null }) {
+                        Text("Close")
+                    }
                 }
             },
         )
@@ -979,402 +1137,6 @@ fun CommunityScreen(
         }
     }
 
-    if (showMeetupPlannerSheet) {
-        val plannerMode = remember(meetupPlannerMode) {
-            MeetupPlannerMode.entries.firstOrNull { it.name == meetupPlannerMode } ?: MeetupPlannerMode.CreateEvent
-        }
-        val plannerDateOptions = remember { eventDatePresets() }
-        val parsedPlannerDate = parseIsoInstant(plannerDate.trim())
-        val plannerDateValid = plannerDate.isBlank() || parsedPlannerDate != null
-        val plannerLat = parseCoordinateOrNull(plannerLocationLatitude)
-        val plannerLng = parseCoordinateOrNull(plannerLocationLongitude)
-        val plannerLocationValid = !plannerLocationEnabled || (plannerLat != null && plannerLng != null)
-        val plannerRecurrenceIntervalInt = plannerRecurrenceInterval.trim().toIntOrNull()
-        val plannerRecurrenceValid = plannerRecurrence == "none" ||
-            (plannerRecurrenceIntervalInt != null && plannerRecurrenceIntervalInt in 1..30)
-        val canSubmitPlanner = when (plannerMode) {
-            MeetupPlannerMode.PingGroup -> plannerTitle.trim().isNotBlank() && plannerDescription.trim().isNotBlank() && plannerDateValid
-            MeetupPlannerMode.CreateEvent, MeetupPlannerMode.ComplexEvent -> {
-                plannerTitle.trim().isNotBlank() &&
-                    plannerDescription.trim().isNotBlank() &&
-                    plannerDate.trim().isNotBlank() &&
-                    parsedPlannerDate != null &&
-                    plannerLocationValid &&
-                    plannerRecurrenceValid
-            }
-        }
-        ModalBottomSheet(onDismissRequest = { showMeetupPlannerSheet = false }) {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-            ) {
-                item {
-                    Text("Meetup planner", style = MaterialTheme.typography.titleLarge)
-                }
-                item {
-                    Text(
-                        "Create meetups, ping your group, or plan larger public events.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                item {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(MeetupPlannerMode.entries.toList(), key = { mode -> mode.name }) { mode ->
-                            FilterChip(
-                                selected = plannerMode == mode,
-                                onClick = { meetupPlannerMode = mode.name },
-                                label = { Text(mode.label) },
-                            )
-                        }
-                    }
-                }
-                item {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(MeetupWindow.entries.toList(), key = { window -> "planner_window_${window.name}" }) { window ->
-                            FilterChip(
-                                selected = selectedMeetupWindow == window,
-                                onClick = { selectedMeetupWindow = window },
-                                label = { Text(window.label) },
-                            )
-                        }
-                    }
-                }
-                item {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(MeetupAreaFilter.entries.toList(), key = { area -> "planner_area_${area.name}" }) { area ->
-                            FilterChip(
-                                selected = selectedMeetupArea == area,
-                                onClick = { selectedMeetupArea = area },
-                                label = { Text(area.label) },
-                            )
-                        }
-                    }
-                }
-                item {
-                    if (focusedMeetupEvents.isEmpty()) {
-                        Text(
-                            "No upcoming meetups in this window yet.",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        val nextEvent = focusedMeetupEvents.first()
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Text("Next meetup: ${nextEvent.title}", style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "${formatRelativeDay(nextEvent.date)} • ${formatIsoDateTime(nextEvent.date)} • ${nextEvent.attendeeCount} going",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                if (nextEvent.rsvpStatus != "attending") {
-                                    OutlinedButton(
-                                        enabled = !loading,
-                                        onClick = { handleRsvpEvent(nextEvent.id, true) },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    ) {
-                                        Text("RSVP")
-                                    }
-                                } else {
-                                    AssistChip(onClick = {}, label = { Text("You are going") })
-                                }
-                            }
-                        }
-                    }
-                }
-                item {
-                    OutlinedTextField(
-                        value = plannerTitle,
-                        onValueChange = { plannerTitle = it },
-                        label = {
-                            Text(
-                                when (plannerMode) {
-                                    MeetupPlannerMode.PingGroup -> "Ping title"
-                                    MeetupPlannerMode.CreateEvent -> "Event title"
-                                    MeetupPlannerMode.ComplexEvent -> "Complex event title"
-                                }
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                item {
-                    OutlinedTextField(
-                        value = plannerDescription,
-                        onValueChange = { plannerDescription = it },
-                        label = {
-                            Text(
-                                when (plannerMode) {
-                                    MeetupPlannerMode.PingGroup -> "Where are you going?"
-                                    MeetupPlannerMode.CreateEvent -> "Event description"
-                                    MeetupPlannerMode.ComplexEvent -> "Plan details"
-                                }
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2,
-                        maxLines = 5,
-                    )
-                }
-                item {
-                    val plannerDatePickerLabel = plannerDate.trim()
-                        .takeIf { it.isNotBlank() }
-                        ?.let(::formatIsoDateTime)
-                        ?: "Tap to choose a date"
-                    OutlinedTextField(
-                        value = plannerDatePickerLabel,
-                        onValueChange = {},
-                        label = {
-                            Text(
-                                when (plannerMode) {
-                                    MeetupPlannerMode.PingGroup -> "Date"
-                                    else -> "Event day"
-                                }
-                            )
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                showIsoDatePicker(
-                                    context = context,
-                                    currentIsoValue = plannerDate.trim(),
-                                    fallbackHour = if (plannerMode == MeetupPlannerMode.PingGroup) 16 else 10,
-                                ) { selectedIso ->
-                                    plannerDate = selectedIso
-                                }
-                            },
-                        readOnly = true,
-                        trailingIcon = {
-                            IconButton(
-                                onClick = {
-                                    showIsoDatePicker(
-                                        context = context,
-                                        currentIsoValue = plannerDate.trim(),
-                                        fallbackHour = if (plannerMode == MeetupPlannerMode.PingGroup) 16 else 10,
-                                    ) { selectedIso ->
-                                        plannerDate = selectedIso
-                                    }
-                                },
-                            ) {
-                                Icon(Icons.Default.Event, contentDescription = "Choose event date")
-                            }
-                        },
-                    )
-                }
-                item {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(plannerDateOptions, key = { option -> "planner_date_${option.label}" }) { option ->
-                            FilterChip(
-                                selected = plannerDate.trim() == option.value,
-                                onClick = { plannerDate = option.value },
-                                label = { Text(option.label) },
-                            )
-                        }
-                    }
-                }
-                if (!plannerDateValid) {
-                    item {
-                        Text(
-                            "Use a valid ISO datetime with timezone, e.g. 2026-02-28T10:00:00Z",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-                item {
-                    OutlinedTextField(
-                        value = plannerPhotoUrls,
-                        onValueChange = { plannerPhotoUrls = it },
-                        label = { Text("Photo URLs (comma-separated)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 1,
-                        maxLines = 2,
-                    )
-                }
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = plannerPublic,
-                            onClick = {
-                                plannerPublic = !plannerPublic
-                                if (plannerPublic) plannerGroupId = ""
-                            },
-                            label = { Text(if (plannerPublic) "Public event" else "Group tagged") },
-                        )
-                    }
-                }
-                if (!plannerPublic && joinedGroups.isNotEmpty()) {
-                    item {
-                        Text(
-                            "Tag one of your groups:",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    item {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(joinedGroups, key = { group -> "planner_group_${group.id}" }) { group ->
-                                FilterChip(
-                                    selected = plannerGroupId == group.id,
-                                    onClick = {
-                                        plannerGroupId = if (plannerGroupId == group.id) "" else group.id
-                                    },
-                                    label = { Text(group.name) },
-                                )
-                            }
-                        }
-                    }
-                }
-                if (plannerMode != MeetupPlannerMode.PingGroup) {
-                    item {
-                        EventLocationAndRecurrenceFields(
-                            locationEnabled = plannerLocationEnabled,
-                            onLocationEnabledChange = { plannerLocationEnabled = it },
-                            locationName = plannerLocationName,
-                            onLocationNameChange = { plannerLocationName = it },
-                            locationLatitude = plannerLocationLatitude,
-                            onLocationLatitudeChange = { plannerLocationLatitude = it },
-                            locationLongitude = plannerLocationLongitude,
-                            onLocationLongitudeChange = { plannerLocationLongitude = it },
-                            currentLocationSuburb = currentLocationSuburb,
-                            currentLatitude = currentLatitude,
-                            currentLongitude = currentLongitude,
-                            onUseCurrentLocation = {
-                                plannerLocationEnabled = true
-                                plannerLocationName = currentLocationSuburb.orEmpty()
-                                plannerLocationLatitude = currentLatitude?.let { value ->
-                                    String.format(Locale.US, "%.6f", value)
-                                }.orEmpty()
-                                plannerLocationLongitude = currentLongitude?.let { value ->
-                                    String.format(Locale.US, "%.6f", value)
-                                }.orEmpty()
-                            },
-                            recurrence = plannerRecurrence,
-                            onRecurrenceChange = { plannerRecurrence = it },
-                            recurrenceInterval = plannerRecurrenceInterval,
-                            onRecurrenceIntervalChange = { plannerRecurrenceInterval = it },
-                        )
-                    }
-                    if (!plannerLocationValid) {
-                        item {
-                            Text(
-                                "Pick an event location on the map.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                    }
-                    if (!plannerRecurrenceValid) {
-                        item {
-                            Text(
-                                "Recurring events need an interval between 1 and 30.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                    }
-                }
-                item {
-                Row(horizontalArrangement = Arrangement.spacedBy(CommunitySpaceXs), modifier = Modifier.fillMaxWidth()) {
-                    Button(
-                        enabled = !loading && canSubmitPlanner,
-                        onClick = {
-                            val now = SystemClock.elapsedRealtime()
-                            if (now - lastPlannerSubmitAt < 900L) return@Button
-                            lastPlannerSubmitAt = now
-                            val title = plannerTitle.trim()
-                            val description = plannerDescription.trim()
-                                val normalizedPhotoUrls = plannerPhotoUrls
-                                    .split(",")
-                                    .map { value -> value.trim() }
-                                    .filter { value -> value.isNotBlank() }
-                                val photoDetails = if (normalizedPhotoUrls.isEmpty()) {
-                                    ""
-                                } else {
-                                    "\n\nPhotos: ${normalizedPhotoUrls.joinToString(", ")}"
-                                }
-                                val taggedGroupName = plannerGroupId
-                                    .trim()
-                                    .takeIf { value -> value.isNotBlank() }
-                                    ?.let { groupId -> groupNameById[groupId] ?: groupId }
-                                when (plannerMode) {
-                                    MeetupPlannerMode.PingGroup -> {
-                                        val pingBody = buildString {
-                                            append(description)
-                                            if (plannerDate.trim().isNotBlank() && parsedPlannerDate != null) {
-                                                append("\nTime: ${formatIsoDateTime(plannerDate.trim())}")
-                                            }
-                                            taggedGroupName?.let { append("\nGroup: $it") }
-                                            append(photoDetails)
-                                        }
-                                        onCreateGroupPost(title, pingBody, suburb)
-                                    }
-
-                                    MeetupPlannerMode.CreateEvent, MeetupPlannerMode.ComplexEvent -> {
-                                        val eventDescription = buildString {
-                                            append(description)
-                                            taggedGroupName?.let { append("\n\nTagged group: $it") }
-                                            if (plannerMode == MeetupPlannerMode.ComplexEvent) {
-                                                append("\n\nPlanning mode: complex event")
-                                            }
-                                            append(photoDetails)
-                                        }
-                                        onCreateEvent(
-                                            title,
-                                            eventDescription,
-                                            plannerDate.trim(),
-                                            if (plannerPublic) null else plannerGroupId.trim().ifBlank { null },
-                                            plannerLocationName.trim().ifBlank { null },
-                                            if (plannerLocationEnabled) plannerLat else null,
-                                            if (plannerLocationEnabled) plannerLng else null,
-                                            plannerRecurrence,
-                                            if (plannerRecurrence == "none") 1 else (plannerRecurrenceIntervalInt ?: 1),
-                                        )
-                                    }
-                                }
-                                plannerTitle = ""
-                                plannerDescription = ""
-                                plannerDate = "2026-02-28T10:00:00Z"
-                                plannerGroupId = ""
-                                plannerPhotoUrls = ""
-                                plannerPublic = true
-                                plannerLocationEnabled = false
-                                plannerLocationName = ""
-                                plannerLocationLatitude = ""
-                                plannerLocationLongitude = ""
-                                plannerRecurrence = "none"
-                                plannerRecurrenceInterval = "1"
-                                showMeetupPlannerSheet = false
-                            },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(
-                                when (plannerMode) {
-                                    MeetupPlannerMode.PingGroup -> "Send ping"
-                                    MeetupPlannerMode.CreateEvent -> "Create event"
-                                    MeetupPlannerMode.ComplexEvent -> "Plan event"
-                                }
-                            )
-                        }
-                        OutlinedButton(
-                            enabled = !loading,
-                            onClick = { showMeetupPlannerSheet = false },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Close")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     selectedPost?.let { post ->
         val loadedComments = postCommentsByPostId[post.id].orEmpty()
         val commentsLoading = post.id in loadingCommentPostIds
@@ -1393,14 +1155,22 @@ fun CommunityScreen(
                 onCreatePostComment(post.id, body, parentCommentId)
             },
             onModerateComment = onModeratePostComment,
+            isLiked = post.id in likedPostIds,
+            isReported = post.id in reportedPostIds,
             isSaved = post.id in savedPostIds,
             onReportPost = { postId, reason, details -> onReportPost(postId, reason, details) },
+            onOpenMessages = onOpenMessages,
             onBlockUser = onBlockUser,
             onDeletePost = onDeletePost,
+            onToggleLikePost = onToggleLikePost,
             onToggleSavePost = onToggleSavePost,
             onResolveLostFound = { postId, status, note ->
                 onResolveLostFound(postId, status, note)
-                selectedPost = null
+                selectedPost = selectedPost?.copy(
+                    alertStatus = status,
+                    resolvedAt = Instant.now().toString(),
+                    resolvedNote = note.trim().takeIf { it.isNotBlank() },
+                )
             },
             onDismiss = { selectedPost = null },
         )
@@ -1417,7 +1187,19 @@ fun CommunityScreen(
                 selectedEvent = null
                 eventCommentInput = ""
             },
-            onRsvpEvent = { eventId, attending -> onRsvpEvent(eventId, attending) },
+            onRsvpEvent = { eventId, attending ->
+                onRsvpEvent(eventId, attending)
+                selectedEvent = selectedEvent?.takeIf { selected -> selected.id == eventId }?.let { selected ->
+                    selected.copy(
+                        rsvpStatus = if (attending) "attending" else "none",
+                        attendeeCount = if (attending) {
+                            if (selected.rsvpStatus == "attending") selected.attendeeCount else selected.attendeeCount + 1
+                        } else {
+                            if (selected.rsvpStatus == "attending") (selected.attendeeCount - 1).coerceAtLeast(0) else selected.attendeeCount
+                        },
+                    )
+                }
+            },
             onReportEvent = { eventId ->
                 onReportEvent(eventId, "Safety concern", "Reported from event details")
             },
@@ -1426,6 +1208,9 @@ fun CommunityScreen(
                 if (event.createdBy.isNotBlank()) {
                     onOpenMessages(event.createdBy)
                 }
+            },
+            onOpenGroup = {
+                event.groupId?.let(onOpenGroup)
             },
             onOpenCalendar = { selected ->
                 communityEventToCalendarDraft(selected)?.let { draft ->
@@ -1499,6 +1284,26 @@ fun CommunityScreen(
                 eventCommentInput = presetComment.orEmpty()
             },
             onOpenPost = { post -> selectedPost = post },
+            onCreateEvent = {
+                createEventTitle = ""
+                createEventDetail = ""
+                createEventInvitees = ""
+                createEventDate = defaultCommunityEventDate()
+                createEventGroupId = group.id
+                createEventOpenAccess = true
+                createEventLocationEnabled = false
+                createEventLocationName = group.suburb
+                createEventLocationLatitude = currentLatitude?.let { value -> String.format(Locale.US, "%.6f", value) }.orEmpty()
+                createEventLocationLongitude = currentLongitude?.let { value -> String.format(Locale.US, "%.6f", value) }.orEmpty()
+                showCreateEventDialog = true
+            },
+            onCreatePost = {
+                createPostTitle = ""
+                createPostBody = ""
+                createPostImageUrls = ""
+                createPostTargetSuburb = group.suburb
+                showCreatePostDialog = true
+            },
             onDismiss = onDismissSelectedGroup,
         )
     }
@@ -1541,545 +1346,440 @@ fun CommunityScreen(
     }
 
     if (showCreatePostDialog) {
-        val eventDateOptions = remember { eventDatePresets() }
-        val createEventLat = parseCoordinateOrNull(createEventLocationLatitude)
-        val createEventLng = parseCoordinateOrNull(createEventLocationLongitude)
-        val createEventLocationValid = !createEventLocationEnabled || (createEventLat != null && createEventLng != null)
-        val createEventRecurrenceIntervalInt = createEventRecurrenceInterval.trim().toIntOrNull()
-        val createEventRecurrenceValid = createEventRecurrence == "none" ||
-            (createEventRecurrenceIntervalInt != null && createEventRecurrenceIntervalInt in 1..30)
-        val createSharePointLat = parseCoordinateOrNull(createSharePointLatitude)
-        val createSharePointLng = parseCoordinateOrNull(createSharePointLongitude)
-        val createSharePointLocationValid = createSharePointLat != null && createSharePointLng != null
-        val parsedSharePointAt = parseIsoInstant(createSharePointAt.trim())
-        val createSharePointTimeValid = createSharePointMode == "now" || parsedSharePointAt != null
-        val createSharePointWindowValid = createSharePointMode == "now" ||
-            (parsedSharePointAt != null && !parsedSharePointAt.isAfter(Instant.now().plus(24, ChronoUnit.HOURS)))
-        fun resetCreatePostInputs() {
-            createPostTitle = ""
-            createPostBody = ""
-            createEventDate = "2026-02-28T10:00:00Z"
-            createEventGroupId = ""
-            createEventLocationEnabled = false
-            createEventLocationName = ""
-            createEventLocationLatitude = ""
-            createEventLocationLongitude = ""
-            createEventRecurrence = "none"
-            createEventRecurrenceInterval = "1"
-            createSharePointLocationName = ""
-            createSharePointLatitude = ""
-            createSharePointLongitude = ""
-            createSharePointMode = "now"
-            createSharePointAt = "2026-03-06T09:00:00Z"
-            createSharePointScope = "friends"
-            createSharePointPrecision = "approximate"
-            createLostFoundAlertType = "lost"
-            createLostFoundPetName = ""
-            createLostFoundPetTraits = ""
-            createLostFoundLastSeenLocation = ""
-            createLostFoundLastSeenAt = ""
-            createLostFoundContactPref = ""
-            createLostFoundPhotoUrls = ""
-            showCreatePostDialog = false
-        }
-        AlertDialog(
-            onDismissRequest = { showCreatePostDialog = false },
-            title = { Text("Create post") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        item {
-                            FilterChip(
-                                selected = createPostType == "group_post",
-                                onClick = { createPostType = "group_post" },
-                                label = { Text("Discussion") },
-                            )
-                        }
-                        item {
-                            FilterChip(
-                                selected = createPostType == "lost_found",
-                                onClick = { createPostType = "lost_found" },
-                                label = { Text("Lost/Found") },
-                            )
-                        }
-                        item {
-                            FilterChip(
-                                selected = createPostType == "community_event",
-                                onClick = { createPostType = "community_event" },
-                                label = { Text("Event") },
-                            )
-                        }
-                        item {
-                            FilterChip(
-                                selected = createPostType == "share_point",
-                                onClick = { createPostType = "share_point" },
-                                label = { Text("Share point") },
-                            )
-                        }
-                    }
-                    OutlinedTextField(
-                        value = createPostTitle,
-                        onValueChange = { createPostTitle = it },
-                        label = {
-                            Text(
-                                when (createPostType) {
-                                    "lost_found" -> "Lost & Found title"
-                                    "community_event" -> "Event title"
-                                    "share_point" -> "Share title"
-                                    else -> "Post title"
-                                },
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = createPostBody,
-                        onValueChange = { createPostBody = it },
-                        label = {
-                            Text(
-                                when (createPostType) {
-                                    "community_event" -> "Event description"
-                                    "lost_found" -> "Additional details"
-                                    "share_point" -> "Note for friends"
-                                    else -> "Details"
-                                },
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2,
-                        maxLines = 4,
-                    )
-                    if (createPostType == "lost_found") {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = createLostFoundAlertType == "lost",
-                                onClick = { createLostFoundAlertType = "lost" },
-                                label = { Text("Lost") },
-                            )
-                            FilterChip(
-                                selected = createLostFoundAlertType == "found",
-                                onClick = { createLostFoundAlertType = "found" },
-                                label = { Text("Found") },
-                            )
-                        }
-                        OutlinedTextField(
-                            value = createLostFoundPetName,
-                            onValueChange = { createLostFoundPetName = it },
-                            label = { Text("Pet name (optional)") },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = createLostFoundPetTraits,
-                            onValueChange = { createLostFoundPetTraits = it },
-                            label = { Text("Pet traits (required)") },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = createLostFoundLastSeenLocation,
-                            onValueChange = { createLostFoundLastSeenLocation = it },
-                            label = { Text("Last seen location (required)") },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = createLostFoundLastSeenAt,
-                            onValueChange = { createLostFoundLastSeenAt = it },
-                            label = { Text("Last seen time (optional ISO, e.g. 2026-02-21T18:30:00Z)") },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = createLostFoundContactPref,
-                            onValueChange = { createLostFoundContactPref = it },
-                            label = { Text("Contact preference (required)") },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = createLostFoundPhotoUrls,
-                            onValueChange = { createLostFoundPhotoUrls = it },
-                            label = { Text("Photo URLs (comma-separated, optional)") },
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 1,
-                            maxLines = 2,
-                        )
-                    }
-                    if (createPostType == "community_event") {
-                        val parsedEventInstant = parseIsoInstant(createEventDate.trim())
-                        val createEventDateLabel = createEventDate.trim()
-                            .takeIf { it.isNotBlank() }
-                            ?.let(::formatIsoDateTime)
-                            ?: "Tap to choose a date"
-                        OutlinedTextField(
-                            value = createEventDateLabel,
-                            onValueChange = {},
-                            label = { Text("Event day") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showIsoDatePicker(
-                                        context = context,
-                                        currentIsoValue = createEventDate.trim(),
-                                        fallbackHour = 10,
-                                    ) { selectedIso ->
-                                        createEventDate = selectedIso
-                                    }
-                                },
-                            readOnly = true,
-                            trailingIcon = {
-                                IconButton(
-                                    onClick = {
-                                        showIsoDatePicker(
-                                            context = context,
-                                            currentIsoValue = createEventDate.trim(),
-                                            fallbackHour = 10,
-                                        ) { selectedIso ->
-                                            createEventDate = selectedIso
-                                        }
-                                    },
-                                ) {
-                                    Icon(Icons.Default.Event, contentDescription = "Choose event date")
-                                }
-                            },
-                        )
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(eventDateOptions, key = { option -> "event_date_${option.label}" }) { option ->
-                                FilterChip(
-                                    selected = createEventDate.trim() == option.value,
-                                    onClick = { createEventDate = option.value },
-                                    label = { Text(option.label) },
-                                )
-                            }
-                        }
-                        if (parsedEventInstant == null) {
-                            Text(
-                                "Use a valid ISO datetime with timezone, e.g. 2026-02-28T10:00:00Z",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        } else {
-                            Text(
-                                "Scheduled ${formatRelativeDay(createEventDate)} • ${formatIsoDateTime(createEventDate)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (joinedGroups.isNotEmpty()) {
-                            Text(
-                                "Post as neighborhood event, or attach to a joined group:",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                item {
-                                    FilterChip(
-                                        selected = createEventGroupId.isBlank(),
-                                        onClick = { createEventGroupId = "" },
-                                        label = { Text("No group") },
-                                    )
-                                }
-                                items(joinedGroups, key = { group -> "event_group_${group.id}" }) { group ->
-                                    FilterChip(
-                                        selected = createEventGroupId == group.id,
-                                        onClick = {
-                                            createEventGroupId = if (createEventGroupId == group.id) "" else group.id
-                                        },
-                                        label = { Text(group.name) },
-                                    )
-                                }
-                            }
-                        }
-                        OutlinedTextField(
-                            value = createEventGroupId,
-                            onValueChange = { createEventGroupId = it },
-                            label = { Text("Group ID (optional, advanced)") },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        EventLocationAndRecurrenceFields(
-                            locationEnabled = createEventLocationEnabled,
-                            onLocationEnabledChange = { createEventLocationEnabled = it },
-                            locationName = createEventLocationName,
-                            onLocationNameChange = { createEventLocationName = it },
-                            locationLatitude = createEventLocationLatitude,
-                            onLocationLatitudeChange = { createEventLocationLatitude = it },
-                            locationLongitude = createEventLocationLongitude,
-                            onLocationLongitudeChange = { createEventLocationLongitude = it },
-                            currentLocationSuburb = currentLocationSuburb,
-                            currentLatitude = currentLatitude,
-                            currentLongitude = currentLongitude,
-                            onUseCurrentLocation = {
-                                createEventLocationEnabled = true
-                                createEventLocationName = currentLocationSuburb.orEmpty()
-                                createEventLocationLatitude = currentLatitude?.let { value ->
-                                    String.format(Locale.US, "%.6f", value)
-                                }.orEmpty()
-                                createEventLocationLongitude = currentLongitude?.let { value ->
-                                    String.format(Locale.US, "%.6f", value)
-                                }.orEmpty()
-                            },
-                            recurrence = createEventRecurrence,
-                            onRecurrenceChange = { createEventRecurrence = it },
-                            recurrenceInterval = createEventRecurrenceInterval,
-                            onRecurrenceIntervalChange = { createEventRecurrenceInterval = it },
-                        )
-                        if (!createEventLocationValid) {
-                            Text(
-                                "Pick an event location on the map.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                        if (!createEventRecurrenceValid) {
-                            Text(
-                                "Recurring events need an interval between 1 and 30.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                    }
-                    if (createPostType == "share_point") {
-                        Text(
-                            "Share a map pin safely. \"Now\" auto-expires in 1 hour.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            "Location permission is used only to place your selected map pin.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = createSharePointMode == "now",
-                                onClick = { createSharePointMode = "now" },
-                                label = { Text("Now (1h)") },
-                            )
-                            FilterChip(
-                                selected = createSharePointMode == "at_time",
-                                onClick = { createSharePointMode = "at_time" },
-                                label = { Text("At x time") },
-                            )
-                        }
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            item {
-                                FilterChip(
-                                    selected = createSharePointScope == "friends",
-                                    onClick = { createSharePointScope = "friends" },
-                                    label = { Text("Friends only (Recommended)") },
-                                )
-                            }
-                            item {
-                                FilterChip(
-                                    selected = createSharePointScope == "community",
-                                    onClick = { createSharePointScope = "community" },
-                                    label = { Text("Community") },
-                                )
-                            }
-                        }
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            item {
-                                FilterChip(
-                                    selected = createSharePointPrecision == "approximate",
-                                    onClick = { createSharePointPrecision = "approximate" },
-                                    label = { Text("Approximate (Recommended)") },
-                                )
-                            }
-                            item {
-                                FilterChip(
-                                    selected = createSharePointPrecision == "exact",
-                                    onClick = { createSharePointPrecision = "exact" },
-                                    label = { Text("Exact") },
-                                )
-                            }
-                        }
-                        Text(
-                            text = if (createSharePointScope == "friends") {
-                                "Who can see this: Friends only"
-                            } else {
-                                "Who can see this: Community members nearby"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        TextButton(
-                            onClick = {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(BARKWISE_PRIVACY_POLICY_URL)),
-                                )
-                            },
-                        ) {
-                            Text("Open privacy policy")
-                        }
-                        OutlinedButton(
-                            enabled = currentLatitude != null && currentLongitude != null,
-                            onClick = {
-                                createSharePointLocationName = currentLocationSuburb.orEmpty()
-                                createSharePointLatitude = currentLatitude?.let { value ->
-                                    String.format(Locale.US, "%.6f", value)
-                                }.orEmpty()
-                                createSharePointLongitude = currentLongitude?.let { value ->
-                                    String.format(Locale.US, "%.6f", value)
-                                }.orEmpty()
-                            },
-                        ) {
-                            val label = currentLocationSuburb?.takeIf { it.isNotBlank() } ?: "current location"
-                            Text("Use $label")
-                        }
-                        OutlinedTextField(
-                            value = createSharePointLocationName,
-                            onValueChange = { createSharePointLocationName = it },
-                            label = { Text("Location label (optional)") },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedTextField(
-                                value = createSharePointLatitude,
-                                onValueChange = { createSharePointLatitude = it },
-                                label = { Text("Latitude") },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                            )
-                            OutlinedTextField(
-                                value = createSharePointLongitude,
-                                onValueChange = { createSharePointLongitude = it },
-                                label = { Text("Longitude") },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                            )
-                        }
-                        if (!createSharePointLocationValid) {
-                            Text(
-                                "Pick a valid map location.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                        if (createSharePointMode == "at_time") {
-                            OutlinedTextField(
-                                value = createSharePointAt,
-                                onValueChange = { createSharePointAt = it },
-                                label = { Text("Share time (ISO, e.g. 2026-03-06T09:00:00Z)") },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            if (!createSharePointTimeValid) {
-                                Text(
-                                    "Use a valid ISO datetime with timezone.",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            } else if (!createSharePointWindowValid) {
-                                Text(
-                                    "Scheduled shares must be within the next 24 hours.",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                val canSubmit = when (createPostType) {
-                    "community_event" -> {
-                        createPostTitle.isNotBlank() &&
-                            createPostBody.isNotBlank() &&
-                            createEventDate.isNotBlank() &&
-                            parseIsoInstant(createEventDate.trim()) != null &&
-                            createEventLocationValid &&
-                            createEventRecurrenceValid
-                    }
-                    "lost_found" -> {
-                        createPostTitle.isNotBlank() &&
-                            createPostBody.isNotBlank() &&
-                            createLostFoundPetTraits.isNotBlank() &&
-                            createLostFoundLastSeenLocation.isNotBlank() &&
-                            createLostFoundContactPref.isNotBlank()
-                    }
-                    "share_point" -> {
-                        createPostTitle.isNotBlank() &&
-                            createPostBody.isNotBlank() &&
-                            createSharePointLocationValid &&
-                            createSharePointTimeValid &&
-                            createSharePointWindowValid
-                    }
-                    else -> {
-                        createPostTitle.isNotBlank() && createPostBody.isNotBlank()
-                    }
-                }
-                Button(
-                    enabled = !loading && canSubmit,
-                    onClick = {
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastCreatePostSubmitAt < 900L) return@Button
-                        lastCreatePostSubmitAt = now
-                        if (createPostType == "lost_found") {
-                            onCreateLostFound(
-                                CommunityPostCreate(
-                                    type = "lost_found",
-                                    title = createPostTitle.trim(),
-                                    body = createPostBody.trim(),
-                                    suburb = suburb,
-                                    alertType = createLostFoundAlertType,
-                                    alertStatus = "open",
-                                    petName = createLostFoundPetName.trim().ifBlank { null },
-                                    petTraits = createLostFoundPetTraits.trim(),
-                                    lastSeenAt = createLostFoundLastSeenAt.trim().ifBlank { null },
-                                    lastSeenLocation = createLostFoundLastSeenLocation.trim(),
-                                    contactPref = createLostFoundContactPref.trim(),
-                                    photoUrls = createLostFoundPhotoUrls
-                                        .split(",")
-                                        .map { it.trim() }
-                                        .filter { it.isNotBlank() },
-                                ),
-                            )
-                        } else if (createPostType == "community_event") {
-                            onCreateEvent(
+        ModalBottomSheet(onDismissRequest = { showCreatePostDialog = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Create post", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Create a post with a title, body, and optional image.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = createPostTitle,
+                    onValueChange = { createPostTitle = it },
+                    label = { Text("Title") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = createPostBody,
+                    onValueChange = { createPostBody = it },
+                    label = { Text("Post") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4,
+                    maxLines = 6,
+                )
+                OutlinedTextField(
+                    value = createPostImageUrls,
+                    onValueChange = { createPostImageUrls = it },
+                    label = { Text("Upload image (URLs, comma-separated)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 1,
+                    maxLines = 2,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        enabled = !loading && createPostTitle.isNotBlank() && createPostBody.isNotBlank(),
+                        onClick = {
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastCreatePostSubmitAt < 900L) return@Button
+                            lastCreatePostSubmitAt = now
+                            onCreateGroupPost(
                                 createPostTitle.trim(),
                                 createPostBody.trim(),
+                                createPostTargetSuburb,
+                                createPostImageUrls.split(",").map { it.trim() }.filter { it.isNotBlank() },
+                            )
+                            createPostTitle = ""
+                            createPostBody = ""
+                            createPostImageUrls = ""
+                            showCreatePostDialog = false
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Post")
+                    }
+                    OutlinedButton(
+                        enabled = !loading,
+                        onClick = { showCreatePostDialog = false },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Save draft")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCreateEventDialog) {
+        val createEventLat = parseCoordinateOrNull(createEventLocationLatitude)
+        val createEventLng = parseCoordinateOrNull(createEventLocationLongitude)
+        val parsedEventInstant = parseIsoInstant(createEventDate.trim())
+        val createEventInPast = parsedEventInstant?.isBefore(Instant.now()) == true
+        ModalBottomSheet(onDismissRequest = { showCreateEventDialog = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Create event", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Create an event with invite settings and a map location.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = createEventTitle,
+                    onValueChange = { createEventTitle = it },
+                    label = { Text("Title") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = createEventDetail,
+                    onValueChange = { createEventDetail = it },
+                    label = { Text("Detail") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 5,
+                )
+                OutlinedTextField(
+                    value = createEventInvitees,
+                    onValueChange = { createEventInvitees = it },
+                    label = { Text("Invitees") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Text(
+                    "Open or closed event",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = createEventOpenAccess,
+                        onClick = { createEventOpenAccess = true },
+                        label = { Text("Open to anyone") },
+                    )
+                    FilterChip(
+                        selected = !createEventOpenAccess,
+                        onClick = { createEventOpenAccess = false },
+                        label = { Text("Closed to invitees") },
+                    )
+                }
+                val eventDateLabel = createEventDate.trim().takeIf { it.isNotBlank() }?.let(::formatIsoDateTime) ?: "Tap to choose a date"
+                OutlinedTextField(
+                    value = eventDateLabel,
+                    onValueChange = {},
+                    label = { Text("When") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            showIsoDatePicker(context, createEventDate.trim(), 10) { selectedIso ->
+                                createEventDate = selectedIso
+                            }
+                        },
+                    readOnly = true,
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                showIsoDatePicker(context, createEventDate.trim(), 10) { selectedIso ->
+                                    createEventDate = selectedIso
+                                }
+                            },
+                        ) {
+                            Icon(Icons.Default.Event, contentDescription = "Choose date")
+                        }
+                    },
+                )
+                CommunityMapLocationPicker(
+                    label = "Location (Map)",
+                    helperText = "Tap the map to choose the event location.",
+                    locationName = createEventLocationName,
+                    onLocationNameChange = { createEventLocationName = it },
+                    latitude = createEventLocationLatitude,
+                    onLatitudeChange = {
+                        createEventLocationEnabled = true
+                        createEventLocationLatitude = it
+                    },
+                    longitude = createEventLocationLongitude,
+                    onLongitudeChange = {
+                        createEventLocationEnabled = true
+                        createEventLocationLongitude = it
+                    },
+                    currentLocationSuburb = currentLocationSuburb,
+                    currentLatitude = currentLatitude,
+                    currentLongitude = currentLongitude,
+                    onUseCurrentLocation = {
+                        createEventLocationEnabled = true
+                        createEventLocationName = currentLocationSuburb.orEmpty()
+                        createEventLocationLatitude = currentLatitude?.let { String.format(Locale.US, "%.6f", it) }.orEmpty()
+                        createEventLocationLongitude = currentLongitude?.let { String.format(Locale.US, "%.6f", it) }.orEmpty()
+                    },
+                )
+                if (createEventInPast) {
+                    Text(
+                        "Choose a future date and time so the event appears in the upcoming list.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        enabled = !loading &&
+                            createEventTitle.isNotBlank() &&
+                            createEventDetail.isNotBlank() &&
+                            parsedEventInstant != null &&
+                            !createEventInPast &&
+                            createEventLat != null &&
+                            createEventLng != null,
+                        onClick = {
+                            val detail = buildString {
+                                append(createEventDetail.trim())
+                                if (createEventInvitees.isNotBlank()) append("\n\nInvitees: ${createEventInvitees.trim()}")
+                                append("\nAccess: ${if (createEventOpenAccess) "Open to anyone" else "Closed to invitees"}")
+                            }
+                            onCreateEvent(
+                                createEventTitle.trim(),
+                                detail,
                                 createEventDate.trim(),
                                 createEventGroupId.trim().ifBlank { null },
                                 createEventLocationName.trim().ifBlank { null },
-                                if (createEventLocationEnabled) createEventLat else null,
-                                if (createEventLocationEnabled) createEventLng else null,
-                                createEventRecurrence,
-                                if (createEventRecurrence == "none") 1 else (createEventRecurrenceIntervalInt ?: 1),
+                                createEventLat,
+                                createEventLng,
+                                "none",
+                                1,
                             )
-                        } else if (createPostType == "share_point") {
+                            createEventTitle = ""
+                            createEventDetail = ""
+                            createEventInvitees = ""
+                            createEventDate = defaultCommunityEventDate()
+                            createEventGroupId = ""
+                            createEventLocationName = ""
+                            createEventLocationLatitude = ""
+                            createEventLocationLongitude = ""
+                            createEventOpenAccess = true
+                            createEventLocationEnabled = false
+                            showCreateEventDialog = false
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Create event")
+                    }
+                    OutlinedButton(
+                        enabled = !loading,
+                        onClick = { showCreateEventDialog = false },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCreateLostFoundDialog) {
+        val lostLat = parseCoordinateOrNull(createLostFoundLatitude)
+        val lostLng = parseCoordinateOrNull(createLostFoundLongitude)
+        ModalBottomSheet(onDismissRequest = { showCreateLostFoundDialog = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Create lost & found", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Create a focused alert with details and a map location.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = createLostFoundTitle,
+                    onValueChange = { createLostFoundTitle = it },
+                    label = { Text("Title") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = createLostFoundDetail,
+                    onValueChange = { createLostFoundDetail = it },
+                    label = { Text("Detail") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4,
+                    maxLines = 6,
+                )
+                CommunityMapLocationPicker(
+                    label = "Lost / found location (Map)",
+                    helperText = "Tap the map to choose where the pet was last seen or found.",
+                    locationName = createLostFoundLastSeenLocation,
+                    onLocationNameChange = { createLostFoundLastSeenLocation = it },
+                    latitude = createLostFoundLatitude,
+                    onLatitudeChange = { createLostFoundLatitude = it },
+                    longitude = createLostFoundLongitude,
+                    onLongitudeChange = { createLostFoundLongitude = it },
+                    currentLocationSuburb = currentLocationSuburb,
+                    currentLatitude = currentLatitude,
+                    currentLongitude = currentLongitude,
+                    onUseCurrentLocation = {
+                        createLostFoundLastSeenLocation = currentLocationSuburb.orEmpty()
+                        createLostFoundLatitude = currentLatitude?.let { String.format(Locale.US, "%.6f", it) }.orEmpty()
+                        createLostFoundLongitude = currentLongitude?.let { String.format(Locale.US, "%.6f", it) }.orEmpty()
+                    },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        enabled = !loading && createLostFoundTitle.isNotBlank() && createLostFoundDetail.isNotBlank() && createLostFoundLastSeenLocation.isNotBlank() && lostLat != null && lostLng != null,
+                        onClick = {
+                            onCreateLostFound(
+                                CommunityPostCreate(
+                                    type = "lost_found",
+                                    title = createLostFoundTitle.trim(),
+                                    body = createLostFoundDetail.trim(),
+                                    suburb = suburb,
+                                    alertType = createLostFoundAlertType,
+                                    alertStatus = "open",
+                                    lastSeenLocation = createLostFoundLastSeenLocation.trim(),
+                                    latitude = lostLat,
+                                    longitude = lostLng,
+                                ),
+                            )
+                            createLostFoundTitle = ""
+                            createLostFoundDetail = ""
+                            createLostFoundLastSeenLocation = ""
+                            createLostFoundLatitude = ""
+                            createLostFoundLongitude = ""
+                            showCreateLostFoundDialog = false
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Publish alert")
+                    }
+                    OutlinedButton(
+                        enabled = !loading,
+                        onClick = { showCreateLostFoundDialog = false },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Save draft")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showLocationShareSettingsDialog) {
+        val shareLat = parseCoordinateOrNull(createSharePointLatitude)
+        val shareLng = parseCoordinateOrNull(createSharePointLongitude)
+        ModalBottomSheet(onDismissRequest = { showLocationShareSettingsDialog = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Location sharing settings", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    if (locationSharePreviewActive) {
+                        "Your temporary share is live and this screen now reflects the active state."
+                    } else {
+                        "Manage who can see a temporary location share and how precise it should be."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (locationSharePreviewActive) {
+                    AssistChip(onClick = {}, label = { Text("Sharing live") })
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = createSharePointScope == "friends",
+                        onClick = { createSharePointScope = "friends" },
+                        label = { Text("Friends only") },
+                    )
+                    FilterChip(
+                        selected = createSharePointScope == "community",
+                        onClick = { createSharePointScope = "community" },
+                        label = { Text("Community") },
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = createSharePointPrecision == "approximate",
+                        onClick = { createSharePointPrecision = "approximate" },
+                        label = { Text("Approximate") },
+                    )
+                    FilterChip(
+                        selected = createSharePointPrecision == "exact",
+                        onClick = { createSharePointPrecision = "exact" },
+                        label = { Text("Exact") },
+                    )
+                }
+                CommunityMapLocationPicker(
+                    label = "Location label",
+                    helperText = "Tap the map to choose the shared area for this temporary location share.",
+                    locationName = createSharePointLocationName,
+                    onLocationNameChange = { createSharePointLocationName = it },
+                    latitude = createSharePointLatitude,
+                    onLatitudeChange = { createSharePointLatitude = it },
+                    longitude = createSharePointLongitude,
+                    onLongitudeChange = { createSharePointLongitude = it },
+                    currentLocationSuburb = currentLocationSuburb,
+                    currentLatitude = currentLatitude,
+                    currentLongitude = currentLongitude,
+                    onUseCurrentLocation = {
+                        createSharePointLocationName = currentLocationSuburb.orEmpty()
+                        createSharePointLatitude = currentLatitude?.let { String.format(Locale.US, "%.6f", it) }.orEmpty()
+                        createSharePointLongitude = currentLongitude?.let { String.format(Locale.US, "%.6f", it) }.orEmpty()
+                    },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        enabled = !loading && shareLat != null && shareLng != null && !locationSharePreviewActive,
+                        onClick = {
                             val payload = CommunityPostCreate(
                                 type = "share_point",
-                                title = createPostTitle.trim(),
-                                body = createPostBody.trim(),
+                                title = "Location share",
+                                body = "Temporary location share from Alerts",
                                 suburb = suburb,
-                                lastSeenAt = if (createSharePointMode == "now") {
-                                    "now"
-                                } else {
-                                    createSharePointAt.trim()
-                                },
+                                lastSeenAt = "now",
                                 lastSeenLocation = createSharePointLocationName.trim().ifBlank { null },
-                                contactPref = if (createSharePointMode == "now") "share_now" else "share_at",
+                                contactPref = "share_now",
                                 shareScope = createSharePointScope,
                                 sharePrecision = createSharePointPrecision,
-                                latitude = createSharePointLat,
-                                longitude = createSharePointLng,
+                                latitude = shareLat,
+                                longitude = shareLng,
                             )
                             if (!sharePointConsentAccepted) {
                                 pendingSharePointPayload = payload
                                 showSharePointConsentDialog = true
-                                return@Button
+                            } else {
+                                onCreateSharePoint(payload)
+                                locationSharePreviewActive = true
                             }
-                            onCreateSharePoint(payload)
-                        } else {
-                            onCreateGroupPost(createPostTitle.trim(), createPostBody.trim(), suburb)
-                        }
-                        resetCreatePostInputs()
-                    },
-                ) {
-                    Text("Post")
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (locationSharePreviewActive) "Sharing live" else "Start share")
+                    }
+                    OutlinedButton(
+                        enabled = !loading,
+                        onClick = { showLocationShareSettingsDialog = false },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Close")
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreatePostDialog = false }) {
-                    Text("Cancel")
-                }
-            },
-        )
+            }
+        }
     }
 
     if (showSharePointConsentDialog) {
@@ -2097,9 +1797,11 @@ fun CommunityScreen(
                     onClick = {
                         sharePointConsentAccepted = true
                         sharePrivacyPrefs.edit().putBoolean(SHARE_POINT_CONSENT_ACK_KEY, true).apply()
-                        pendingSharePointPayload?.let { payload -> onCreateSharePoint(payload) }
+                        pendingSharePointPayload?.let { payload ->
+                            onCreateSharePoint(payload)
+                            locationSharePreviewActive = true
+                        }
                         pendingSharePointPayload = null
-                        showCreatePostDialog = false
                         showSharePointConsentDialog = false
                         createSharePointMode = "now"
                         createSharePointScope = "friends"
@@ -2123,6 +1825,80 @@ fun CommunityScreen(
     }
 }
 
+private enum class BarkwiseCommunityCardTone {
+    Neutral,
+    Highlight,
+    Alert,
+    Soft,
+}
+
+@Composable
+private fun BarkwiseCommunityCard(
+    title: String,
+    body: String,
+    tone: BarkwiseCommunityCardTone,
+    eyebrow: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val containerColor = when (tone) {
+        BarkwiseCommunityCardTone.Neutral -> MaterialTheme.colorScheme.surface
+        BarkwiseCommunityCardTone.Highlight -> MaterialTheme.colorScheme.secondaryContainer
+        BarkwiseCommunityCardTone.Alert -> MaterialTheme.colorScheme.errorContainer
+        BarkwiseCommunityCardTone.Soft -> MaterialTheme.colorScheme.surfaceContainer
+    }
+    val contentColor = when (tone) {
+        BarkwiseCommunityCardTone.Neutral, BarkwiseCommunityCardTone.Soft -> MaterialTheme.colorScheme.onSurface
+        BarkwiseCommunityCardTone.Highlight -> MaterialTheme.colorScheme.onSecondaryContainer
+        BarkwiseCommunityCardTone.Alert -> MaterialTheme.colorScheme.onErrorContainer
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = containerColor, contentColor = contentColor)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            eyebrow?.let {
+                AssistChip(onClick = {}, label = { Text(it) })
+            }
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodySmall,
+                color = contentColor.copy(alpha = 0.78f),
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+private fun BarkwiseSummaryCard(
+    title: String,
+    body: String,
+    actionLabel: String,
+    onClick: () -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = onClick) {
+                Text(actionLabel)
+            }
+        }
+    }
+}
+
 @Composable
 private fun CompactCommunityActionButton(
     enabled: Boolean,
@@ -2136,6 +1912,143 @@ private fun CompactCommunityActionButton(
             modifier = Modifier.size(44.dp),
         ) {
             icon()
+        }
+    }
+}
+
+@Composable
+private fun CommunityActionChipButton(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        enabled = enabled,
+        label = { Text(label) },
+        leadingIcon = icon,
+    )
+}
+
+@Composable
+private fun CommunityMapLocationPicker(
+    label: String,
+    helperText: String,
+    locationName: String,
+    onLocationNameChange: (String) -> Unit,
+    latitude: String,
+    onLatitudeChange: (String) -> Unit,
+    longitude: String,
+    onLongitudeChange: (String) -> Unit,
+    currentLocationSuburb: String?,
+    currentLatitude: Double?,
+    currentLongitude: Double?,
+    onUseCurrentLocation: (() -> Unit)? = null,
+) {
+    val parsedLat = parseCoordinateOrNull(latitude)
+    val parsedLng = parseCoordinateOrNull(longitude)
+    val selectedLatLng = remember(parsedLat, parsedLng) {
+        if (parsedLat != null && parsedLng != null) LatLng(parsedLat, parsedLng) else null
+    }
+    val fallbackLatLng = remember(currentLatitude, currentLongitude) {
+        if (currentLatitude != null && currentLongitude != null) LatLng(currentLatitude, currentLongitude) else null
+    }
+    val cameraPositionState = rememberCameraPositionState()
+    val mapUiSettings = remember {
+        MapUiSettings(
+            zoomControlsEnabled = false,
+            myLocationButtonEnabled = false,
+            mapToolbarEnabled = false,
+            compassEnabled = false,
+        )
+    }
+    LaunchedEffect(selectedLatLng, fallbackLatLng) {
+        val target = selectedLatLng ?: fallbackLatLng ?: LatLng(-37.8136, 144.9631)
+        cameraPositionState.move(
+            CameraUpdateFactory.newLatLngZoom(
+                target,
+                if (selectedLatLng != null) 15f else 12f,
+            ),
+        )
+    }
+
+    OutlinedTextField(
+        value = locationName,
+        onValueChange = onLocationNameChange,
+        label = { Text(label) },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+    )
+    if (onUseCurrentLocation != null) {
+        OutlinedButton(
+            enabled = currentLatitude != null && currentLongitude != null,
+            onClick = onUseCurrentLocation,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            val currentLabel = currentLocationSuburb?.takeIf { it.isNotBlank() } ?: "current location"
+            Text("Use $currentLabel")
+        }
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                helperText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            GoogleMap(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp),
+                cameraPositionState = cameraPositionState,
+                uiSettings = mapUiSettings,
+                onMapClick = { latLng ->
+                    onLatitudeChange(String.format(Locale.US, "%.6f", latLng.latitude))
+                    onLongitudeChange(String.format(Locale.US, "%.6f", latLng.longitude))
+                },
+            ) {
+                if (selectedLatLng != null) {
+                    val markerState = remember(selectedLatLng) { MarkerState(position = selectedLatLng) }
+                    Marker(
+                        state = markerState,
+                        title = locationName.ifBlank { label },
+                        snippet = currentLocationSuburb ?: "Selected location",
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (selectedLatLng != null) {
+                        locationName.takeIf { it.isNotBlank() }?.let { "Pinned near $it" } ?: "Map pin added"
+                    } else {
+                        "Tap the map to drop a pin."
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (selectedLatLng != null) {
+                    TextButton(
+                        onClick = {
+                            onLatitudeChange("")
+                            onLongitudeChange("")
+                        },
+                    ) {
+                        Text("Clear pin")
+                    }
+                }
+            }
         }
     }
 }
@@ -2182,6 +2095,12 @@ private enum class CommunityLens(val label: String) {
     LostFound("Lost & Found"),
 }
 
+private enum class OwnerCommunityTab(val label: String) {
+    Discover("Discover"),
+    MyGroups("My Groups"),
+    Alerts("Alerts"),
+}
+
 private enum class CommunityDiscoveryType(val label: String) {
     Groups("Groups"),
     Events("Events"),
@@ -2216,9 +2135,8 @@ private enum class MeetupPlannerMode(val label: String) {
 }
 
 private enum class GroupDetailTab(val label: String) {
-    About("About"),
+    Overview("Overview"),
     Events("Events"),
-    Members("Members"),
     Posts("Posts"),
 }
 
@@ -3533,7 +3451,7 @@ private fun sharePointLocationLabel(post: CommunityPost): String? {
     val lat = post.latitude
     val lng = post.longitude
     if (lat == null || lng == null) return null
-    return post.lastSeenLocation?.takeIf { it.isNotBlank() } ?: "${"%.4f".format(Locale.US, lat)}, ${"%.4f".format(Locale.US, lng)}"
+    return post.lastSeenLocation?.takeIf { it.isNotBlank() } ?: "Pinned location"
 }
 
 private fun sharePointTimingLabel(post: CommunityPost): String? {
@@ -3606,6 +3524,15 @@ private fun isEventInPast(raw: String?, now: Instant = Instant.now()): Boolean {
     val instant = parseIsoInstant(raw) ?: return false
     return instant.isBefore(now)
 }
+
+private fun defaultCommunityEventDate(now: OffsetDateTime = OffsetDateTime.now()): String =
+    now
+        .plusDays(1)
+        .withHour(10)
+        .withMinute(0)
+        .withSecond(0)
+        .withNano(0)
+        .toString()
 
 private fun filterMeetupEvents(
     events: List<CommunityEvent>,
@@ -3776,79 +3703,34 @@ private fun GroupDetailSheet(
     onOpenMessages: (String?) -> Unit,
     onOpenEventDetails: (CommunityEvent, String?) -> Unit,
     onOpenPost: (CommunityPost) -> Unit,
+    onCreateEvent: () -> Unit,
+    onCreatePost: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var selectedTabName by rememberSaveable(group.id) { mutableStateOf(GroupDetailTab.About.name) }
-    var selectedPostFilterName by rememberSaveable(group.id) { mutableStateOf(GroupPostFilter.All.name) }
-    val selectedTab = GroupDetailTab.entries.firstOrNull { tab -> tab.name == selectedTabName } ?: GroupDetailTab.About
-    val selectedPostFilter = GroupPostFilter.entries.firstOrNull { filter -> filter.name == selectedPostFilterName } ?: GroupPostFilter.All
+    var selectedTabName by rememberSaveable(group.id) { mutableStateOf(GroupDetailTab.Overview.name) }
+    val selectedTab = GroupDetailTab.entries.firstOrNull { tab -> tab.name == selectedTabName } ?: GroupDetailTab.Overview
     val sortedEvents = remember(events) { sortEventsForCommunity(events) }
-    val sortedPosts = remember(posts) { posts.sortedByDescending { post -> parseIsoInstant(post.createdAt) ?: Instant.EPOCH } }
-    val now = remember { Instant.now() }
-    val groupEvents = remember(sortedEvents, group.id) {
-        sortedEvents.filter { event -> event.groupId == group.id }
+    val sortedPosts = remember(posts) {
+        posts
+            .filter { post -> post.type == "group_post" }
+            .sortedByDescending { post -> parseIsoInstant(post.createdAt) ?: Instant.EPOCH }
     }
-    val nearbyEvents = remember(sortedEvents, group.id, group.suburb) {
+    val now = Instant.now()
+    val groupEvents = remember(sortedEvents, group.id, group.suburb) {
         sortedEvents.filter { event ->
-            event.groupId != group.id && event.suburb.equals(group.suburb, ignoreCase = true)
+            event.groupId == group.id || event.suburb.equals(group.suburb, ignoreCase = true)
         }
     }
-    val upcomingGroupEvents = remember(groupEvents, now) {
+    val upcomingEvents = remember(groupEvents, now) {
         groupEvents.filter { event ->
             val instant = parseIsoInstant(event.date) ?: return@filter true
             !instant.isBefore(now)
         }
     }
-    val needsRsvpEvents = remember(upcomingGroupEvents) {
-        upcomingGroupEvents.filter { event ->
-            event.status == "approved" && event.rsvpStatus != "attending"
-        }
-    }
-    val goingEvents = remember(upcomingGroupEvents) {
-        upcomingGroupEvents.filter { event ->
-            event.status == "approved" && event.rsvpStatus == "attending"
-        }
-    }
-    val otherUpcomingEvents = remember(upcomingGroupEvents) {
-        upcomingGroupEvents.filter { event ->
-            event.status != "approved"
-        }
-    }
-    val pastGroupEvents = remember(groupEvents, now) {
-        groupEvents.filter { event ->
-            val instant = parseIsoInstant(event.date) ?: return@filter false
-            instant.isBefore(now)
-        }
-    }
-    val filteredGroupPosts = remember(sortedPosts, selectedPostFilter) {
-        when (selectedPostFilter) {
-            GroupPostFilter.All -> sortedPosts
-            GroupPostFilter.Discussions -> sortedPosts.filter { post -> post.type == "group_post" }
-            GroupPostFilter.LostFound -> sortedPosts.filter { post -> post.type == "lost_found" }
-            GroupPostFilter.OpenLostFound -> sortedPosts.filter { post ->
-                post.type == "lost_found" && (post.alertStatus ?: "open") == "open"
-            }
-        }
-    }
-    val groupPostFilterCounts = remember(sortedPosts) {
-        mapOf(
-            GroupPostFilter.All to sortedPosts.size,
-            GroupPostFilter.Discussions to sortedPosts.count { post -> post.type == "group_post" },
-            GroupPostFilter.LostFound to sortedPosts.count { post -> post.type == "lost_found" },
-            GroupPostFilter.OpenLostFound to sortedPosts.count { post ->
-                post.type == "lost_found" && (post.alertStatus ?: "open") == "open"
-            },
-        )
-    }
-    val eventDiscussionPostById = remember(groupEvents, nearbyEvents, sortedPosts) {
-        (groupEvents + nearbyEvents)
-            .distinctBy { event -> event.id }
-            .associate { event -> event.id to findDiscussionPostForEvent(event, sortedPosts) }
-    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
         ) {
             item {
@@ -3856,7 +3738,7 @@ private fun GroupDetailSheet(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp),
+                            .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(group.name, style = MaterialTheme.typography.headlineSmall)
@@ -3879,34 +3761,9 @@ private fun GroupDetailSheet(
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            StatPill(label = "Events", value = groupEvents.size.toString())
+                            StatPill(label = "Events", value = upcomingEvents.size.toString())
                             StatPill(label = "Posts", value = sortedPosts.size.toString())
                             StatPill(label = "Active pets", value = roster.size.toString())
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            StatPill(label = "Need RSVP", value = needsRsvpEvents.size.toString())
-                            StatPill(label = "Going", value = goingEvents.size.toString())
-                            StatPill(label = "Past", value = pastGroupEvents.size.toString())
-                        }
-                        if (nearbyEvents.isNotEmpty()) {
-                            val nearbyLabel = if (nearbyEvents.size == 1) "1 event nearby" else "${nearbyEvents.size} events nearby"
-                            AssistChip(
-                                onClick = {
-                                    if (nearbyEvents.size == 1) {
-                                        onOpenEventDetails(nearbyEvents.first(), group.name)
-                                    } else {
-                                        selectedTabName = GroupDetailTab.Events.name
-                                    }
-                                },
-                                label = { Text(nearbyLabel) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Event,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                },
-                            )
                         }
                     }
                 }
@@ -3925,24 +3782,19 @@ private fun GroupDetailSheet(
             }
 
             when (selectedTab) {
-                GroupDetailTab.About -> {
+                GroupDetailTab.Overview -> {
                     item {
                         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(12.dp),
+                                    .padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Text("About this group", style = MaterialTheme.typography.titleMedium)
+                                Text("Group summary", style = MaterialTheme.typography.titleMedium)
                                 Text(
                                     text = buildGroupSummary(group, groupEvents.size, sortedPosts.size),
                                     style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Text(
-                                    text = "Co-op score ${group.cooperativeScore} • Pack ${group.myPackBuilderPoints} • Clean ${group.myCleanParkPoints}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 if (group.groupBadges.isNotEmpty()) {
                                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3955,172 +3807,104 @@ private fun GroupDetailSheet(
                         }
                     }
                     item {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text("Group status + expectations", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = "Official group, local owner-led, and best for dogs who settle after slower first greetings.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                )
+                                Text(
+                                    text = "Co-op ${group.cooperativeScore} • Pack ${group.myPackBuilderPoints} • Clean ${group.myCleanParkPoints}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                )
+                            }
+                        }
+                    }
+                    item {
                         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Text("Group basics", style = MaterialTheme.typography.titleSmall)
-                                Text("1. Keep meetup times accurate so members can plan ahead.", style = MaterialTheme.typography.bodySmall)
-                                Text("2. Add clear pet details in posts when asking for help.", style = MaterialTheme.typography.bodySmall)
-                                Text("3. Use invite links for people who are active in this suburb.", style = MaterialTheme.typography.bodySmall)
+                                Text("Local vibe", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = "Smaller first greetings, water bowls shared freely, and event notes matter more than chat volume.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
                             }
                         }
                     }
                 }
 
                 GroupDetailTab.Events -> {
-                    if (upcomingGroupEvents.isEmpty() && pastGroupEvents.isEmpty() && nearbyEvents.isEmpty()) {
-                        item {
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                                Text(
-                                    text = "No events yet. Create one from Community to start gathering this group.",
-                                    modifier = Modifier.padding(12.dp),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            }
-                        }
-                    } else {
-                        if (needsRsvpEvents.isNotEmpty()) {
-                            item { Text("Needs your RSVP", style = MaterialTheme.typography.titleSmall) }
-                            items(needsRsvpEvents.take(8), key = { event -> "need_${event.id}" }) { event ->
-                                GroupDetailEventCard(
-                                    event = event,
-                                    supportingTag = "Group event",
-                                    loading = loading,
-                                    onRsvpEvent = onRsvpEvent,
-                                    isSaved = event.id in savedEventIds,
-                                    onReportEvent = onReportEvent,
-                                    onToggleSaveEvent = onToggleSaveEvent,
-                                    onOpenMessages = onOpenMessages,
-                                    onOpenEventDetails = onOpenEventDetails,
-                                    linkedPost = eventDiscussionPostById[event.id],
-                                    onOpenDiscussion = onOpenPost,
-                                )
-                            }
-                        }
-
-                        if (goingEvents.isNotEmpty()) {
-                            item { Text("You're going", style = MaterialTheme.typography.titleSmall) }
-                            items(goingEvents.take(8), key = { event -> "going_${event.id}" }) { event ->
-                                GroupDetailEventCard(
-                                    event = event,
-                                    supportingTag = "Confirmed",
-                                    loading = loading,
-                                    onRsvpEvent = onRsvpEvent,
-                                    isSaved = event.id in savedEventIds,
-                                    onReportEvent = onReportEvent,
-                                    onToggleSaveEvent = onToggleSaveEvent,
-                                    onOpenMessages = onOpenMessages,
-                                    onOpenEventDetails = onOpenEventDetails,
-                                    linkedPost = eventDiscussionPostById[event.id],
-                                    onOpenDiscussion = onOpenPost,
-                                )
-                            }
-                        }
-
-                        if (otherUpcomingEvents.isNotEmpty()) {
-                            item { Text("Other upcoming", style = MaterialTheme.typography.titleSmall) }
-                            items(otherUpcomingEvents.take(6), key = { event -> "other_${event.id}" }) { event ->
-                                GroupDetailEventCard(
-                                    event = event,
-                                    supportingTag = "Pending approval",
-                                    loading = loading,
-                                    onRsvpEvent = onRsvpEvent,
-                                    isSaved = event.id in savedEventIds,
-                                    onReportEvent = onReportEvent,
-                                    onToggleSaveEvent = onToggleSaveEvent,
-                                    onOpenMessages = onOpenMessages,
-                                    onOpenEventDetails = onOpenEventDetails,
-                                    linkedPost = eventDiscussionPostById[event.id],
-                                    onOpenDiscussion = onOpenPost,
-                                )
-                            }
-                        }
-
-                        if (nearbyEvents.isNotEmpty()) {
-                            item { Text("Also happening in ${group.suburb}", style = MaterialTheme.typography.titleSmall) }
-                            items(nearbyEvents.take(6), key = { event -> "near_${event.id}" }) { event ->
-                                GroupDetailEventCard(
-                                    event = event,
-                                    supportingTag = "Nearby",
-                                    loading = loading,
-                                    onRsvpEvent = onRsvpEvent,
-                                    isSaved = event.id in savedEventIds,
-                                    onReportEvent = onReportEvent,
-                                    onToggleSaveEvent = onToggleSaveEvent,
-                                    onOpenMessages = onOpenMessages,
-                                    onOpenEventDetails = onOpenEventDetails,
-                                    linkedPost = eventDiscussionPostById[event.id],
-                                    onOpenDiscussion = onOpenPost,
-                                )
-                            }
-                        }
-
-                        if (pastGroupEvents.isNotEmpty()) {
-                            item { Text("Past events", style = MaterialTheme.typography.titleSmall) }
-                            items(pastGroupEvents.take(6), key = { event -> "past_${event.id}" }) { event ->
-                                GroupDetailEventCard(
-                                    event = event,
-                                    supportingTag = "Past",
-                                    loading = loading,
-                                    onRsvpEvent = onRsvpEvent,
-                                    isSaved = event.id in savedEventIds,
-                                    onReportEvent = onReportEvent,
-                                    onToggleSaveEvent = onToggleSaveEvent,
-                                    onOpenMessages = onOpenMessages,
-                                    onOpenEventDetails = onOpenEventDetails,
-                                    linkedPost = eventDiscussionPostById[event.id],
-                                    onOpenDiscussion = onOpenPost,
-                                )
-                            }
-                        }
-                    }
-                }
-
-                GroupDetailTab.Members -> {
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(12.dp),
+                                    .padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Text("Member activity", style = MaterialTheme.typography.titleSmall)
+                                Text("Create an event", style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    text = "${group.memberCount} total members • ${roster.size} recently active pets",
+                                    text = "Schedule a walk, cleanup, or meetup directly from the Events view.",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
                                 )
+                                Button(enabled = !loading, onClick = onCreateEvent) {
+                                    Text("Create event")
+                                }
                             }
                         }
                     }
-
-                    if (roster.isNotEmpty()) {
-                        item {
-                            PetRosterShowcase(
-                                title = "Recently active pets",
-                                pets = roster,
-                            )
-                        }
-                        item { Text("Recent check-ins", style = MaterialTheme.typography.titleSmall) }
-                        items(
-                            roster.sortedByDescending { item -> item.addedDate }.take(12),
-                            key = { item -> item.id },
-                        ) { item ->
-                            GroupMemberActivityRow(item = item)
-                        }
-                    } else {
+                    item {
+                        Text("Upcoming events", style = MaterialTheme.typography.titleMedium)
+                    }
+                    if (upcomingEvents.isEmpty()) {
                         item {
                             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                                 Text(
-                                    text = "No recent member check-ins yet. Ask members to share dog park updates.",
-                                    modifier = Modifier.padding(12.dp),
+                                    text = "No events are scheduled for this group yet.",
+                                    modifier = Modifier.padding(16.dp),
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
+                            }
+                        }
+                    } else {
+                        items(upcomingEvents, key = { event -> event.id }) { event ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                                modifier = Modifier.clickable { onOpenEventDetails(event, null) },
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(event.title, style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        text = "${formatIsoDateTime(event.date)} • ${event.locationName ?: event.suburb} • ${event.attendeeCount} attending",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    OutlinedButton(
+                                        enabled = !loading,
+                                        onClick = { onOpenEventDetails(event, null) },
+                                    ) {
+                                        Text("Open event")
+                                    }
+                                }
                             }
                         }
                     }
@@ -4128,37 +3912,40 @@ private fun GroupDetailSheet(
 
                 GroupDetailTab.Posts -> {
                     item {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(GroupPostFilter.entries.toList(), key = { filter -> "group_post_filter_${filter.name}" }) { filter ->
-                                FilterChip(
-                                    selected = selectedPostFilter == filter,
-                                    onClick = { selectedPostFilterName = filter.name },
-                                    label = {
-                                        Text(
-                                            "${filter.label} ${groupPostFilterCounts[filter] ?: 0}",
-                                        )
-                                    },
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text("Post tools", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    text = "Posts is where group updates and questions live.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 )
+                                Button(enabled = !loading, onClick = onCreatePost) {
+                                    Text("Create post")
+                                }
                             }
                         }
                     }
-                    if (filteredGroupPosts.isEmpty()) {
+                    item {
+                        Text("Recent posts", style = MaterialTheme.typography.titleMedium)
+                    }
+                    if (sortedPosts.isEmpty()) {
                         item {
                             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                                 Text(
-                                    text = when (selectedPostFilter) {
-                                        GroupPostFilter.All -> "No posts yet for this area."
-                                        GroupPostFilter.Discussions -> "No discussion posts yet."
-                                        GroupPostFilter.LostFound -> "No lost/found posts yet."
-                                        GroupPostFilter.OpenLostFound -> "No open lost/found posts right now."
-                                    },
-                                    modifier = Modifier.padding(12.dp),
+                                    text = "No posts yet for this group.",
+                                    modifier = Modifier.padding(16.dp),
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                             }
                         }
                     } else {
-                        items(filteredGroupPosts.take(20), key = { post -> post.id }) { post ->
+                        items(sortedPosts.take(20), key = { post -> post.id }) { post ->
                             GroupDetailPostCard(
                                 post = post,
                                 onOpenPost = { onOpenPost(post) },
@@ -4390,6 +4177,17 @@ private fun parseCoordinateOrNull(raw: String): Double? = raw
     .takeIf { value -> value.isNotBlank() }
     ?.toDoubleOrNull()
 
+private fun buildMapsIntent(latLng: LatLng, label: String?): Intent {
+    val coordinateQuery = "${latLng.latitude},${latLng.longitude}"
+    val encodedLabel = label?.trim()?.takeIf { it.isNotBlank() }?.let(Uri::encode)
+    val uri = if (encodedLabel != null) {
+        Uri.parse("geo:${latLng.latitude},${latLng.longitude}?q=$coordinateQuery($encodedLabel)")
+    } else {
+        Uri.parse("geo:${latLng.latitude},${latLng.longitude}?q=$coordinateQuery")
+    }
+    return Intent(Intent.ACTION_VIEW, uri)
+}
+
 private fun eventLocationLabel(event: CommunityEvent): String? {
     val hasLocation = event.locationLatitude != null && event.locationLongitude != null
     if (!hasLocation) return null
@@ -4517,7 +4315,7 @@ private fun EventLocationAndRecurrenceFields(
                 ) {
                     Text(
                         text = if (selectedLatLng != null) {
-                            "Pinned: ${String.format(Locale.US, "%.4f", selectedLatLng.latitude)}, ${String.format(Locale.US, "%.4f", selectedLatLng.longitude)}"
+                            locationName.takeIf { it.isNotBlank() }?.let { "Pinned near $it" } ?: "Map pin added"
                         } else {
                             "No location selected yet."
                         },
@@ -4745,11 +4543,12 @@ private fun EventDetailSheet(
     onReportEvent: (eventId: String) -> Unit,
     onToggleSaveEvent: (eventId: String) -> Unit,
     onMessageOrganizer: () -> Unit,
+    onOpenGroup: () -> Unit,
     onOpenCalendar: (CommunityEvent) -> Unit,
     onEditEvent: (CommunityEvent) -> Unit,
 ) {
     val context = LocalContext.current
-    var commentInput by rememberSaveable(event.id, initialComment) { mutableStateOf(initialComment) }
+    var rsvpPreviewStatus by rememberSaveable(event.id, event.rsvpStatus) { mutableStateOf(event.rsvpStatus) }
     val mapLatLng = remember(event.id, event.locationLatitude, event.locationLongitude) {
         event.locationLatitude?.let { lat -> event.locationLongitude?.let { lng -> LatLng(lat, lng) } }
     }
@@ -4772,31 +4571,70 @@ private fun EventDetailSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(event.title, style = MaterialTheme.typography.titleLarge)
-            Text(
-                "${formatRelativeDay(event.date)} • ${formatIsoDateTime(event.date)} • ${event.suburb}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                eventRecurrenceLabel(event)?.let { label ->
-                    AssistChip(
-                        onClick = {},
-                        label = { Text(label) },
-                        leadingIcon = { Icon(Icons.Default.Repeat, contentDescription = null, modifier = Modifier.size(16.dp)) },
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "${formatRelativeDay(event.date)} • ${formatIsoDateTime(event.date)} • ${event.locationName ?: event.suburb}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
-                }
-                eventLocationLabel(event)?.let { label ->
-                    AssistChip(
-                        onClick = {},
-                        label = { Text(label) },
-                        leadingIcon = { Icon(Icons.Default.Place, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    Text(
+                        text = event.description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        eventRecurrenceLabel(event)?.let { label ->
+                            AssistChip(
+                                onClick = {},
+                                label = { Text(label) },
+                                leadingIcon = { Icon(Icons.Default.Repeat, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            )
+                        }
+                        eventLocationLabel(event)?.let { label ->
+                            AssistChip(
+                                onClick = {},
+                                label = { Text(label) },
+                                leadingIcon = { Icon(Icons.Default.Place, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val isAttending = rsvpPreviewStatus == "attending"
+                        Button(
+                            enabled = !loading && event.status == "approved",
+                            onClick = {
+                                if (!isAttending) {
+                                    onRsvpEvent(event.id, true)
+                                    rsvpPreviewStatus = "attending"
+                                }
+                            },
+                        ) {
+                            Text(if (isAttending) "Going" else "RSVP")
+                        }
+                        OutlinedButton(
+                            enabled = !loading && event.groupId != null,
+                            onClick = onOpenGroup,
+                        ) {
+                            Text("Open group")
+                        }
+                        OutlinedButton(enabled = !loading, onClick = onMessageOrganizer) {
+                            Text("Message organizer")
+                        }
+                    }
+                    if (rsvpPreviewStatus == "attending") {
+                        AssistChip(onClick = {}, label = { Text("You are going") })
+                    }
                 }
             }
-            Text(event.description, style = MaterialTheme.typography.bodyMedium)
             if (mapLatLng != null) {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
                     Column(
@@ -4826,11 +4664,7 @@ private fun EventDetailSheet(
                         TextButton(
                             enabled = !loading,
                             onClick = {
-                                val query = "${mapLatLng.latitude},${mapLatLng.longitude}"
-                                val intent = Intent(
-                                    Intent.ACTION_VIEW,
-                                    Uri.parse("geo:$query?q=$query"),
-                                )
+                                val intent = buildMapsIntent(mapLatLng, event.locationName ?: event.title)
                                 context.startActivity(intent)
                             },
                         ) {
@@ -4839,43 +4673,34 @@ private fun EventDetailSheet(
                     }
                 }
             }
-            OutlinedTextField(
-                value = commentInput,
-                onValueChange = { commentInput = it },
-                label = { Text("Comment") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-                enabled = !loading,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(enabled = !loading, onClick = { onReportEvent(event.id) }) {
-                    Icon(Icons.Default.Flag, contentDescription = "Report event")
-                }
-                IconButton(enabled = !loading, onClick = { onToggleSaveEvent(event.id) }) {
-                    Icon(
-                        imageVector = if (isSaved) Icons.Default.TurnedIn else Icons.Default.FavoriteBorder,
-                        contentDescription = "Save event",
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Before you go", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = "Bring water, keep leads ready at arrival, and check the group notes if the weather changes.",
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                IconButton(enabled = !loading, onClick = onMessageOrganizer) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Message organizer")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(enabled = !loading, onClick = { onToggleSaveEvent(event.id) }) {
+                    Text(if (isSaved) "Saved" else "Save")
                 }
-                IconButton(enabled = !loading, onClick = { onOpenCalendar(event) }) {
-                    Icon(Icons.Default.Event, contentDescription = "Add to calendar")
+                OutlinedButton(enabled = !loading, onClick = { onOpenCalendar(event) }) {
+                    Text("Add to calendar")
+                }
+                OutlinedButton(enabled = !loading, onClick = { onReportEvent(event.id) }) {
+                    Text("Report")
                 }
                 if (event.createdBy == activeUserId) {
-                    IconButton(enabled = !loading, onClick = { onEditEvent(event) }) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit event")
+                    OutlinedButton(enabled = !loading, onClick = { onEditEvent(event) }) {
+                        Text("Edit")
                     }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val isAttending = event.rsvpStatus == "attending"
-                Button(
-                    enabled = !loading && event.status == "approved",
-                    onClick = { onRsvpEvent(event.id, !isAttending) },
-                ) {
-                    Text(if (isAttending) "Leave" else "RSVP")
                 }
                 OutlinedButton(onClick = onDismiss, enabled = !loading) {
                     Text("Close")
@@ -4897,23 +4722,25 @@ private fun PostDetailSheet(
     onRefreshComments: () -> Unit,
     onCreateComment: (body: String, parentCommentId: String?) -> Unit,
     onModerateComment: (commentId: String, action: String) -> Unit,
+    isLiked: Boolean,
+    isReported: Boolean,
     isSaved: Boolean,
     onReportPost: (postId: String, reason: String, details: String) -> Unit,
+    onOpenMessages: (String?) -> Unit,
     onBlockUser: (targetUserId: String) -> Unit,
     onDeletePost: (postId: String) -> Unit,
+    onToggleLikePost: (postId: String) -> Unit,
     onToggleSavePost: (postId: String) -> Unit,
     onResolveLostFound: (postId: String, status: String, note: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
     var commentInput by rememberSaveable(post.id) { mutableStateOf("") }
     var selectedReplyPreset by rememberSaveable(post.id) { mutableStateOf("") }
     var replyParentCommentId by rememberSaveable(post.id) { mutableStateOf<String?>(null) }
     var replyParentPreview by rememberSaveable(post.id) { mutableStateOf("") }
     var resolveNote by rememberSaveable(post.id) { mutableStateOf("") }
-    var supported by rememberSaveable(post.id) { mutableStateOf(false) }
-    var shareFeedback by rememberSaveable(post.id) { mutableStateOf("") }
+    var optimisticComments by remember(post.id) { mutableStateOf<List<CommunityComment>>(emptyList()) }
     val isLostFound = post.type == "lost_found"
     val isSharePoint = post.type == "share_point"
     val isSharePointOwner = isSharePoint && post.createdBy == activeUserId
@@ -4934,7 +4761,25 @@ private fun PostDetailSheet(
     val urgency = remember(post.id, post.alertStatus, post.followUpDueAt, post.expiresAt) {
         computeLostFoundUrgency(post)
     }
-    val visibleComments = remember(comments) { comments.sortedBy { comment -> comment.createdAt } }
+    LaunchedEffect(comments) {
+        if (optimisticComments.isNotEmpty()) {
+            optimisticComments = optimisticComments.filterNot { optimistic ->
+                comments.any { persisted ->
+                    persisted.body == optimistic.body &&
+                        persisted.parentCommentId == optimistic.parentCommentId &&
+                        (
+                            persisted.userId == activeUserId ||
+                                persisted.userId.equals("You", ignoreCase = true)
+                            )
+                }
+            }
+        }
+    }
+    val visibleComments = remember(comments, optimisticComments) {
+        (comments + optimisticComments)
+            .distinctBy { comment -> comment.id }
+            .sortedBy { comment -> comment.createdAt }
+    }
     LaunchedEffect(sharePointLatLng) {
         sharePointLatLng?.let { latLng ->
             sharePointCameraPositionState.move(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
@@ -5009,7 +4854,7 @@ private fun PostDetailSheet(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             AssistChip(onClick = {}, label = { Text(post.suburb) })
                             FilterChip(
                                 selected = true,
@@ -5026,7 +4871,22 @@ private fun PostDetailSheet(
                                 AssistChip(onClick = {}, label = { Text("Saved") })
                             }
                         }
+                        if (!isLostFound && !isSharePoint) {
+                            AnimatedVisibility(visible = isLiked) {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (isLiked) {
+                                        item("liked_summary") {
+                                            AssistChip(
+                                                onClick = {},
+                                                label = { Text("❤️ You liked this post") },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if (isLostFound) {
+                            val resolveStatus = if (post.alertType == "found") "owner_found" else "reunited"
                             post.alertType?.let { alertType ->
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(
@@ -5099,42 +4959,55 @@ private fun PostDetailSheet(
                                     )
                                 }
                             }
-                            val timeline = buildLostFoundTimeline(post)
-                            if (timeline.isNotEmpty()) {
-                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        Text("Activity timeline", style = MaterialTheme.typography.titleSmall)
-                                        timeline.forEach { entry ->
-                                            Text(
-                                                text = "${entry.first}: ${entry.second}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
-                                    }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    enabled = !loading,
+                                    onClick = {
+                                        commentInput = "Sighting update: "
+                                        selectedReplyPreset = commentInput
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text("Share sighting")
+                                }
+                                OutlinedButton(
+                                    enabled = !loading && !post.createdBy.isNullOrBlank() && post.createdBy != activeUserId,
+                                    onClick = { onOpenMessages(post.createdBy) },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text("Contact owner")
+                                }
+                                OutlinedButton(
+                                    enabled = !loading && alertStatus == "open",
+                                    onClick = { onResolveLostFound(post.id, resolveStatus, resolveNote.trim()) },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text("Mark resolved")
                                 }
                             }
-                            val sightings = buildRecentSightingHints(post)
-                            if (sightings.isNotEmpty()) {
-                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        Text("Recent sightings", style = MaterialTheme.typography.titleSmall)
-                                        sightings.forEach { sighting ->
-                                            Text(
-                                                text = "• $sighting",
-                                                style = MaterialTheme.typography.bodySmall,
-                                            )
-                                        }
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text("Search area + notes", style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        text = buildString {
+                                            append(post.lastSeenLocation ?: post.suburb)
+                                            post.lastSeenAt?.let { append(" • ${formatIsoDateTime(it)}") }
+                                            if (post.petTraits?.isNotBlank() == true) append("\nTraits: ${post.petTraits}")
+                                            if (urgency != null) append("\nUrgency: ${urgency.label}")
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    buildRecentSightingHints(post).take(2).forEach { sighting ->
+                                        Text(
+                                            text = "• $sighting",
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
                                     }
                                 }
                             }
@@ -5182,11 +5055,7 @@ private fun PostDetailSheet(
                                 }
                                 TextButton(
                                     onClick = {
-                                        val query = "${sharePointLatLng.latitude},${sharePointLatLng.longitude}"
-                                        val intent = Intent(
-                                            Intent.ACTION_VIEW,
-                                            Uri.parse("geo:$query?q=$query"),
-                                        )
+                                        val intent = buildMapsIntent(sharePointLatLng, sharePointLocationLabel(post) ?: post.title)
                                         context.startActivity(intent)
                                     },
                                 ) {
@@ -5210,175 +5079,64 @@ private fun PostDetailSheet(
                 }
             }
 
-            if (isLostFound && alertStatus == "open") {
+            if (!isLostFound && !isSharePoint) {
                 item {
-                    val resolveStatus = if (post.alertType == "found") "owner_found" else "reunited"
-                    val resolveLabel = if (post.alertType == "found") "Mark owner found" else "Mark reunited"
-                    val resolveHint = if (post.alertType == "found") {
-                        "Use this when the owner has been reached."
-                    } else {
-                        "Use this when the pet is safely back home."
-                    }
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Resolve this post",
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        Text(
-                            text = resolveHint,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        OutlinedTextField(
-                            value = resolveNote,
-                            onValueChange = { resolveNote = it },
-                            label = { Text("Resolution note (optional)") },
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 2,
-                            maxLines = 3,
-                        )
-                        Button(
-                            enabled = !loading,
-                            onClick = { onResolveLostFound(post.id, resolveStatus, resolveNote.trim()) },
-                            modifier = Modifier.fillMaxWidth(),
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text(resolveLabel)
-                        }
-                        OutlinedButton(
-                            enabled = !loading,
-                            onClick = { onResolveLostFound(post.id, "expired", resolveNote.trim()) },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("Mark no longer active")
-                        }
-                    }
-                }
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(
-                        onClick = { supported = !supported },
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.FavoriteBorder, contentDescription = "Support")
-                            Text(if (supported) "Supported" else "Support")
-                        }
-                    }
-                    TextButton(
-                        onClick = {
-                            if (commentInput.isBlank()) {
-                                commentInput = if (isLostFound) "I can help check nearby." else "Following this thread."
-                                selectedReplyPreset = commentInput
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ChatBubbleOutline, contentDescription = "Comment")
-                            Text("Comment")
-                        }
-                    }
-                    TextButton(
-                        onClick = {
-                            val shareText = buildString {
-                                append(post.title)
-                                append(" • ")
-                                append(post.suburb)
-                                append(" • ")
-                                append(if (isLostFound) "Lost & Found post" else "Community discussion")
-                            }
-                            clipboard.setText(AnnotatedString(shareText))
-                            shareFeedback = "Copied"
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.IosShare, contentDescription = "Share")
-                            Text(if (shareFeedback.isNotBlank()) shareFeedback else "Share")
-                        }
-                    }
-                    TextButton(
-                        onClick = { onToggleSavePost(post.id) },
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.TurnedInNot, contentDescription = "Save")
-                            Text(if (isSaved) "Saved" else "Save")
-                        }
-                    }
-                }
-            }
-
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = "Safety actions",
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        Text(
-                            text = "Use this if the post seems unsafe or abusive.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                enabled = !loading,
-                                onClick = {
-                                    onReportPost(
-                                        post.id,
-                                        if (post.type == "lost_found") "Suspicious lost and found post" else "Harassment or abuse",
-                                        "Reported from post details sheet",
+                            Text("Actions", style = MaterialTheme.typography.titleSmall)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                item("action_like") {
+                                    CommunityActionChipButton(
+                                        label = "Like",
+                                        selected = isLiked,
+                                        enabled = !loading,
+                                        onClick = { onToggleLikePost(post.id) },
+                                        icon = {
+                                            Text(
+                                                text = if (isLiked) "❤️" else "♡",
+                                                style = MaterialTheme.typography.labelLarge,
+                                            )
+                                        },
                                     )
-                                    onDismiss()
-                                },
-                                modifier = Modifier.weight(1f),
-                                ) {
-                                    Text("Report post")
                                 }
-                            OutlinedButton(
-                                enabled = !loading,
-                                onClick = {
-                                    onReportPost(
-                                        post.id,
-                                        REPORT_REASON_CHILD_SAFETY,
-                                        "Reported from post details sheet",
+                                item("action_report") {
+                                    CommunityActionChipButton(
+                                        label = "Report",
+                                        selected = isReported,
+                                        enabled = !loading,
+                                        onClick = {
+                                            onReportPost(
+                                                post.id,
+                                                "Harassment or abuse",
+                                                "Reported from post details sheet",
+                                            )
+                                        },
+                                        icon = {
+                                            Text(
+                                                text = "🚩",
+                                                style = MaterialTheme.typography.labelLarge,
+                                            )
+                                        },
                                     )
-                                    onDismiss()
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("Report child safety")
+                                }
                             }
-                            OutlinedButton(
-                                enabled = !loading,
-                                onClick = { onToggleSavePost(post.id) },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text(if (isSaved) "Unsave post" else "Save post")
-                            }
-                            val authorId = post.createdBy?.takeIf { it.isNotBlank() }
-                            if (authorId != null) {
-                                OutlinedButton(
-                                    enabled = !loading,
-                                    onClick = {
-                                        onBlockUser(authorId)
-                                        onDismiss()
-                                    },
-                                    modifier = Modifier.weight(1f),
+                            AnimatedVisibility(visible = isReported) {
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    ),
                                 ) {
-                                    Text("Block author")
+                                    Text(
+                                        text = "Reported. Thanks for flagging this. The safety team will review the post.",
+                                        modifier = Modifier.padding(12.dp),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }
@@ -5392,7 +5150,14 @@ private fun PostDetailSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Comments (${visibleComments.size})", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = if (isLostFound) {
+                            "Sightings and notes (${visibleComments.size})"
+                        } else {
+                            "Comments (${visibleComments.size})"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                     TextButton(onClick = onRefreshComments, enabled = !commentsLoading) {
                         Text(if (commentsLoading) "Loading..." else "Refresh")
                     }
@@ -5515,7 +5280,7 @@ private fun PostDetailSheet(
                 OutlinedTextField(
                     value = commentInput,
                     onValueChange = { commentInput = it },
-                    label = { Text("Write a comment") },
+                    label = { Text(if (isLostFound) "Share a sighting or note" else "Write a comment") },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -5524,7 +5289,16 @@ private fun PostDetailSheet(
                 Button(
                     enabled = commentInput.isNotBlank() && !commentsLoading,
                     onClick = {
-                        onCreateComment(commentInput.trim(), replyParentCommentId)
+                        val trimmedComment = commentInput.trim()
+                        onCreateComment(trimmedComment, replyParentCommentId)
+                        optimisticComments = optimisticComments + CommunityComment(
+                            id = "local_${post.id}_${SystemClock.elapsedRealtime()}",
+                            postId = post.id,
+                            userId = "You",
+                            body = trimmedComment,
+                            parentCommentId = replyParentCommentId,
+                            createdAt = Instant.now().toString(),
+                        )
                         commentInput = ""
                         selectedReplyPreset = ""
                         replyParentCommentId = null
@@ -5532,7 +5306,7 @@ private fun PostDetailSheet(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Post comment")
+                    Text(if (isLostFound) "Share update" else "Post comment")
                 }
             }
         }

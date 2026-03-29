@@ -4301,9 +4301,12 @@ class PetSocialViewModel(
             _uiState.value = _uiState.value.copy(loading = true, error = null)
             runCatching {
                 repository.createLostFoundPost(payload)
-            }.onSuccess {
-                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Community) }.copy(
+            }.onSuccess { createdPost ->
+                val currentState = _uiState.value
+                val nextPosts = listOf(createdPost) + currentState.posts.filterNot { post -> post.id == createdPost.id }
+                _uiState.value = currentState.withNavigation { copy(selectedTab = AppTab.Community) }.copy(
                     loading = false,
+                    posts = nextPosts,
                     postsSortBy = "relevance",
                     toastMessage = "Lost/found post created",
                 )
@@ -4583,7 +4586,12 @@ class PetSocialViewModel(
         }
     }
 
-    fun createCommunityGroupPost(title: String, body: String, suburb: String) {
+    fun createCommunityGroupPost(
+        title: String,
+        body: String,
+        suburb: String,
+        photoUrls: List<String> = emptyList(),
+    ) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(loading = true, error = null)
             runCatching {
@@ -4591,6 +4599,7 @@ class PetSocialViewModel(
                     title = title,
                     body = body,
                     suburb = suburb,
+                    photoUrls = photoUrls,
                 )
             }.onSuccess {
                 _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Community) }.copy(
