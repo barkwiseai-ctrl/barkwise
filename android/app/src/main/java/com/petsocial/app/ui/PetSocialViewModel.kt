@@ -4219,6 +4219,11 @@ class PetSocialViewModel(
                 loadHomeData(_uiState.value.selectedCategory)
             }
 
+            "open_messages" -> {
+                _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Messages) }
+                loadHomeData(_uiState.value.selectedCategory)
+            }
+
             "open_home" -> {
                 _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Profile) }
                 loadHomeData(_uiState.value.selectedCategory)

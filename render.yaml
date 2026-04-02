@@ -19,6 +19,8 @@ services:
         value: /var/data/memory.sqlite3
       - key: OPENAI_MODEL
         value: gpt-4.1-mini
+      - key: BARKAI_MODE
+        value: standard
       - key: CORS_ORIGINS
         value: https://app.barkwise.app
       - key: TRUSTED_HOSTS

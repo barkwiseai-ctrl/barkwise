@@ -16,6 +16,8 @@ services:
         value: "168"
       - key: OPENAI_MODEL
         value: "gpt-4.1-mini"
+      - key: BARKAI_MODE
+        value: "standard"
       - key: SERVICES_DB_PATH
         value: "/var/data/services.sqlite3"
       - key: MEMORY_DB_PATH

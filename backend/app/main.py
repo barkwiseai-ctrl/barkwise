@@ -107,4 +107,5 @@ def ready():
         "status": "ready",
         "llm_configured": llm_configured,
         "llm_mode": "openai" if llm_configured else "unconfigured",
+        "barkai_mode": chat.chat_service.barkai_mode,
     }

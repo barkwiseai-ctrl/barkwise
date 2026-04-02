@@ -143,6 +143,7 @@ Railway (always-on web beta for iPhone testers):
    - `AUTH_TOKEN_TTL_HOURS=168`
    - `OPENAI_API_KEY=<your-key>`
    - `OPENAI_MODEL=gpt-4.1-mini`
+   - `BARKAI_MODE=standard`
    - `CORS_ORIGINS=https://<your-service>.up.railway.app`
    - `TRUSTED_HOSTS=<your-service>.up.railway.app,*.up.railway.app`
 3. Open and share:
@@ -162,8 +163,29 @@ export CHAT_RATE_LIMIT_WINDOW_SECONDS=60
 export CHAT_RATE_LIMIT_MAX_REQUESTS=12
 export CHAT_STREAM_RATE_LIMIT_MAX_REQUESTS=6
 export CHAT_ACTION_RATE_LIMIT_MAX_REQUESTS=10
+export BARKAI_MODE=standard
 export SECURITY_AUDIT_METRICS_PATH=/absolute/path/to/security_audit_metrics.json
 ```
+
+BarkAI mode switch:
+
+- `BARKAI_MODE=standard` keeps the current BarkAI behavior.
+- `BARKAI_MODE=custom` enables an additional customization prompt layer on top of the standard BarkAI prompt.
+- Provide custom instructions with `BARKAI_CUSTOM_SYSTEM_PROMPT="..."` or mount a file and set `BARKAI_CUSTOM_SYSTEM_PROMPT_FILE=/absolute/path/to/barkai-custom-prompt.txt`.
+- If no custom prompt env var is supplied, `custom` mode falls back to the bundled welfare-first BarkAI prompt, which includes the hardened crate-minimization policy.
+- In `custom` mode, BarkAI can also read a Reddit-derived question bank from `BARKAI_CUSTOM_REDDIT_QUESTION_BANK_FILE` and a curated forbidden-reply ruleset from `BARKAI_CUSTOM_FORBIDDEN_PATTERNS_FILE`.
+- Reddit forum data is used for question-pattern recognition only, not as a trusted answer source or citation source.
+- Harmful Reddit answers should be reviewed by a human and distilled into explicit forbidden reply patterns, not copied directly into the model prompt.
+- `/ready` now reports the active `barkai_mode`, so it is easy to confirm which variant is live before testing.
+
+Reddit custom-mode workflow:
+
+1. Collect dog-forum posts with the existing collector:
+   - `./backend/.venv/bin/python -m collector run --config backend/configs/dogs_phase_1.json --out backend/data/reddit_dogs.jsonl --summary-out backend/data/reddit_dogs.summary.json`
+2. Build BarkAI custom resources:
+   - `./backend/.venv/bin/python backend/scripts/build_barkai_reddit_custom_resources.py --input backend/data/reddit_dogs.jsonl --question-bank-out backend/data/barkai_reddit_question_bank.json --bad-answer-candidates-out backend/data/barkai_bad_answer_candidates.jsonl`
+3. Review `backend/data/barkai_bad_answer_candidates.jsonl` and convert the genuinely bad patterns into a curated forbidden-rules JSON.
+4. Point `BARKAI_CUSTOM_REDDIT_QUESTION_BANK_FILE` and `BARKAI_CUSTOM_FORBIDDEN_PATTERNS_FILE` at those reviewed files in staging.
 
 FCM push setup (backend + Android):
 

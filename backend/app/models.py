@@ -397,6 +397,7 @@ class CtaChip(BaseModel):
     action: Literal[
         "open_services",
         "open_community",
+        "open_messages",
         "create_lost_found",
         "find_dog_walkers",
         "find_groomers",

@@ -23,6 +23,7 @@ Steps:
    - `AUTH_TOKEN_TTL_HOURS=168`
    - `OPENAI_MODEL=gpt-4.1-mini`
    - `OPENAI_API_KEY=<your-openai-key>`
+   - `BARKAI_MODE=standard`
    - `CORS_ORIGINS=https://<your-service>.up.railway.app`
    - `TRUSTED_HOSTS=<your-service>.up.railway.app,*.up.railway.app`
 5. Deploy, then verify:
@@ -30,6 +31,18 @@ Steps:
    - `https://<your-service>.up.railway.app/ready`
    - `https://<your-service>.up.railway.app/web/`
    - `https://<your-service>.up.railway.app/install/`
+
+BarkAI variant toggle:
+
+- Keep `BARKAI_MODE=standard` for the current BarkAI behavior.
+- Set `BARKAI_MODE=custom` to enable a customized BarkAI layer while keeping the same `/chat` API and Android app wiring.
+- Supply the customization with `BARKAI_CUSTOM_SYSTEM_PROMPT` or `BARKAI_CUSTOM_SYSTEM_PROMPT_FILE`.
+- If no custom prompt env is supplied, `custom` mode falls back to the bundled welfare-first BarkAI prompt with the hardened crate-minimization stance.
+- Optional Reddit-backed custom resources:
+  - `BARKAI_CUSTOM_REDDIT_QUESTION_BANK_FILE`
+  - `BARKAI_CUSTOM_FORBIDDEN_PATTERNS_FILE`
+- Treat Reddit as a source of common question patterns and anti-pattern mining, not as an authority source for answers.
+- Verify the active mode from `/ready`, which now returns `barkai_mode`.
 
 Notes:
 
@@ -47,10 +60,11 @@ Notes:
 4. Set secret env vars in Render:
    - `AUTH_SECRET`
    - `OPENAI_API_KEY`
+   - `BARKAI_MODE` (optional, defaults to `standard`)
    - (optional alternative) `OPENAI_API_KEY_FILE` if using mounted secret files
 5. Deploy, then verify:
    - `https://<your-render-domain>/health` returns `{"status":"ok"}`
-   - `https://<your-render-domain>/ready` returns `{"status":"ready","llm_configured":true,"llm_mode":"openai"}`
+   - `https://<your-render-domain>/ready` returns `{"status":"ready","llm_configured":true,"llm_mode":"openai","barkai_mode":"standard"}`
 
 ## Post-deploy values
 

@@ -42,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -169,6 +170,28 @@ fun ChatScreen(
                                 .padding(12.dp),
                         )
                     }
+                }
+            }
+        }
+
+        chatResponse?.ctaChips?.takeIf { it.isNotEmpty() }?.let { ctas ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ctas.forEach { cta ->
+                    AssistChip(
+                        onClick = { onCtaClick(cta) },
+                        label = {
+                            Text(
+                                text = cta.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                    )
                 }
             }
         }

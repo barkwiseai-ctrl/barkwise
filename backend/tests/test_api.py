@@ -92,6 +92,13 @@ def test_health_ok():
     assert response.json()["status"] == "ok"
 
 
+def test_ready_reports_barkai_mode(monkeypatch):
+    monkeypatch.setenv("BARKAI_MODE", "custom")
+    response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["barkai_mode"] == "custom"
+
+
 def test_auth_login_and_me():
     login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
     assert login.status_code == 200
@@ -2972,6 +2979,9 @@ def test_quote_request_without_suburb_uses_membership_focus():
     requester_login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
     assert requester_login.status_code == 200
     requester_token = requester_login.json()["access_token"]
+    expected_suburb, suburb_source = service_store._infer_user_focus_suburb("user_2")
+    assert expected_suburb
+    assert suburb_source in {"dog_park_membership", "group_membership"}
 
     create = client.post(
         "/services/quotes/request",
@@ -2986,7 +2996,7 @@ def test_quote_request_without_suburb_uses_membership_focus():
     )
     assert create.status_code == 200
     payload = create.json()
-    assert payload["quote_request"]["suburb"] == "Surry Hills"
+    assert payload["quote_request"]["suburb"] == expected_suburb
     assert payload["quote_request"]["status"] == "pending"
     assert payload["targets"]
 

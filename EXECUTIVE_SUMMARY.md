@@ -1,6 +1,6 @@
 # Executive Summary
 
-Last updated: 2026-03-28
+Last updated: 2026-04-02
 
 Primary launch plan: [MVP_PLAY_BETA_LAUNCH_PLAN.md](/Users/yingxu/public-repos/pet-social-app/MVP_PLAY_BETA_LAUNCH_PLAN.md)
 
@@ -67,3 +67,8 @@ Completed major features:
 - Provider workspace scheduling suite in Android profile/workspace surfaces, including appointment overview cards, day/week schedule views, booking actions (confirm/decline/reschedule), and calendar handoff for provider bookings.
 - Transcript-based BarkAI chat contract across backend and Android, including multi-turn `messages` payload support, streaming/non-streaming response alignment, and readiness/status wiring for the simplified chat service.
 - Simplified BarkAI service architecture with a single OpenAI-backed chat path replacing orchestration/RAG branching, while preserving legacy profile-accept/provider-submit actions and adding focused API/SSE regression coverage.
+- Android session-backed user-state persistence, including cached provider inbox, message threads, selected thread history, notifications, profile snapshots, moderation/blocked-user state, and per-user UI preference restore across app sessions.
+- Android community owner experience refresh with tabbed discover/my-groups/alerts navigation, streamlined owner action surfaces, richer group post creation (including photo URLs), and in-app like/report state wiring for faster moderation feedback.
+- Backend JSON persistence hardening across memory/community stores with jsonable serialization for datetimes and structured containers plus robustness tests that lock in snapshot compatibility.
+- BarkAI custom-mode framework with deploy-time `BARKAI_MODE` switching, optional custom system prompts, Reddit-derived question-pattern recognition, curated forbidden-reply pattern enforcement, and readiness endpoint mode visibility.
+- Deterministic in-chat community group discovery tooling with suburb-aware matching/fallback logic and join/open-community CTA actions, wired through backend chat responses and rendered as actionable chip rows in Android chat UI.

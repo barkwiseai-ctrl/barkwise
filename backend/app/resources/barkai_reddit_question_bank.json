@@ -1,0 +1,52 @@
+{
+  "records": [
+    {
+      "title": "How do I stop my puppy from biting hands and clothes all day?",
+      "topic_tags": ["puppy_care", "training_obedience"],
+      "subreddit": "puppy101",
+      "score": 412
+    },
+    {
+      "title": "My dog barks at every dog on walks. Where do I start with reactive behavior?",
+      "topic_tags": ["behavior_reactivity", "training_obedience"],
+      "subreddit": "reactivedogs",
+      "score": 365
+    },
+    {
+      "title": "Should I worry if my dog is vomiting but still drinking water?",
+      "topic_tags": ["health_vet", "safety_emergency"],
+      "subreddit": "DogAdvice",
+      "score": 277
+    },
+    {
+      "title": "How long can a puppy reasonably stay in a crate during the day?",
+      "topic_tags": ["puppy_care", "training_obedience"],
+      "subreddit": "puppy101",
+      "score": 241
+    },
+    {
+      "title": "What is the safest way to introduce my rescue dog to resident dogs?",
+      "topic_tags": ["rescue_adoption_foster", "socialization_multidog"],
+      "subreddit": "RescueDogs",
+      "score": 198
+    },
+    {
+      "title": "My dog has diarrhea after switching food. What should I monitor first?",
+      "topic_tags": ["health_vet", "nutrition_feeding"],
+      "subreddit": "dogs",
+      "score": 221
+    },
+    {
+      "title": "How do I teach loose leash walking without constant pulling?",
+      "topic_tags": ["training_obedience", "lifestyle_exercise"],
+      "subreddit": "DogTraining",
+      "score": 344
+    },
+    {
+      "title": "Is my dog bored or anxious when she paces and whines at night?",
+      "topic_tags": ["behavior_reactivity", "lifestyle_exercise"],
+      "subreddit": "DogAdvice",
+      "score": 184
+    }
+  ]
+}
