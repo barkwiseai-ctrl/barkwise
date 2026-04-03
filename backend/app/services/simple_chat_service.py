@@ -823,9 +823,10 @@ class SimpleChatService:
         return min(max(parsed, 1), 5000)
 
     def _load_openai_api_key(self) -> str:
-        raw_key = _clean_env_value(os.getenv("OPENAI_API_KEY", ""))
-        if raw_key:
-            return raw_key
+        raw_key = os.getenv("OPENAI_API_KEY", "")
+        parsed_key = _extract_openai_api_key(raw_key)
+        if parsed_key:
+            return parsed_key
 
         key_file = _clean_env_value(os.getenv("OPENAI_API_KEY_FILE", ""))
         if not key_file:
