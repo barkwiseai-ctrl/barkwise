@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from app.models import CommunityEventView, Group, GroupJoinRecord, MessageThreadView
 from app.services import simple_chat_service as simple_chat_module
 from app.models import ChatMessage, ChatRequest
-from app.services.simple_chat_service import SimpleChatService
+from app.services.simple_chat_service import SimpleChatService, _extract_openai_api_key
 
 
 @contextmanager
@@ -515,3 +515,18 @@ def test_openai_request_retries_timeout_and_succeeds(monkeypatch):
 
     assert payload["choices"][0]["message"]["content"] == "Recovered"
     assert calls["count"] == 2
+
+
+def test_extract_openai_api_key_accepts_env_file_format():
+    raw_text = """
+    OPENAI_API_KEY=sk-test-key
+    OPENAI_MODEL=gpt-4o-mini
+    """
+
+    assert _extract_openai_api_key(raw_text) == "sk-test-key"
+
+
+def test_extract_openai_api_key_accepts_first_line_key_with_extra_lines():
+    raw_text = "sk-test-key\\nOPENAI_MODEL=gpt-4o-mini\\n"
+
+    assert _extract_openai_api_key(raw_text) == "sk-test-key"

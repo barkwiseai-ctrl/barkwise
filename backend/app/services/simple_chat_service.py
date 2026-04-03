@@ -31,6 +31,32 @@ PROVIDER_FIELDS = (
 )
 
 
+def _clean_env_value(raw_value: str) -> str:
+    return raw_value.strip().strip("'\"")
+
+
+def _extract_openai_api_key(raw_text: str) -> str:
+    normalized_text = raw_text.replace("\\n", "\n")
+    cleaned = _clean_env_value(normalized_text)
+    first_line = _clean_env_value(cleaned.splitlines()[0]) if cleaned.splitlines() else ""
+    if first_line.startswith("sk-"):
+        return first_line
+
+    for raw_line in normalized_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "OPENAI_API_KEY":
+            return _clean_env_value(value)
+
+    for raw_line in normalized_text.splitlines():
+        line = _clean_env_value(raw_line)
+        if line.startswith("sk-"):
+            return line
+    return ""
+
+
 class SimpleChatService:
     def __init__(self) -> None:
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
@@ -797,17 +823,18 @@ class SimpleChatService:
         return min(max(parsed, 1), 5000)
 
     def _load_openai_api_key(self) -> str:
-        raw_key = os.getenv("OPENAI_API_KEY", "").strip().strip("'\"")
+        raw_key = _clean_env_value(os.getenv("OPENAI_API_KEY", ""))
         if raw_key:
             return raw_key
 
-        key_file = os.getenv("OPENAI_API_KEY_FILE", "").strip().strip("'\"")
+        key_file = _clean_env_value(os.getenv("OPENAI_API_KEY_FILE", ""))
         if not key_file:
             return ""
         try:
-            return Path(key_file).read_text(encoding="utf-8").strip().strip("'\"")
+            raw_text = Path(key_file).read_text(encoding="utf-8")
         except OSError:
             return ""
+        return _extract_openai_api_key(raw_text)
 
     def _load_barkai_custom_system_prompt(self) -> str:
         inline_prompt = os.getenv("BARKAI_CUSTOM_SYSTEM_PROMPT", "").strip()
