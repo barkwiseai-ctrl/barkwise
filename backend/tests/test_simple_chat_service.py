@@ -462,6 +462,30 @@ def test_stream_chat_falls_back_to_non_stream_when_stream_fails_immediately(monk
     ]
 
 
+def test_stream_chat_falls_back_to_non_stream_when_stream_open_fails(monkeypatch):
+    service = SimpleChatService()
+
+    def fake_openai_request(payload, stream):
+        if stream:
+            raise RuntimeError("stream open failed")
+        return {"choices": [{"message": {"content": "Recovered from non-stream fallback"}}]}
+
+    monkeypatch.setattr(service, "_openai_request", fake_openai_request)
+
+    events = list(
+        service.stream_chat(
+            ChatRequest(
+                user_id="user_2",
+                messages=[ChatMessage(role="user", content="Hi")],
+            )
+        )
+    )
+
+    assert len(events) == 1
+    assert events[0]["type"] == "final"
+    assert events[0]["response"]["answer"] == "Recovered from non-stream fallback"
+
+
 def test_openai_request_retries_timeout_and_succeeds(monkeypatch):
     service = SimpleChatService()
     monkeypatch.setattr(service, "_load_openai_api_key", lambda: "test-key")

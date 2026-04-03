@@ -71,12 +71,31 @@ class SimpleChatService:
             yield {"type": "delta", "delta": tool_response.answer}
             yield {"type": "final", "response": tool_response.model_dump(mode="json")}
             return
+        messages = self._build_openai_messages(user_id=request.user_id, transcript=transcript)
         payload = {
             "model": self.model,
-            "messages": self._build_openai_messages(user_id=request.user_id, transcript=transcript),
+            "messages": messages,
             "stream": True,
         }
-        raw_response = self._openai_request(payload=payload, stream=True)
+        try:
+            raw_response = self._openai_request(payload=payload, stream=True)
+        except Exception:
+            fallback_payload = {
+                "model": self.model,
+                "messages": messages,
+            }
+            fallback_data = self._openai_request(payload=fallback_payload, stream=False)
+            fallback_text = self._extract_text(fallback_data).strip()
+            if not fallback_text:
+                raise HTTPException(status_code=502, detail="OpenAI returned an empty streamed chat response")
+            yield {
+                "type": "final",
+                "response": self._build_chat_response(
+                    transcript=transcript,
+                    assistant_text=fallback_text,
+                ).model_dump(mode="json"),
+            }
+            return
         chunks: list[str] = []
         try:
             try:
@@ -98,7 +117,7 @@ class SimpleChatService:
                     raise
                 fallback_payload = {
                     "model": self.model,
-                    "messages": self._build_openai_messages(user_id=request.user_id, transcript=transcript),
+                    "messages": messages,
                 }
                 fallback_data = self._openai_request(payload=fallback_payload, stream=False)
                 fallback_text = self._extract_text(fallback_data).strip()
