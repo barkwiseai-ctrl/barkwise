@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
@@ -822,13 +823,15 @@ fun ProfileScreen(
             }
         } else {
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .heightIn(min = 176.dp),
                 ) {
                     Row(
                         modifier = Modifier
@@ -873,7 +876,7 @@ fun ProfileScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .heightIn(min = 116.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     HomeTileCard(
@@ -902,21 +905,17 @@ fun ProfileScreen(
 
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(
                         modifier = Modifier
-                            .fillMaxSize()
+                            .fillMaxWidth()
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text("Plans", style = MaterialTheme.typography.titleMedium)
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             HomeTileCard(
@@ -932,9 +931,7 @@ fun ProfileScreen(
                                 contentPadding = PaddingValues(8.dp),
                                 compact = true,
                                 previewMaxLines = 1,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(),
+                                modifier = Modifier.weight(1f),
                             )
                             HomeTileCard(
                                 title = "Listings",
@@ -949,9 +946,7 @@ fun ProfileScreen(
                                 contentPadding = PaddingValues(8.dp),
                                 compact = true,
                                 previewMaxLines = 1,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(),
+                                modifier = Modifier.weight(1f),
                             )
                         }
                     }
