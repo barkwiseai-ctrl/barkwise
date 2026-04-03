@@ -86,8 +86,30 @@ fun ChatScreen(
 ) {
     var input by rememberSaveable { mutableStateOf("") }
     var inputFocused by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    var launchCameraAfterPermission by rememberSaveable { mutableStateOf(false) }
     val conversationListState = rememberLazyListState()
     val isShowingStreaming = loading && streamingAssistantText.isNotBlank()
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview(),
+    ) { bitmap ->
+        val capturedPhotoUri = bitmap?.let { captured ->
+            persistOnboardingDogPhoto(context = context, bitmap = captured)
+        }
+        onOnboardingPhotoCaptured(capturedPhotoUri != null, capturedPhotoUri)
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted && launchCameraAfterPermission) {
+            launchCameraAfterPermission = false
+            runCatching { cameraLauncher.launch(null) }
+                .onFailure { onOnboardingPhotoCaptured(false, null) }
+        } else if (!granted) {
+            launchCameraAfterPermission = false
+            onOnboardingPhotoCaptured(false, null)
+        }
+    }
     val listCount = conversation.size +
         (if (isShowingStreaming) 1 else 0) +
         (if (!error.isNullOrBlank()) 1 else 0) +
@@ -217,6 +239,27 @@ fun ChatScreen(
                     minLines = 1,
                     maxLines = if (inputFocused) 4 else 1,
                 )
+                if (onboardingMode && onboardingNeedsPhoto) {
+                    Button(
+                        enabled = composerEnabled,
+                        onClick = {
+                            val permissionGranted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.CAMERA,
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (permissionGranted) {
+                                runCatching { cameraLauncher.launch(null) }
+                                    .onFailure { onOnboardingPhotoCaptured(false, null) }
+                            } else {
+                                launchCameraAfterPermission = true
+                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
+                        },
+                        modifier = Modifier.width(92.dp),
+                    ) {
+                        Text("Camera", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
                 Button(
                     enabled = composerEnabled && input.isNotBlank(),
                     onClick = {

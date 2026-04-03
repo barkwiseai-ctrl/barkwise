@@ -784,8 +784,8 @@ private fun UiState.toBarkAiTabUiState(): BarkAiTabUiState = BarkAiTabUiState(
     a2uiProviderCard = a2uiProviderCard,
     barkThreads = barkThreads,
     selectedBarkThreadId = selectedBarkThreadId,
-    onboardingMode = false,
-    onboardingNeedsPhoto = false,
+    onboardingMode = onboardingActive,
+    onboardingNeedsPhoto = onboardingActive && onboardingStep >= 3 && !onboardingPhotoCaptured,
 )
 
 private fun UiState.toCommunityTabUiState(): CommunityTabUiState = CommunityTabUiState(
@@ -3501,6 +3501,10 @@ class PetSocialViewModel(
     fun sendChat(message: String) {
         val trimmedMessage = message.trim()
         if (trimmedMessage.isBlank()) return
+        if (isOnboardingScriptEnabled() && _uiState.value.onboardingActive) {
+            handleOnboardingTextReply(trimmedMessage)
+            return
+        }
         val state = _uiState.value
         val nextConversation = state.conversation + ChatTurn(role = "user", content = trimmedMessage)
         repository.saveBarkAiConversation(nextConversation)
