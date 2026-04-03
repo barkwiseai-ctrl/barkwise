@@ -2,6 +2,7 @@ import os
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -405,3 +406,88 @@ def test_stream_chat_yields_deltas_and_final_response(monkeypatch):
     assert events[1] == {"type": "delta", "delta": "world"}
     assert events[2]["type"] == "final"
     assert events[2]["response"]["message"] == {"role": "assistant", "content": "Hello world"}
+
+
+def test_stream_chat_falls_back_to_non_stream_when_stream_fails_immediately(monkeypatch):
+    service = SimpleChatService()
+
+    class BrokenStream:
+        def __iter__(self):
+            raise RuntimeError("stream dropped")
+
+        def close(self):
+            return None
+
+    def fake_openai_request(payload, stream):
+        if stream:
+            return BrokenStream()
+        return {"choices": [{"message": {"content": "Fallback answer"}}]}
+
+    monkeypatch.setattr(service, "_openai_request", fake_openai_request)
+
+    events = list(
+        service.stream_chat(
+            ChatRequest(
+                user_id="user_2",
+                messages=[ChatMessage(role="user", content="Hi")],
+            )
+        )
+    )
+
+    assert events == [
+        {
+            "type": "final",
+            "response": {
+                "answer": "Fallback answer",
+                "message": {"role": "assistant", "content": "Fallback answer"},
+                "conversation": [
+                    {"role": "user", "content": "Hi", "citations": [], "answer_badges": [], "answer_source": None},
+                    {
+                        "role": "assistant",
+                        "content": "Fallback answer",
+                        "citations": [],
+                        "answer_badges": [],
+                        "answer_source": None,
+                    },
+                ],
+                "citations": [],
+                "answer_badges": [],
+                "profile_suggestion": None,
+                "cta_chips": [],
+                "suggested_profile": {},
+                "a2ui_messages": [],
+                "answer_source": "assistant",
+            },
+        }
+    ]
+
+
+def test_openai_request_retries_timeout_and_succeeds(monkeypatch):
+    service = SimpleChatService()
+    monkeypatch.setattr(service, "_load_openai_api_key", lambda: "test-key")
+    monkeypatch.setattr(simple_chat_module.time, "sleep", lambda *_args, **_kwargs: None)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "Recovered"}}]}).encode("utf-8")
+
+    calls = {"count": 0}
+
+    def fake_urlopen(_request, timeout):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise TimeoutError("timed out")
+        return FakeResponse()
+
+    monkeypatch.setattr(simple_chat_module.urllib_request, "urlopen", fake_urlopen)
+
+    payload = service._openai_request(payload={"model": "test", "messages": []}, stream=False)
+
+    assert payload["choices"][0]["message"]["content"] == "Recovered"
+    assert calls["count"] == 2

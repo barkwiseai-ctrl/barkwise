@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import socket
+import time
 from typing import Generator
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -33,6 +35,8 @@ class SimpleChatService:
     def __init__(self) -> None:
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         self.timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))
+        self.max_retries = max(1, int(os.getenv("OPENAI_MAX_RETRIES", "2")))
+        self.retry_backoff_seconds = max(0.0, float(os.getenv("OPENAI_RETRY_BACKOFF_SECONDS", "1.0")))
         default_db_path = str(Path(__file__).resolve().parents[2] / "data" / "memory.sqlite3")
         self.memory_store = MemoryStore(db_path=os.getenv("MEMORY_DB_PATH", default_db_path))
 
@@ -75,19 +79,39 @@ class SimpleChatService:
         raw_response = self._openai_request(payload=payload, stream=True)
         chunks: list[str] = []
         try:
-            for raw_line in raw_response:
-                line = raw_line.decode("utf-8").strip()
-                if not line.startswith("data: "):
-                    continue
-                data = line[6:].strip()
-                if data == "[DONE]":
-                    break
-                event = json.loads(data)
-                delta = self._extract_stream_delta(event)
-                if not delta:
-                    continue
-                chunks.append(delta)
-                yield {"type": "delta", "delta": delta}
+            try:
+                for raw_line in raw_response:
+                    line = raw_line.decode("utf-8").strip()
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:].strip()
+                    if data == "[DONE]":
+                        break
+                    event = json.loads(data)
+                    delta = self._extract_stream_delta(event)
+                    if not delta:
+                        continue
+                    chunks.append(delta)
+                    yield {"type": "delta", "delta": delta}
+            except Exception:
+                if chunks:
+                    raise
+                fallback_payload = {
+                    "model": self.model,
+                    "messages": self._build_openai_messages(user_id=request.user_id, transcript=transcript),
+                }
+                fallback_data = self._openai_request(payload=fallback_payload, stream=False)
+                fallback_text = self._extract_text(fallback_data).strip()
+                if not fallback_text:
+                    raise HTTPException(status_code=502, detail="OpenAI returned an empty streamed chat response")
+                yield {
+                    "type": "final",
+                    "response": self._build_chat_response(
+                        transcript=transcript,
+                        assistant_text=fallback_text,
+                    ).model_dump(mode="json"),
+                }
+                return
         finally:
             raw_response.close()
 
@@ -230,17 +254,45 @@ class SimpleChatService:
             },
             method="POST",
         )
-        try:
-            response = urllib_request.urlopen(request, timeout=self.timeout_seconds)
-            if stream:
-                return response
-            with response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib_error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="ignore").strip() or exc.reason
-            raise HTTPException(status_code=502, detail=f"OpenAI request failed: {detail}") from exc
-        except urllib_error.URLError as exc:
-            raise HTTPException(status_code=502, detail=f"OpenAI request failed: {exc.reason}") from exc
+        retryable_http_statuses = {408, 429, 500, 502, 503, 504}
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = urllib_request.urlopen(request, timeout=self.timeout_seconds)
+                if stream:
+                    return response
+                with response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib_error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="ignore").strip() or exc.reason
+                last_error = exc
+                if exc.code in retryable_http_statuses and attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_seconds * attempt)
+                    continue
+                raise HTTPException(status_code=502, detail=f"OpenAI request failed: {detail}") from exc
+            except (urllib_error.URLError, TimeoutError, socket.timeout, OSError, ConnectionError) as exc:
+                last_error = exc
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_seconds * attempt)
+                    continue
+                detail = getattr(exc, "reason", None) or str(exc) or exc.__class__.__name__
+                raise HTTPException(status_code=502, detail=f"OpenAI request failed: {detail}") from exc
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_seconds * attempt)
+                    continue
+                raise HTTPException(status_code=502, detail="OpenAI returned malformed JSON") from exc
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_seconds * attempt)
+                    continue
+                raise HTTPException(status_code=502, detail=f"OpenAI request failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI request failed: {last_error or 'unknown error'}",
+        )
 
     def _extract_text(self, payload: dict[str, object]) -> str:
         choices = payload.get("choices", [])
