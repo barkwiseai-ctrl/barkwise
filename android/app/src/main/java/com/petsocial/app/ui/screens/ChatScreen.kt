@@ -49,6 +49,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -87,6 +89,8 @@ fun ChatScreen(
     var input by rememberSaveable { mutableStateOf("") }
     var inputFocused by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     var launchCameraAfterPermission by rememberSaveable { mutableStateOf(false) }
     val conversationListState = rememberLazyListState()
     val isShowingStreaming = loading && streamingAssistantText.isNotBlank()
@@ -263,8 +267,11 @@ fun ChatScreen(
                 Button(
                     enabled = composerEnabled && input.isNotBlank(),
                     onClick = {
-                        onSend(input)
+                        val message = input
+                        onSend(message)
                         input = ""
+                        keyboardController?.hide()
+                        focusManager.clearFocus()
                     },
                     modifier = Modifier.width(84.dp),
                 ) {
