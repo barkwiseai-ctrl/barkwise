@@ -99,6 +99,35 @@ def test_ready_reports_barkai_mode(monkeypatch):
     assert response.json()["barkai_mode"] == "custom"
 
 
+def test_barkai_diagnostics_requires_admin_or_token(monkeypatch):
+    monkeypatch.setattr(
+        chat_router.chat_service,
+        "run_llm_diagnostics",
+        lambda: {"status": "ok", "non_stream_ok": True, "stream_ok": True},
+    )
+    monkeypatch.setattr(type(chat_router.chat_service), "diagnostics_token", property(lambda self: ""))
+
+    forbidden = client.get("/chat/diagnostics/llm")
+    assert forbidden.status_code == 403
+
+
+def test_barkai_diagnostics_allows_admin_bearer_when_token_missing(monkeypatch):
+    monkeypatch.setattr(
+        chat_router.chat_service,
+        "run_llm_diagnostics",
+        lambda: {"status": "ok", "non_stream_ok": True, "stream_ok": True},
+    )
+    monkeypatch.setattr(type(chat_router.chat_service), "diagnostics_token", property(lambda self: ""))
+
+    admin_login = client.post("/auth/login", json={"user_id": "user_1", "password": "petsocial-demo"})
+    assert admin_login.status_code == 200
+    token = admin_login.json()["access_token"]
+
+    response = client.get("/chat/diagnostics/llm", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
 def test_auth_login_and_me():
     login = client.post("/auth/login", json={"user_id": "user_2", "password": "petsocial-demo"})
     assert login.status_code == 200
