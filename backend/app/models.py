@@ -398,6 +398,7 @@ class CtaChip(BaseModel):
         "open_services",
         "open_community",
         "open_messages",
+        "send_bark_message",
         "create_lost_found",
         "find_dog_walkers",
         "find_groomers",
@@ -412,6 +413,13 @@ class CtaChip(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ChatPendingConfirmation(BaseModel):
+    action: str
+    prompt: str
+    expires_at: Optional[str] = None
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatResponse(BaseModel):
     answer: str = ""
     suggested_profile: Dict[str, Any] = Field(default_factory=dict)
@@ -423,6 +431,11 @@ class ChatResponse(BaseModel):
     answer_source: str = "fallback"
     answer_badges: list[str] = Field(default_factory=list)
     citations: list[ChatCitation] = Field(default_factory=list)
+    status: Literal["ok", "needs_confirmation", "error"] = "ok"
+    error_type: Optional[
+        Literal["backend_unavailable", "llm_unavailable", "tool_failed", "confirmation_required"]
+    ] = None
+    pending_confirmation: Optional[ChatPendingConfirmation] = None
 
 
 class ProfileAcceptRequest(BaseModel):

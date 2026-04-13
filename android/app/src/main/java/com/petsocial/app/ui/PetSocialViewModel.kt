@@ -4228,6 +4228,10 @@ class PetSocialViewModel(
                 loadHomeData(_uiState.value.selectedCategory)
             }
 
+            "send_bark_message" -> {
+                cta.payload.readString("message")?.let { sendChat(it) }
+            }
+
             "open_home" -> {
                 _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.Profile) }
                 loadHomeData(_uiState.value.selectedCategory)
@@ -5388,7 +5392,13 @@ class PetSocialViewModel(
             selectedSuburb = mergedSuburb,
             loading = false,
             streamingAssistantText = "",
-            toastMessage = toast,
+            toastMessage = when {
+                toast != null -> toast
+                response.status == "needs_confirmation" -> "Confirmation required"
+                response.status == "error" -> response.answer
+                else -> null
+            },
+            error = if (response.status == "error") response.answer else null,
         )
     }
 

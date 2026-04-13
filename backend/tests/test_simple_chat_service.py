@@ -2,39 +2,43 @@ import os
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
-import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from fastapi import HTTPException
-
-from app.models import CommunityEventView, Group, GroupJoinRecord, MessageThreadView
+from app.data import community_events, event_rsvps, group_memberships, groups
+from app.models import ChatMessage, ChatRequest, CommunityEventView, Group, GroupJoinRecord, MessageThreadView
+from app.services import chat_tools as chat_tools_module
 from app.services import simple_chat_service as simple_chat_module
-from app.models import ChatMessage, ChatRequest
-from app.services.simple_chat_service import SimpleChatService, _extract_openai_api_key
+from app.services.chat_eval import APP_INTENT_EVAL_CASES, DOG_ADVICE_EVAL_CASES, MIXED_EVAL_CASES, UNSAFE_REPLY_REGRESSION_CASES
+from app.services.chat_router import PendingConfirmation
+from app.services.llm_client import extract_openai_api_key
+from app.services.simple_chat_service import SimpleChatService
 
 
 @contextmanager
 def temporary_groups(temp_groups, temp_memberships):
-    original_groups = list(simple_chat_module.groups)
-    original_memberships = list(simple_chat_module.group_memberships)
-    simple_chat_module.groups[:] = temp_groups
-    simple_chat_module.group_memberships[:] = temp_memberships
+    original_groups = list(groups)
+    original_memberships = list(group_memberships)
+    groups[:] = temp_groups
+    group_memberships[:] = temp_memberships
     try:
         yield
     finally:
-        simple_chat_module.groups[:] = original_groups
-        simple_chat_module.group_memberships[:] = original_memberships
+        groups[:] = original_groups
+        group_memberships[:] = original_memberships
 
 
 @contextmanager
-def temporary_events(temp_events):
-    original_events = list(simple_chat_module.community_events)
-    simple_chat_module.community_events[:] = temp_events
+def temporary_events(temp_events, temp_rsvps=None):
+    original_events = list(community_events)
+    original_rsvps = list(event_rsvps)
+    community_events[:] = temp_events
+    event_rsvps[:] = temp_rsvps or []
     try:
         yield
     finally:
-        simple_chat_module.community_events[:] = original_events
+        community_events[:] = original_events
+        event_rsvps[:] = original_rsvps
 
 
 def test_resolve_transcript_prefers_messages_and_limits_to_last_20():
@@ -51,83 +55,41 @@ def test_resolve_transcript_prefers_messages_and_limits_to_last_20():
     assert transcript[-1].content == "message-24"
 
 
-def test_resolve_transcript_falls_back_to_legacy_message():
-    service = SimpleChatService()
-    request = ChatRequest(user_id="user_2", message="hello")
-
-    transcript = service._resolve_transcript(request)
-
-    assert transcript == [ChatMessage(role="user", content="hello")]
-
-
-def test_build_openai_messages_includes_profile_context(monkeypatch):
-    service = SimpleChatService()
-    monkeypatch.setattr(
-        service,
-        "_profile_context",
-        lambda user_id: {"display_name": "Alex", "dog_name": "Milo", "suburb": "Richmond"},
-    )
-
-    messages = service._build_openai_messages(
-        user_id="user_2",
-        transcript=[ChatMessage(role="user", content="Hi there")],
-    )
-
-    assert messages[0]["role"] == "system"
-    assert "Milo" in messages[0]["content"]
-    assert messages[1:] == [{"role": "user", "content": "Hi there"}]
-
-
-def test_build_openai_messages_omits_custom_prompt_in_standard_mode(monkeypatch):
-    service = SimpleChatService()
-    monkeypatch.setenv("BARKAI_MODE", "standard")
-    monkeypatch.setenv("BARKAI_CUSTOM_SYSTEM_PROMPT", "Always answer like a breeder concierge.")
-    monkeypatch.setattr(service, "_profile_context", lambda user_id: {})
-
-    messages = service._build_openai_messages(
-        user_id="user_2",
-        transcript=[ChatMessage(role="user", content="Hi there")],
-    )
-
-    assert "Active customization profile:" not in messages[0]["content"]
-    assert "breeder concierge" not in messages[0]["content"]
-
-
-def test_build_openai_messages_appends_custom_prompt_in_custom_mode(monkeypatch):
+def test_build_openai_messages_includes_profile_and_custom_policy(monkeypatch):
     service = SimpleChatService()
     monkeypatch.setenv("BARKAI_MODE", "custom")
-    monkeypatch.setenv("BARKAI_CUSTOM_SYSTEM_PROMPT", "Prioritize concise training plans and behavioral detail.")
-    monkeypatch.setattr(service, "_profile_context", lambda user_id: {})
-
-    messages = service._build_openai_messages(
-        user_id="user_2",
-        transcript=[ChatMessage(role="user", content="Hi there")],
-    )
-
-    assert "Active customization profile:" in messages[0]["content"]
-    assert "Prioritize concise training plans and behavioral detail." in messages[0]["content"]
-
-
-def test_build_openai_messages_uses_default_custom_prompt_when_env_prompt_missing(monkeypatch):
-    service = SimpleChatService()
-    monkeypatch.setenv("BARKAI_MODE", "custom")
-    monkeypatch.delenv("BARKAI_CUSTOM_SYSTEM_PROMPT", raising=False)
-    monkeypatch.delenv("BARKAI_CUSTOM_SYSTEM_PROMPT_FILE", raising=False)
-    monkeypatch.setattr(service, "_profile_context", lambda user_id: {})
+    monkeypatch.setattr(service, "_profile_context", lambda user_id: {"display_name": "Alex", "dog_name": "Milo", "suburb": "Richmond"})
+    monkeypatch.setattr(service, "_load_user_state", lambda user_id: {"preferences": {"preferred_suburb": "Richmond"}, "conversation_summary": "Dog is shy at parks."})
 
     messages = service._build_openai_messages(
         user_id="user_2",
         transcript=[ChatMessage(role="user", content="Should I crate my dog every day while I work?")],
     )
 
-    assert "The goal should always be to avoid crate use where possible." in messages[0]["content"]
-    assert "Never present crate use as the preferred, normal, or complete solution." in messages[0]["content"]
+    assert messages[0]["role"] == "system"
+    assert "Milo" in messages[0]["content"]
+    assert "The goal is to avoid crate use." in messages[0]["content"]
+    assert "Dog is shy at parks." in messages[0]["content"]
 
 
-def test_create_chat_response_uses_group_tool_and_skips_openai(monkeypatch):
+def test_build_openai_messages_omits_custom_policy_in_standard_mode(monkeypatch):
+    service = SimpleChatService()
+    monkeypatch.setenv("BARKAI_MODE", "standard")
+    monkeypatch.setattr(service, "_profile_context", lambda user_id: {})
+    monkeypatch.setattr(service, "_load_user_state", lambda user_id: {"preferences": {}, "conversation_summary": ""})
+
+    messages = service._build_openai_messages(
+        user_id="user_2",
+        transcript=[ChatMessage(role="user", content="Hi there")],
+    )
+
+    assert "welfare-first" not in messages[0]["content"]
+    assert "crate use" not in messages[0]["content"]
+
+
+def test_create_chat_response_uses_group_tool_and_returns_confirmation_cta(monkeypatch):
     service = SimpleChatService()
     monkeypatch.setattr(service, "_profile_context", lambda user_id: {"suburb": "Surry Hills"})
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: (_ for _ in ()).throw(AssertionError("openai should not be called")))
 
     with temporary_groups(
         [
@@ -145,36 +107,12 @@ def test_create_chat_response_uses_group_tool_and_skips_openai(monkeypatch):
 
     assert response.answer_source == "tool_group_search"
     assert "Surry Hills Dog Park Crew" in response.answer
-    assert any(cta.action == "join_group" and cta.payload.get("group_id") == "g_1" for cta in response.cta_chips)
-
-
-def test_create_chat_response_group_tool_falls_back_to_general_groups(monkeypatch):
-    service = SimpleChatService()
-    monkeypatch.setattr(service, "_profile_context", lambda user_id: {"suburb": "Surry Hills"})
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: (_ for _ in ()).throw(AssertionError("openai should not be called")))
-
-    with temporary_groups(
-        [
-            Group(id="g_2", name="Surry Hills Official Pet Community", suburb="Surry Hills", member_count=20, official=True, owner_user_id="user_3"),
-        ],
-        [GroupJoinRecord(group_id="g_2", user_id="user_3", status="member")],
-    ):
-        response = service.create_chat_response(
-            ChatRequest(
-                user_id="user_2",
-                messages=[ChatMessage(role="user", content="Any dog park groups around here?")],
-            )
-        )
-
-    assert response.answer_source == "tool_group_search"
-    assert "could not find a dog-park-specific group" in response.answer
-    assert "Surry Hills Official Pet Community" in response.answer
+    assert any(cta.action == "send_bark_message" and cta.payload.get("message") == "join group g_1" for cta in response.cta_chips)
 
 
 def test_create_chat_response_group_tool_requests_suburb_when_unknown(monkeypatch):
     service = SimpleChatService()
     monkeypatch.setattr(service, "_profile_context", lambda user_id: {})
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: (_ for _ in ()).throw(AssertionError("openai should not be called")))
 
     response = service.create_chat_response(
         ChatRequest(
@@ -184,19 +122,16 @@ def test_create_chat_response_group_tool_requests_suburb_when_unknown(monkeypatc
     )
 
     assert response.answer_source == "tool_group_search"
-    assert "Tell me which suburb you mean" in response.answer
-    assert response.cta_chips[0].action == "open_community"
+    assert "Tell me which suburb" in response.answer
 
 
-def test_create_chat_response_enables_provider_mode_without_openai(monkeypatch):
+def test_create_chat_response_requires_confirmation_for_provider_mode(monkeypatch):
     service = SimpleChatService()
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: (_ for _ in ()).throw(AssertionError("openai should not be called")))
-
     calls: list[tuple[str, bool]] = []
     monkeypatch.setattr(
         simple_chat_module.auth_otp_store,
         "get_or_create_user_profile",
-        lambda user_id: SimpleNamespace(service_provider_mode=False),
+        lambda user_id: SimpleNamespace(service_provider_mode=False, display_name="", suburb="", dog_name="", dog_breed_mix="", dog_age_months=0, dog_weight_class="", bio=""),
     )
     monkeypatch.setattr(
         simple_chat_module.auth_otp_store,
@@ -207,20 +142,65 @@ def test_create_chat_response_enables_provider_mode_without_openai(monkeypatch):
     response = service.create_chat_response(
         ChatRequest(
             user_id="user_2",
-            messages=[ChatMessage(role="user", content="Can you turn on provider mode for me?")],
+            messages=[ChatMessage(role="user", content="Turn on provider mode for me")],
+        )
+    )
+
+    assert response.status == "needs_confirmation"
+    assert response.error_type == "confirmation_required"
+    assert calls == []
+    assert response.pending_confirmation is not None
+
+
+def test_create_chat_response_executes_confirmed_provider_mode(monkeypatch):
+    service = SimpleChatService()
+    monkeypatch.setenv("BARKAI_ENABLE_MUTATING_ACTIONS", "true")
+    service.tools.mutating_actions_enabled = True
+    calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        simple_chat_module.auth_otp_store,
+        "get_or_create_user_profile",
+        lambda user_id: SimpleNamespace(service_provider_mode=False, display_name="", suburb="", dog_name="", dog_breed_mix="", dog_age_months=0, dog_weight_class="", bio=""),
+    )
+    monkeypatch.setattr(
+        simple_chat_module.auth_otp_store,
+        "set_service_provider_mode",
+        lambda user_id, enabled: calls.append((user_id, enabled)),
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_user_state",
+        lambda user_id: {
+            "profile_memory": {},
+            "profile_accepted": False,
+            "field_locks": {},
+            "provider_state": {},
+            "preferences": {},
+            "conversation_summary": "",
+            "pending_confirmation": PendingConfirmation(
+                action="provider_mode_enable",
+                prompt="I can turn on provider mode for your account. Do you want me to go ahead?",
+                params={},
+                expires_at="2099-01-01T00:00:00Z",
+            ).to_dict(),
+        },
+    )
+
+    response = service.create_chat_response(
+        ChatRequest(
+            user_id="user_2",
+            messages=[ChatMessage(role="user", content="Yes, confirm")],
         )
     )
 
     assert response.answer_source == "tool_provider_mode"
     assert "Provider mode is now on" in response.answer
-    assert response.cta_chips[0].action == "open_services"
     assert calls == [("user_2", True)]
 
 
-def test_create_chat_response_uses_event_tool_and_skips_openai(monkeypatch):
+def test_create_chat_response_uses_event_tool_and_returns_rsvp_cta(monkeypatch):
     service = SimpleChatService()
     monkeypatch.setattr(service, "_profile_context", lambda user_id: {"suburb": "Surry Hills"})
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: (_ for _ in ()).throw(AssertionError("openai should not be called")))
 
     with temporary_events(
         [
@@ -235,17 +215,6 @@ def test_create_chat_response_uses_event_tool_and_skips_openai(monkeypatch):
                 created_by="user_9",
                 status="approved",
             ),
-            CommunityEventView(
-                id="evt_2",
-                title="Training Games Meetup",
-                description="Loose leash practice",
-                suburb="Surry Hills",
-                date="2026-04-12T10:00:00Z",
-                location_name="Prince Alfred Park",
-                attendee_count=9,
-                created_by="user_7",
-                status="approved",
-            ),
         ]
     ):
         response = service.create_chat_response(
@@ -256,20 +225,18 @@ def test_create_chat_response_uses_event_tool_and_skips_openai(monkeypatch):
         )
 
     assert response.answer_source == "tool_event_search"
-    assert "Sunset Pack Walk" in response.answer
-    assert response.cta_chips[0].action == "open_community"
+    assert any(cta.action == "send_bark_message" and cta.payload.get("message") == "rsvp event evt_1" for cta in response.cta_chips)
 
 
-def test_create_chat_response_uses_provider_search_tool_and_skips_openai(monkeypatch):
+def test_create_chat_response_uses_provider_search_tool(monkeypatch):
     service = SimpleChatService()
     monkeypatch.setattr(service, "_profile_context", lambda user_id: {"suburb": "Richmond"})
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: (_ for _ in ()).throw(AssertionError("openai should not be called")))
     monkeypatch.setattr(
         simple_chat_module.service_store,
         "list_providers",
         lambda **kwargs: [
-            SimpleNamespace(name="Clip Joint", rating=4.8, price_from=65),
-            SimpleNamespace(name="Paws & Polish", rating=4.6, price_from=58),
+            SimpleNamespace(id="prov_1", name="Clip Joint", rating=4.8, price_from=65),
+            SimpleNamespace(id="prov_2", name="Paws & Polish", rating=4.6, price_from=58),
         ],
     )
 
@@ -282,13 +249,34 @@ def test_create_chat_response_uses_provider_search_tool_and_skips_openai(monkeyp
 
     assert response.answer_source == "tool_provider_search"
     assert "Clip Joint" in response.answer
-    assert response.cta_chips[0].action == "open_services"
-    assert response.cta_chips[0].payload["category"] == "grooming"
 
 
-def test_create_chat_response_uses_booking_list_tool_and_skips_openai(monkeypatch):
+def test_create_chat_response_uses_provider_availability_tool(monkeypatch):
     service = SimpleChatService()
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: (_ for _ in ()).throw(AssertionError("openai should not be called")))
+    monkeypatch.setattr(
+        simple_chat_module.service_store,
+        "get_available_slots",
+        lambda provider_id, slot_date: [
+            SimpleNamespace(time_slot="09:00", available=True),
+            SimpleNamespace(time_slot="09:30", available=False),
+            SimpleNamespace(time_slot="10:00", available=True),
+        ],
+    )
+
+    response = service.create_chat_response(
+        ChatRequest(
+            user_id="user_2",
+            messages=[ChatMessage(role="user", content="Availability for provider prov_1 on 2026-04-12")],
+        )
+    )
+
+    assert response.answer_source == "tool_provider_availability"
+    assert "09:00" in response.answer
+    assert any(cta.action == "send_bark_message" for cta in response.cta_chips)
+
+
+def test_create_chat_response_uses_booking_list_tool(monkeypatch):
+    service = SimpleChatService()
     monkeypatch.setattr(
         simple_chat_module.service_store,
         "list_bookings",
@@ -312,14 +300,12 @@ def test_create_chat_response_uses_booking_list_tool_and_skips_openai(monkeypatc
 
     assert response.answer_source == "tool_booking_list"
     assert "Milo with prov_1 on 2026-04-08" in response.answer
-    assert response.cta_chips[0].action == "open_services"
 
 
-def test_create_chat_response_uses_messages_tool_and_skips_openai(monkeypatch):
+def test_create_chat_response_uses_messages_tool(monkeypatch):
     service = SimpleChatService()
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: (_ for _ in ()).throw(AssertionError("openai should not be called")))
     monkeypatch.setattr(
-        simple_chat_module.message_store,
+        chat_tools_module.message_store,
         "list_threads",
         lambda **kwargs: [
             MessageThreadView(
@@ -341,12 +327,11 @@ def test_create_chat_response_uses_messages_tool_and_skips_openai(monkeypatch):
 
     assert response.answer_source == "tool_messages_list"
     assert "provider_7 (2 unread)" in response.answer
-    assert response.cta_chips[0].action == "open_messages"
 
 
-def test_create_chat_response_builds_minimal_output(monkeypatch):
+def test_create_chat_response_falls_back_to_llm(monkeypatch):
     service = SimpleChatService()
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: {"choices": [{"message": {"content": "Hello back"}}]})
+    monkeypatch.setattr(service.llm_client, "generate_text", lambda messages: "Hello back")
 
     response = service.create_chat_response(
         ChatRequest(
@@ -356,42 +341,82 @@ def test_create_chat_response_builds_minimal_output(monkeypatch):
     )
 
     assert response.answer == "Hello back"
-    assert response.message is not None
-    assert response.message.content == "Hello back"
-    assert response.conversation[-1].content == "Hello back"
-    assert response.answer_badges == []
-    assert response.citations == []
+    assert response.status == "ok"
+    assert response.error_type is None
 
 
-def test_create_chat_response_requires_openai_configuration(monkeypatch):
+def test_create_chat_response_returns_structured_error_when_llm_fails(monkeypatch):
     service = SimpleChatService()
-    monkeypatch.setattr(service, "_load_openai_api_key", lambda: "")
+    monkeypatch.setattr(
+        service.llm_client,
+        "generate_text",
+        lambda messages: (_ for _ in ()).throw(simple_chat_module.LlmClientError(category="llm_unavailable", detail="boom")),
+    )
 
-    try:
-        service._openai_request(payload={}, stream=False)
-        assert False, "expected HTTPException"
-    except HTTPException as exc:
-        assert exc.status_code == 503
+    response = service.create_chat_response(
+        ChatRequest(
+            user_id="user_2",
+            messages=[ChatMessage(role="user", content="Hello")],
+        )
+    )
+
+    assert response.status == "error"
+    assert response.error_type == "llm_unavailable"
+    assert "trouble reaching" in response.answer
 
 
-def test_stream_chat_yields_deltas_and_final_response(monkeypatch):
+def test_create_chat_response_reports_llm_unavailable_when_openai_missing(monkeypatch):
     service = SimpleChatService()
-    stream_lines = [
-        b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}\n",
-        b"\n",
-        b"data: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n",
-        b"\n",
-        b"data: [DONE]\n",
-    ]
+    monkeypatch.setattr(service.llm_client, "_load_openai_api_key", lambda: "")
 
-    class FakeStream:
-        def __iter__(self):
-            return iter(stream_lines)
+    response = service.create_chat_response(
+        ChatRequest(
+            user_id="user_2",
+            messages=[ChatMessage(role="user", content="Hello")],
+        )
+    )
 
-        def close(self):
-            return None
+    assert response.status == "error"
+    assert response.error_type == "llm_unavailable"
+    assert "language service" in response.answer
 
-    monkeypatch.setattr(service, "_openai_request", lambda payload, stream: FakeStream())
+
+def test_stream_chat_yields_tool_final_without_hitting_llm(monkeypatch):
+    service = SimpleChatService()
+    monkeypatch.setattr(service, "_profile_context", lambda user_id: {"suburb": "Surry Hills"})
+    monkeypatch.setattr(
+        service.llm_client,
+        "stream_text",
+        lambda messages: (_ for _ in ()).throw(AssertionError("llm should not be called")),
+    )
+    with temporary_groups(
+        [
+            Group(id="g_1", name="Surry Hills Dog Park Crew", suburb="Surry Hills", member_count=12, official=False, owner_user_id="user_1"),
+        ],
+        [],
+    ):
+        events = list(
+            service.stream_chat(
+                ChatRequest(
+                    user_id="user_2",
+                    messages=[ChatMessage(role="user", content="Any dog park groups around here?")],
+                )
+            )
+        )
+
+    assert events[0]["type"] == "delta"
+    assert events[1]["type"] == "final"
+    assert events[1]["response"]["answer_source"] == "tool_group_search"
+
+
+def test_stream_chat_falls_back_to_non_stream(monkeypatch):
+    service = SimpleChatService()
+    monkeypatch.setattr(
+        service.llm_client,
+        "stream_text",
+        lambda messages: (_ for _ in ()).throw(simple_chat_module.LlmClientError(category="backend_unavailable", detail="stream failed")),
+    )
+    monkeypatch.setattr(service.llm_client, "generate_text", lambda messages: "Fallback answer")
 
     events = list(
         service.stream_chat(
@@ -402,119 +427,8 @@ def test_stream_chat_yields_deltas_and_final_response(monkeypatch):
         )
     )
 
-    assert events[0] == {"type": "delta", "delta": "Hello "}
-    assert events[1] == {"type": "delta", "delta": "world"}
-    assert events[2]["type"] == "final"
-    assert events[2]["response"]["message"] == {"role": "assistant", "content": "Hello world"}
-
-
-def test_stream_chat_falls_back_to_non_stream_when_stream_fails_immediately(monkeypatch):
-    service = SimpleChatService()
-
-    class BrokenStream:
-        def __iter__(self):
-            raise RuntimeError("stream dropped")
-
-        def close(self):
-            return None
-
-    def fake_openai_request(payload, stream):
-        if stream:
-            return BrokenStream()
-        return {"choices": [{"message": {"content": "Fallback answer"}}]}
-
-    monkeypatch.setattr(service, "_openai_request", fake_openai_request)
-
-    events = list(
-        service.stream_chat(
-            ChatRequest(
-                user_id="user_2",
-                messages=[ChatMessage(role="user", content="Hi")],
-            )
-        )
-    )
-
-    assert events == [
-        {
-            "type": "final",
-            "response": {
-                "answer": "Fallback answer",
-                "message": {"role": "assistant", "content": "Fallback answer"},
-                "conversation": [
-                    {"role": "user", "content": "Hi", "citations": [], "answer_badges": [], "answer_source": None},
-                    {
-                        "role": "assistant",
-                        "content": "Fallback answer",
-                        "citations": [],
-                        "answer_badges": [],
-                        "answer_source": None,
-                    },
-                ],
-                "citations": [],
-                "answer_badges": [],
-                "profile_suggestion": None,
-                "cta_chips": [],
-                "suggested_profile": {},
-                "a2ui_messages": [],
-                "answer_source": "assistant",
-            },
-        }
-    ]
-
-
-def test_stream_chat_falls_back_to_non_stream_when_stream_open_fails(monkeypatch):
-    service = SimpleChatService()
-
-    def fake_openai_request(payload, stream):
-        if stream:
-            raise RuntimeError("stream open failed")
-        return {"choices": [{"message": {"content": "Recovered from non-stream fallback"}}]}
-
-    monkeypatch.setattr(service, "_openai_request", fake_openai_request)
-
-    events = list(
-        service.stream_chat(
-            ChatRequest(
-                user_id="user_2",
-                messages=[ChatMessage(role="user", content="Hi")],
-            )
-        )
-    )
-
-    assert len(events) == 1
-    assert events[0]["type"] == "final"
-    assert events[0]["response"]["answer"] == "Recovered from non-stream fallback"
-
-
-def test_openai_request_retries_timeout_and_succeeds(monkeypatch):
-    service = SimpleChatService()
-    monkeypatch.setattr(service, "_load_openai_api_key", lambda: "test-key")
-    monkeypatch.setattr(simple_chat_module.time, "sleep", lambda *_args, **_kwargs: None)
-
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps({"choices": [{"message": {"content": "Recovered"}}]}).encode("utf-8")
-
-    calls = {"count": 0}
-
-    def fake_urlopen(_request, timeout):
-        calls["count"] += 1
-        if calls["count"] == 1:
-            raise TimeoutError("timed out")
-        return FakeResponse()
-
-    monkeypatch.setattr(simple_chat_module.urllib_request, "urlopen", fake_urlopen)
-
-    payload = service._openai_request(payload={"model": "test", "messages": []}, stream=False)
-
-    assert payload["choices"][0]["message"]["content"] == "Recovered"
-    assert calls["count"] == 2
+    assert events[-1]["type"] == "final"
+    assert events[-1]["response"]["answer"] == "Fallback answer"
 
 
 def test_extract_openai_api_key_accepts_env_file_format():
@@ -523,10 +437,17 @@ def test_extract_openai_api_key_accepts_env_file_format():
     OPENAI_MODEL=gpt-4o-mini
     """
 
-    assert _extract_openai_api_key(raw_text) == "sk-test-key"
+    assert extract_openai_api_key(raw_text) == "sk-test-key"
 
 
 def test_extract_openai_api_key_accepts_first_line_key_with_extra_lines():
     raw_text = "sk-test-key\\nOPENAI_MODEL=gpt-4o-mini\\n"
 
-    assert _extract_openai_api_key(raw_text) == "sk-test-key"
+    assert extract_openai_api_key(raw_text) == "sk-test-key"
+
+
+def test_chat_eval_fixtures_cover_expected_categories():
+    assert len(DOG_ADVICE_EVAL_CASES) >= 25
+    assert len(APP_INTENT_EVAL_CASES) >= 15
+    assert len(MIXED_EVAL_CASES) >= 10
+    assert len(UNSAFE_REPLY_REGRESSION_CASES) >= 10

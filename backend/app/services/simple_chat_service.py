@@ -1,25 +1,28 @@
-import json
+from __future__ import annotations
+
+from datetime import datetime, timezone
 import os
 from pathlib import Path
-import socket
-import time
 from typing import Generator
-from urllib import error as urllib_error
-from urllib import request as urllib_request
 
 from fastapi import HTTPException
 
-from app.data import community_events, groups, group_memberships
-from app.models import ChatMessage, ChatRequest, ChatResponse, ChatTurn, CtaChip, PetProfileSuggestion
-from app.services.auth_otp_store import auth_otp_store
-from app.services.barkai_custom_context import build_custom_guidance
-from app.services.memory_store import MemoryStore
-from app.services.message_store import message_store
-from app.services.service_store import service_store
-
-DEFAULT_CUSTOM_SYSTEM_PROMPT_PATH = (
-    Path(__file__).resolve().parents[1] / "resources" / "barkai_custom_system_prompt.txt"
+from app.models import (
+    ChatMessage,
+    ChatPendingConfirmation,
+    ChatRequest,
+    ChatResponse,
+    ChatTurn,
+    CtaChip,
+    PetProfileSuggestion,
 )
+from app.services.auth_otp_store import auth_otp_store
+from app.services.chat_policy import ChatPolicyBuilder
+from app.services.chat_router import BarkAiDecision, BarkAiFailureCategory, BarkAiResult, BarkAiRoute, BarkAiRouter, PendingConfirmation
+from app.services.chat_tools import BarkAiTools
+from app.services.llm_client import LlmClient, LlmClientError, extract_openai_api_key as _extract_openai_api_key
+from app.services.memory_store import MemoryStore
+from app.services.service_store import service_store
 
 PROVIDER_FIELDS = (
     "service_name",
@@ -31,30 +34,8 @@ PROVIDER_FIELDS = (
 )
 
 
-def _clean_env_value(raw_value: str) -> str:
-    return raw_value.strip().strip("'\"")
-
-
-def _extract_openai_api_key(raw_text: str) -> str:
-    normalized_text = raw_text.replace("\\n", "\n")
-    cleaned = _clean_env_value(normalized_text)
-    first_line = _clean_env_value(cleaned.splitlines()[0]) if cleaned.splitlines() else ""
-    if first_line.startswith("sk-"):
-        return first_line
-
-    for raw_line in normalized_text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        if key.strip() == "OPENAI_API_KEY":
-            return _clean_env_value(value)
-
-    for raw_line in normalized_text.splitlines():
-        line = _clean_env_value(raw_line)
-        if line.startswith("sk-"):
-            return line
-    return ""
+def _read_bool_env(name: str, default: str) -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class SimpleChatService:
@@ -65,108 +46,178 @@ class SimpleChatService:
         self.retry_backoff_seconds = max(0.0, float(os.getenv("OPENAI_RETRY_BACKOFF_SECONDS", "1.0")))
         default_db_path = str(Path(__file__).resolve().parents[2] / "data" / "memory.sqlite3")
         self.memory_store = MemoryStore(db_path=os.getenv("MEMORY_DB_PATH", default_db_path))
+        self.llm_client = LlmClient(
+            model=self.model,
+            timeout_seconds=self.timeout_seconds,
+            max_retries=self.max_retries,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
+        self.policy_builder = ChatPolicyBuilder()
+        self.router = BarkAiRouter()
+        self.tools = BarkAiTools(mutating_actions_enabled=self.mutating_actions_enabled)
+        self._last_llm_report: dict[str, object] = {
+            "status": "unknown",
+            "checked_at": None,
+            "last_error": None,
+            "provider_reachable": False,
+            "non_stream_ok": False,
+            "stream_ok": False,
+        }
 
     @property
     def llm_available(self) -> bool:
-        return bool(self._load_openai_api_key())
+        return self.llm_client.configured
 
     @property
     def barkai_mode(self) -> str:
-        raw_mode = os.getenv("BARKAI_MODE", "standard").strip().lower()
-        return raw_mode if raw_mode in {"standard", "custom"} else "standard"
+        return self.policy_builder.barkai_mode
+
+    @property
+    def tools_enabled(self) -> bool:
+        return _read_bool_env("BARKAI_ENABLE_TOOLS", "true")
+
+    @property
+    def mutating_actions_enabled(self) -> bool:
+        return _read_bool_env("BARKAI_ENABLE_MUTATING_ACTIONS", "false")
+
+    @property
+    def memory_summary_enabled(self) -> bool:
+        return self.policy_builder.summary_enabled
+
+    @property
+    def diagnostics_token(self) -> str:
+        return os.getenv("BARKAI_DIAGNOSTICS_TOKEN", "").strip()
+
+    @property
+    def ready_state(self) -> dict[str, object]:
+        llm_status = "unconfigured" if not self.llm_available else str(self._last_llm_report.get("status") or "configured")
+        return {
+            "status": "ready",
+            "llm_configured": self.llm_available,
+            "llm_mode": "openai" if self.llm_available else "unconfigured",
+            "barkai_mode": self.barkai_mode,
+            "llm_status": llm_status,
+        }
 
     def create_chat_response(self, request: ChatRequest) -> ChatResponse:
         transcript = self._resolve_transcript(request)
-        tool_response = self._maybe_handle_internal_tool(user_id=request.user_id, transcript=transcript)
-        if tool_response is not None:
-            return tool_response
-        payload = {
-            "model": self.model,
-            "messages": self._build_openai_messages(user_id=request.user_id, transcript=transcript),
-        }
-        data = self._openai_request(payload=payload, stream=False)
-        text = self._extract_text(data).strip()
-        if not text:
-            raise HTTPException(status_code=502, detail="OpenAI returned an empty chat response")
-        return self._build_chat_response(transcript=transcript, assistant_text=text)
+        state = self._load_user_state(user_id=request.user_id)
+        profile_context = self._profile_context(user_id=request.user_id)
+        self._update_preferences(state=state, request=request, profile_context=profile_context)
+        decision = self.router.route(
+            transcript=transcript,
+            pending_confirmation=PendingConfirmation.from_dict(state["pending_confirmation"]),
+        )
+        response = self._execute_decision(
+            request=request,
+            transcript=transcript,
+            state=state,
+            profile_context=profile_context,
+            decision=decision,
+        )
+        self._persist_chat_state(
+            user_id=request.user_id,
+            transcript=transcript,
+            response=response,
+            state=state,
+            persist_assistant_turn=response.status != "error",
+        )
+        return response
 
     def stream_chat(self, request: ChatRequest) -> Generator[dict, None, None]:
         transcript = self._resolve_transcript(request)
-        tool_response = self._maybe_handle_internal_tool(user_id=request.user_id, transcript=transcript)
-        if tool_response is not None:
-            yield {"type": "delta", "delta": tool_response.answer}
-            yield {"type": "final", "response": tool_response.model_dump(mode="json")}
+        state = self._load_user_state(user_id=request.user_id)
+        profile_context = self._profile_context(user_id=request.user_id)
+        self._update_preferences(state=state, request=request, profile_context=profile_context)
+        decision = self.router.route(
+            transcript=transcript,
+            pending_confirmation=PendingConfirmation.from_dict(state["pending_confirmation"]),
+        )
+        if decision.route != BarkAiRoute.CHAT:
+            response = self._execute_non_chat_decision(
+                request=request,
+                transcript=transcript,
+                state=state,
+                profile_context=profile_context,
+                decision=decision,
+            )
+            self._persist_chat_state(
+                user_id=request.user_id,
+                transcript=transcript,
+                response=response,
+                state=state,
+                persist_assistant_turn=response.status != "error",
+            )
+            yield {"type": "delta", "delta": response.answer}
+            yield {"type": "final", "response": response.model_dump(mode="json")}
             return
-        messages = self._build_openai_messages(user_id=request.user_id, transcript=transcript)
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "stream": True,
-        }
-        try:
-            raw_response = self._openai_request(payload=payload, stream=True)
-        except Exception:
-            fallback_payload = {
-                "model": self.model,
-                "messages": messages,
-            }
-            fallback_data = self._openai_request(payload=fallback_payload, stream=False)
-            fallback_text = self._extract_text(fallback_data).strip()
-            if not fallback_text:
-                raise HTTPException(status_code=502, detail="OpenAI returned an empty streamed chat response")
-            yield {
-                "type": "final",
-                "response": self._build_chat_response(
-                    transcript=transcript,
-                    assistant_text=fallback_text,
-                ).model_dump(mode="json"),
-            }
-            return
+
+        messages = self._build_openai_messages(
+            transcript=transcript,
+            profile_context=profile_context,
+            state=state,
+            policy_tags=decision.policy_tags,
+        )
         chunks: list[str] = []
         try:
-            try:
-                for raw_line in raw_response:
-                    line = raw_line.decode("utf-8").strip()
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[6:].strip()
-                    if data == "[DONE]":
-                        break
-                    event = json.loads(data)
-                    delta = self._extract_stream_delta(event)
-                    if not delta:
-                        continue
-                    chunks.append(delta)
-                    yield {"type": "delta", "delta": delta}
-            except Exception:
-                if chunks:
-                    raise
-                fallback_payload = {
-                    "model": self.model,
-                    "messages": messages,
-                }
-                fallback_data = self._openai_request(payload=fallback_payload, stream=False)
-                fallback_text = self._extract_text(fallback_data).strip()
-                if not fallback_text:
-                    raise HTTPException(status_code=502, detail="OpenAI returned an empty streamed chat response")
-                yield {
-                    "type": "final",
-                    "response": self._build_chat_response(
-                        transcript=transcript,
-                        assistant_text=fallback_text,
-                    ).model_dump(mode="json"),
-                }
-                return
-        finally:
-            raw_response.close()
+            for delta in self.llm_client.stream_text(messages=messages):
+                chunks.append(delta)
+                yield {"type": "delta", "delta": delta}
+            text = "".join(chunks).strip()
+            if not text:
+                raise LlmClientError(category="llm_unavailable", detail="OpenAI returned an empty streamed chat response")
+            self._record_llm_success(stream=True)
+            result = BarkAiResult(answer=text, answer_source="assistant")
+        except LlmClientError as exc:
+            if chunks:
+                try:
+                    fallback_text = self.llm_client.generate_text(messages=messages)
+                    self._record_llm_success(stream=False)
+                    result = BarkAiResult(answer=fallback_text, answer_source="assistant")
+                except LlmClientError as fallback_exc:
+                    self._record_llm_failure(fallback_exc)
+                    result = self._error_result_from_llm_exception(fallback_exc)
+            else:
+                try:
+                    fallback_text = self.llm_client.generate_text(messages=messages)
+                    self._record_llm_success(stream=False)
+                    result = BarkAiResult(answer=fallback_text, answer_source="assistant")
+                except LlmClientError as fallback_exc:
+                    self._record_llm_failure(fallback_exc)
+                    result = self._error_result_from_llm_exception(fallback_exc)
+        response = self._build_chat_response_from_result(transcript=transcript, result=result)
+        self._persist_chat_state(
+            user_id=request.user_id,
+            transcript=transcript,
+            response=response,
+            state=state,
+            persist_assistant_turn=response.status != "error",
+        )
+        yield {"type": "final", "response": response.model_dump(mode="json")}
 
-        text = "".join(chunks).strip()
-        if not text:
-            raise HTTPException(status_code=502, detail="OpenAI returned an empty streamed chat response")
-        yield {
-            "type": "final",
-            "response": self._build_chat_response(transcript=transcript, assistant_text=text).model_dump(mode="json"),
+    def run_llm_diagnostics(self) -> dict[str, object]:
+        report = self.llm_client.run_synthetic_check()
+        report["barkai_mode"] = self.barkai_mode
+        report["enabled_capabilities"] = {
+            "tools": self.tools_enabled,
+            "mutating_actions": self.mutating_actions_enabled,
+            "reddit_curated_guidance": self.policy_builder.reddit_guidance_enabled,
+            "memory_summary": self.memory_summary_enabled,
         }
+        report["status"] = (
+            "ok"
+            if report.get("config_loaded") and report.get("non_stream_ok") and report.get("stream_ok")
+            else ("degraded" if report.get("config_loaded") else "unconfigured")
+        )
+        self._last_llm_report = {
+            "status": report["status"],
+            "checked_at": report.get("checked_at"),
+            "last_error": report.get("last_error"),
+            "provider_reachable": report.get("provider_reachable", False),
+            "non_stream_ok": report.get("non_stream_ok", False),
+            "stream_ok": report.get("stream_ok", False),
+        }
+        return report
 
     def accept_profile(self, *, user_id: str) -> ChatResponse:
         state = self._load_user_state(user_id=user_id)
@@ -224,6 +275,76 @@ class SimpleChatService:
             cta_chips=[CtaChip(label="Open Services", action="open_services", payload={"category": category})],
         )
 
+    def _execute_decision(
+        self,
+        *,
+        request: ChatRequest,
+        transcript: list[ChatMessage],
+        state: dict[str, object],
+        profile_context: dict[str, object],
+        decision: BarkAiDecision,
+    ) -> ChatResponse:
+        if decision.route != BarkAiRoute.CHAT:
+            return self._execute_non_chat_decision(
+                request=request,
+                transcript=transcript,
+                state=state,
+                profile_context=profile_context,
+                decision=decision,
+            )
+        try:
+            messages = self._build_openai_messages(
+                transcript=transcript,
+                profile_context=profile_context,
+                state=state,
+                policy_tags=decision.policy_tags,
+            )
+            text = self.llm_client.generate_text(messages=messages)
+            self._record_llm_success(stream=False)
+            result = BarkAiResult(answer=text, answer_source="assistant")
+        except LlmClientError as exc:
+            self._record_llm_failure(exc)
+            result = self._error_result_from_llm_exception(exc)
+        return self._build_chat_response_from_result(transcript=transcript, result=result)
+
+    def _execute_non_chat_decision(
+        self,
+        *,
+        request: ChatRequest,
+        transcript: list[ChatMessage],
+        state: dict[str, object],
+        profile_context: dict[str, object],
+        decision: BarkAiDecision,
+    ) -> ChatResponse:
+        if not self.tools_enabled and decision.route in {BarkAiRoute.TOOL_READ, BarkAiRoute.TOOL_ACTION_CONFIRMATION, BarkAiRoute.TOOL_ACTION_EXECUTE}:
+            fallback_decision = BarkAiDecision(route=BarkAiRoute.CHAT, policy_tags=decision.policy_tags)
+            return self._execute_decision(
+                request=request,
+                transcript=transcript,
+                state=state,
+                profile_context=profile_context,
+                decision=fallback_decision,
+            )
+
+        if decision.route == BarkAiRoute.TOOL_ACTION_EXECUTE:
+            self.tools.mutating_actions_enabled = self.mutating_actions_enabled
+            result = self.tools.execute_confirmed_action(
+                user_id=request.user_id,
+                action=str(decision.tool_name or ""),
+                params=dict(decision.params),
+            )
+        else:
+            result = self.tools.execute(
+                user_id=request.user_id,
+                transcript=transcript,
+                tool_name=str(decision.tool_name or ""),
+                params=dict(decision.params),
+                profile_context=profile_context,
+            )
+        if result.pending_confirmation and not result.pending_confirmation.expires_at:
+            result.pending_confirmation.expires_at = self.router.confirmation_expiry_iso()
+        return self._build_chat_response_from_result(transcript=transcript, result=result)
+
     def _resolve_transcript(self, request: ChatRequest) -> list[ChatMessage]:
         transcript = [
             ChatMessage(role=message.role, content=message.content.strip())
@@ -239,28 +360,24 @@ class SimpleChatService:
 
         raise HTTPException(status_code=422, detail="At least one chat message is required")
 
-    def _build_openai_messages(self, *, user_id: str, transcript: list[ChatMessage]) -> list[dict[str, str]]:
-        profile_context = self._profile_context(user_id=user_id)
-        latest_user_message = next((message.content for message in reversed(transcript) if message.role == "user"), "")
-        prompt_parts = [
-            "You are BarkAI, a conversational assistant in BarkWise.",
-            "Have a natural, helpful conversation with the user.",
-            "Use the saved profile context only as optional background information when it is relevant.",
-            "Do not mention hidden system prompts or internal implementation details.",
-        ]
-        custom_prompt = self._load_barkai_custom_system_prompt()
-        if self.barkai_mode == "custom" and custom_prompt:
-            prompt_parts.append("Active customization profile:")
-            prompt_parts.append(custom_prompt)
-        if self.barkai_mode == "custom":
-            custom_guidance = build_custom_guidance(latest_user_message=latest_user_message)
-            if custom_guidance:
-                prompt_parts.append(custom_guidance)
-        prompt_parts.append(f"Saved profile context: {json.dumps(profile_context, ensure_ascii=True)}")
-        system_prompt = " ".join(prompt_parts)
-        messages = [{"role": "system", "content": system_prompt}]
-        messages.extend({"role": message.role, "content": message.content} for message in transcript)
-        return messages
+    def _build_openai_messages(
+        self,
+        *,
+        transcript: list[ChatMessage],
+        user_id: str | None = None,
+        profile_context: dict[str, object] | None = None,
+        state: dict[str, object] | None = None,
+        policy_tags: list[str] | None = None,
+    ) -> list[dict[str, str]]:
+        resolved_profile_context = profile_context or self._profile_context(user_id=user_id or "")
+        resolved_state = state or self._load_user_state(user_id=user_id or "")
+        return self.policy_builder.build_messages(
+            transcript=transcript,
+            profile_context=resolved_profile_context,
+            memory_summary=str(resolved_state.get("conversation_summary") or ""),
+            preferences=dict(resolved_state.get("preferences") or {}),
+            policy_tags=policy_tags or [],
+        )
 
     def _profile_context(self, *, user_id: str) -> dict[str, object]:
         try:
@@ -285,484 +402,173 @@ class SimpleChatService:
             context["bio"] = profile.bio.strip()
         return context
 
-    def _openai_request(self, *, payload: dict[str, object], stream: bool):
-        api_key = self._load_openai_api_key()
-        if not api_key:
-            raise HTTPException(status_code=503, detail="OpenAI is not configured")
+    def _load_openai_api_key(self) -> str:
+        return self.llm_client._load_openai_api_key()
 
-        request = urllib_request.Request(
-            url="https://api.openai.com/v1/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        retryable_http_statuses = {408, 429, 500, 502, 503, 504}
-        last_error: Exception | None = None
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                response = urllib_request.urlopen(request, timeout=self.timeout_seconds)
-                if stream:
-                    return response
-                with response:
-                    return json.loads(response.read().decode("utf-8"))
-            except urllib_error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="ignore").strip() or exc.reason
-                last_error = exc
-                if exc.code in retryable_http_statuses and attempt < self.max_retries:
-                    time.sleep(self.retry_backoff_seconds * attempt)
-                    continue
-                raise HTTPException(status_code=502, detail=f"OpenAI request failed: {detail}") from exc
-            except (urllib_error.URLError, TimeoutError, socket.timeout, OSError, ConnectionError) as exc:
-                last_error = exc
-                if attempt < self.max_retries:
-                    time.sleep(self.retry_backoff_seconds * attempt)
-                    continue
-                detail = getattr(exc, "reason", None) or str(exc) or exc.__class__.__name__
-                raise HTTPException(status_code=502, detail=f"OpenAI request failed: {detail}") from exc
-            except json.JSONDecodeError as exc:
-                last_error = exc
-                if attempt < self.max_retries:
-                    time.sleep(self.retry_backoff_seconds * attempt)
-                    continue
-                raise HTTPException(status_code=502, detail="OpenAI returned malformed JSON") from exc
-            except Exception as exc:
-                last_error = exc
-                if attempt < self.max_retries:
-                    time.sleep(self.retry_backoff_seconds * attempt)
-                    continue
-                raise HTTPException(status_code=502, detail=f"OpenAI request failed: {exc}") from exc
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenAI request failed: {last_error or 'unknown error'}",
-        )
-
-    def _extract_text(self, payload: dict[str, object]) -> str:
-        choices = payload.get("choices", [])
-        if not isinstance(choices, list) or not choices:
-            return ""
-        message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
-        content = message.get("content", "") if isinstance(message, dict) else ""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            text_parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text_parts.append(str(item.get("text", "")))
-            return "".join(text_parts)
-        return ""
-
-    def _extract_stream_delta(self, payload: dict[str, object]) -> str:
-        choices = payload.get("choices", [])
-        if not isinstance(choices, list) or not choices:
-            return ""
-        delta = choices[0].get("delta", {}) if isinstance(choices[0], dict) else {}
-        if not isinstance(delta, dict):
-            return ""
-        content = delta.get("content", "")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            text_parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text_parts.append(str(item.get("text", "")))
-            return "".join(text_parts)
-        return ""
-
-    def _build_chat_response(self, *, transcript: list[ChatMessage], assistant_text: str) -> ChatResponse:
-        assistant_message = ChatMessage(role="assistant", content=assistant_text)
+    def _build_chat_response_from_result(self, *, transcript: list[ChatMessage], result: BarkAiResult) -> ChatResponse:
         conversation = [ChatTurn(role=item.role, content=item.content) for item in transcript]
-        conversation.append(ChatTurn(role="assistant", content=assistant_text))
+        conversation.append(
+            ChatTurn(
+                role="assistant",
+                content=result.answer,
+                answer_source=result.answer_source,
+                answer_badges=list(result.answer_badges),
+                citations=list(result.citations),
+            )
+        )
+        pending_confirmation = (
+            ChatPendingConfirmation(
+                action=result.pending_confirmation.action,
+                prompt=result.pending_confirmation.prompt,
+                expires_at=result.pending_confirmation.expires_at,
+                params=dict(result.pending_confirmation.params),
+            )
+            if result.pending_confirmation
+            else None
+        )
         return ChatResponse(
-            answer=assistant_text,
-            message=assistant_message,
+            answer=result.answer,
+            message=ChatMessage(role="assistant", content=result.answer),
             conversation=conversation,
-            answer_source="assistant",
+            cta_chips=list(result.cta_chips),
+            answer_source=result.answer_source,
+            answer_badges=list(result.answer_badges),
+            citations=list(result.citations),
+            a2ui_messages=list(result.a2ui_messages),
+            status=result.status,
+            error_type=result.error_type,
+            pending_confirmation=pending_confirmation,
         )
 
-    def _maybe_handle_internal_tool(self, *, user_id: str, transcript: list[ChatMessage]) -> ChatResponse | None:
-        latest_user_message = next((message.content for message in reversed(transcript) if message.role == "user"), "").strip()
-        if not latest_user_message:
-            return None
-        if self._is_provider_mode_toggle_request(latest_user_message):
-            return self._handle_provider_mode_toggle_request(user_id=user_id, transcript=transcript)
-        if self._is_group_discovery_request(latest_user_message):
-            return self._handle_group_discovery_request(
-                user_id=user_id,
-                transcript=transcript,
-                latest_user_message=latest_user_message,
-            )
-        if self._is_event_discovery_request(latest_user_message):
-            return self._handle_event_discovery_request(
-                user_id=user_id,
-                transcript=transcript,
-                latest_user_message=latest_user_message,
-            )
-        if self._is_provider_search_request(latest_user_message):
-            return self._handle_provider_search_request(
-                user_id=user_id,
-                transcript=transcript,
-                latest_user_message=latest_user_message,
-            )
-        if self._is_booking_list_request(latest_user_message):
-            return self._handle_booking_list_request(user_id=user_id, transcript=transcript)
-        if self._is_messages_request(latest_user_message):
-            return self._handle_messages_request(user_id=user_id, transcript=transcript)
-        return None
-
-    def _is_provider_mode_toggle_request(self, message: str) -> bool:
-        normalized = message.lower()
-        if "provider mode" not in normalized:
-            return False
-        return any(keyword in normalized for keyword in ("turn on", "switch on", "enable", "activate"))
-
-    def _is_group_discovery_request(self, message: str) -> bool:
-        normalized = message.lower()
-        group_signal = any(keyword in normalized for keyword in ("group", "groups", "community", "communities"))
-        dog_park_signal = "dog park" in normalized or "dogpark" in normalized
-        find_signal = any(
-            keyword in normalized
-            for keyword in ("know any", "find", "recommend", "suggest", "looking for", "new to")
+    def _error_result_from_llm_exception(self, exc: LlmClientError) -> BarkAiResult:
+        category = (
+            BarkAiFailureCategory.BACKEND_UNAVAILABLE.value
+            if exc.category == "backend_unavailable"
+            else BarkAiFailureCategory.LLM_UNAVAILABLE.value
         )
-        return group_signal and (dog_park_signal or find_signal)
-
-    def _is_event_discovery_request(self, message: str) -> bool:
-        normalized = message.lower()
-        event_signal = any(keyword in normalized for keyword in ("event", "events", "meetup", "meetups", "pack walk"))
-        return event_signal and any(keyword in normalized for keyword in ("find", "any", "near", "this week", "happening", "coming up"))
-
-    def _is_provider_search_request(self, message: str) -> bool:
-        normalized = message.lower()
-        service_signal = any(
-            keyword in normalized
-            for keyword in (
-                "groomer",
-                "groomers",
-                "grooming",
-                "dog walker",
-                "dog walkers",
-                "walker",
-                "walkers",
-            )
+        answer = (
+            "BarkAI is having trouble reaching its language service right now. Please retry in a moment."
+            if category == BarkAiFailureCategory.LLM_UNAVAILABLE.value
+            else "BarkAI is temporarily unavailable because the backend connection failed. Please retry shortly."
         )
-        return service_signal and any(keyword in normalized for keyword in ("find", "recommend", "near", "available", "know any", "looking for"))
-
-    def _is_booking_list_request(self, message: str) -> bool:
-        normalized = message.lower()
-        return "booking" in normalized and any(keyword in normalized for keyword in ("my", "show", "upcoming", "what", "list"))
-
-    def _is_messages_request(self, message: str) -> bool:
-        normalized = message.lower()
-        thread_signal = "message" in normalized or "messages" in normalized or "inbox" in normalized
-        return thread_signal and any(keyword in normalized for keyword in ("my", "unread", "show", "from", "do i have", "list"))
-
-    def _handle_provider_mode_toggle_request(self, *, user_id: str, transcript: list[ChatMessage]) -> ChatResponse:
-        profile = auth_otp_store.get_or_create_user_profile(user_id=user_id)
-        if profile.service_provider_mode:
-            answer = "Provider mode is already on for your account."
-        else:
-            auth_otp_store.set_service_provider_mode(user_id=user_id, enabled=True)
-            answer = "Provider mode is now on. You can open Listings to create or manage your service profile."
-        return self._build_tool_chat_response(
-            transcript=transcript,
-            assistant_text=answer,
-            cta_chips=[CtaChip(label="Open Listings", action="open_services")],
-            answer_source="tool_provider_mode",
+        return BarkAiResult(
+            answer=answer,
+            answer_source="assistant_error",
+            status="error",
+            error_type=category,
         )
 
-    def _handle_group_discovery_request(
-        self,
-        *,
-        user_id: str,
-        transcript: list[ChatMessage],
-        latest_user_message: str,
-    ) -> ChatResponse:
-        suburb = self._resolve_group_search_suburb(user_id=user_id, latest_user_message=latest_user_message)
-        if not suburb:
-            answer = "I can help with that. Tell me which suburb you mean and I will look for nearby dog park groups in BarkWise."
-            return self._build_tool_chat_response(
-                transcript=transcript,
-                assistant_text=answer,
-                cta_chips=[CtaChip(label="Open Community", action="open_community")],
-                answer_source="tool_group_search",
-            )
-
-        wants_dog_park = "dog park" in latest_user_message.lower() or "dogpark" in latest_user_message.lower()
-        matching_groups = self._find_groups_for_suburb(user_id=user_id, suburb=suburb, dog_park_only=wants_dog_park)
-        fallback_used = False
-        if not matching_groups and wants_dog_park:
-            matching_groups = self._find_groups_for_suburb(user_id=user_id, suburb=suburb, dog_park_only=False)
-            fallback_used = bool(matching_groups)
-        if not matching_groups:
-            answer = (
-                f"I could not find a dog park group in {suburb} yet. "
-                "You can still open Community and create a local group if you want to start one."
-            )
-            return self._build_tool_chat_response(
-                transcript=transcript,
-                assistant_text=answer,
-                cta_chips=[CtaChip(label="Open Community", action="open_community")],
-                answer_source="tool_group_search",
-            )
-
-        top_groups = matching_groups[:3]
-        group_lines = [
-            f"{group['name']} ({group['member_count']} members{' · official' if group['official'] else ''})"
-            for group in top_groups
-        ]
-        if fallback_used:
-            answer = (
-                f"I could not find a dog-park-specific group in {suburb}, but these BarkWise community groups look relevant: "
-                + "; ".join(group_lines)
-                + ". I can help you join one from the chips below."
-            )
-        else:
-            answer = (
-                f"I found these BarkWise groups in {suburb}: "
-                + "; ".join(group_lines)
-                + ". I can help you join one from the chips below."
-            )
-        ctas = [CtaChip(label="Open Community", action="open_community")]
-        for group in top_groups:
-            membership_status = str(group["membership_status"])
-            if membership_status == "none":
-                ctas.append(
-                    CtaChip(
-                        label=f"Join {group['short_label']}",
-                        action="join_group",
-                        payload={"group_id": str(group["id"])},
-                    )
-                )
-        return self._build_tool_chat_response(
-            transcript=transcript,
-            assistant_text=answer,
-            cta_chips=ctas,
-            answer_source="tool_group_search",
-        )
-
-    def _handle_event_discovery_request(
-        self,
-        *,
-        user_id: str,
-        transcript: list[ChatMessage],
-        latest_user_message: str,
-    ) -> ChatResponse:
-        suburb = self._resolve_group_search_suburb(user_id=user_id, latest_user_message=latest_user_message)
-        if not suburb:
-            answer = "Tell me the suburb you care about and I will look for nearby BarkWise meetups and events."
-            return self._build_tool_chat_response(
-                transcript=transcript,
-                assistant_text=answer,
-                cta_chips=[CtaChip(label="Open Community", action="open_community")],
-                answer_source="tool_event_search",
-            )
-
-        normalized_suburb = suburb.lower()
-        relevant_events = []
-        for event in community_events:
-            if event.suburb.lower() != normalized_suburb or event.status != "approved":
-                continue
-            relevant_events.append(
-                (
-                    event.date,
-                    event.title,
-                    event.attendee_count,
-                    event.location_name or "Location in app",
-                )
-            )
-        relevant_events.sort(key=lambda item: item[0])
-        if not relevant_events:
-            answer = f"I could not find upcoming BarkWise events in {suburb} yet."
-        else:
-            top_events = relevant_events[:3]
-            answer = (
-                f"Here are upcoming BarkWise events in {suburb}: "
-                + "; ".join(
-                    f"{title} on {date[:10]} at {location} ({attendee_count} attending)"
-                    for date, title, attendee_count, location in top_events
-                )
-                + "."
-            )
-        return self._build_tool_chat_response(
-            transcript=transcript,
-            assistant_text=answer,
-            cta_chips=[CtaChip(label="Open Community", action="open_community")],
-            answer_source="tool_event_search",
-        )
-
-    def _handle_provider_search_request(
-        self,
-        *,
-        user_id: str,
-        transcript: list[ChatMessage],
-        latest_user_message: str,
-    ) -> ChatResponse:
-        normalized = latest_user_message.lower()
-        category = None
-        if any(keyword in normalized for keyword in ("groomer", "groomers", "grooming")):
-            category = "grooming"
-        elif any(keyword in normalized for keyword in ("dog walker", "dog walkers", "walker", "walkers")):
-            category = "dog_walking"
-
-        suburb = self._resolve_group_search_suburb(user_id=user_id, latest_user_message=latest_user_message)
-        if not suburb and ("near me" in normalized or "nearby" in normalized):
-            answer = "Tell me the suburb you want and I will look for relevant BarkWise providers there."
-            return self._build_tool_chat_response(
-                transcript=transcript,
-                assistant_text=answer,
-                cta_chips=[CtaChip(label="Open Listings", action="open_services", payload={"category": category} if category else {})],
-                answer_source="tool_provider_search",
-            )
-
-        providers = service_store.list_providers(category=category, suburb=suburb, user_id=user_id, limit=3)
-        if not providers:
-            label = "providers" if category is None else ("groomers" if category == "grooming" else "dog walkers")
-            location_text = f" in {suburb}" if suburb else ""
-            answer = f"I could not find any {label}{location_text} in BarkWise yet."
-        else:
-            label = "providers" if category is None else ("groomers" if category == "grooming" else "dog walkers")
-            location_text = f" in {suburb}" if suburb else ""
-            answer = (
-                f"I found these BarkWise {label}{location_text}: "
-                + "; ".join(
-                    f"{provider.name} (rating {provider.rating:.1f}, from ${provider.price_from})"
-                    for provider in providers
-                )
-                + "."
-            )
-        cta_payload = {"category": category} if category else {}
-        return self._build_tool_chat_response(
-            transcript=transcript,
-            assistant_text=answer,
-            cta_chips=[CtaChip(label="Open Listings", action="open_services", payload=cta_payload)],
-            answer_source="tool_provider_search",
-        )
-
-    def _handle_booking_list_request(self, *, user_id: str, transcript: list[ChatMessage]) -> ChatResponse:
-        bookings = service_store.list_bookings(user_id=user_id, role="owner")[:3]
-        if not bookings:
-            answer = "You do not have any owner bookings in BarkWise right now."
-        else:
-            answer = (
-                "Your upcoming BarkWise bookings: "
-                + "; ".join(
-                    f"{booking.pet_name} with {booking.provider_id} on {booking.date} at {booking.time_slot} ({booking.status})"
-                    for booking in bookings
-                )
-                + "."
-            )
-        return self._build_tool_chat_response(
-            transcript=transcript,
-            assistant_text=answer,
-            cta_chips=[CtaChip(label="Open Listings", action="open_services")],
-            answer_source="tool_booking_list",
-        )
-
-    def _handle_messages_request(self, *, user_id: str, transcript: list[ChatMessage]) -> ChatResponse:
-        threads = message_store.list_threads(user_id=user_id, limit=3)
-        if not threads:
-            answer = "You do not have any BarkWise message threads yet."
-        else:
-            answer = (
-                "Your recent BarkWise message threads: "
-                + "; ".join(
-                    f"{thread.participant_user_id} ({thread.unread_count} unread)"
-                    if thread.unread_count
-                    else f"{thread.participant_user_id}"
-                    for thread in threads
-                )
-                + "."
-            )
-        return self._build_tool_chat_response(
-            transcript=transcript,
-            assistant_text=answer,
-            cta_chips=[CtaChip(label="Open Messages", action="open_messages")],
-            answer_source="tool_messages_list",
-        )
-
-    def _resolve_group_search_suburb(self, *, user_id: str, latest_user_message: str) -> str | None:
-        normalized_message = latest_user_message.lower()
-        known_suburbs = sorted({group.suburb.strip() for group in groups if group.suburb.strip()}, key=len, reverse=True)
-        for suburb in known_suburbs:
-            if suburb.lower() in normalized_message:
-                return suburb
-
-        profile_suburb = str(self._profile_context(user_id=user_id).get("suburb") or "").strip()
-        if profile_suburb:
-            return profile_suburb
-        return None
-
-    def _find_groups_for_suburb(self, *, user_id: str, suburb: str, dog_park_only: bool) -> list[dict[str, object]]:
-        membership_by_group = {
-            record.group_id: record.status
-            for record in group_memberships
-            if record.user_id == user_id
+    def _record_llm_success(self, *, stream: bool) -> None:
+        self._last_llm_report = {
+            "status": "ok",
+            "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "last_error": None,
+            "provider_reachable": True,
+            "non_stream_ok": True,
+            "stream_ok": stream or bool(self._last_llm_report.get("stream_ok")),
         }
-        matched: list[dict[str, object]] = []
-        normalized_suburb = suburb.lower()
-        for group in groups:
-            if group.suburb.lower() != normalized_suburb:
-                continue
-            lower_name = group.name.lower()
-            is_dog_park = "dog park" in lower_name or "dogpark" in lower_name
-            if dog_park_only and not is_dog_park:
-                continue
-            matched.append(
-                {
-                    "id": group.id,
-                    "name": group.name,
-                    "short_label": group.name.replace(" Dog Park", "").replace(" dog park", "")[:24].strip() or group.name[:24],
-                    "member_count": group.member_count,
-                    "official": group.official,
-                    "membership_status": membership_by_group.get(group.id, "none"),
-                    "dog_park": is_dog_park,
-                }
-            )
-        matched.sort(
-            key=lambda item: (
-                1 if str(item["membership_status"]) == "member" else 0,
-                1 if bool(item["dog_park"]) else 0,
-                1 if bool(item["official"]) else 0,
-                int(item["member_count"]),
-            ),
-            reverse=True,
-        )
-        return matched
 
-    def _build_tool_chat_response(
-        self,
-        *,
-        transcript: list[ChatMessage],
-        assistant_text: str,
-        cta_chips: list[CtaChip],
-        answer_source: str,
-    ) -> ChatResponse:
-        assistant_message = ChatMessage(role="assistant", content=assistant_text)
-        conversation = [ChatTurn(role=item.role, content=item.content) for item in transcript]
-        conversation.append(ChatTurn(role="assistant", content=assistant_text, answer_source=answer_source))
-        return ChatResponse(
-            answer=assistant_text,
-            message=assistant_message,
-            conversation=conversation,
-            cta_chips=cta_chips,
-            answer_source=answer_source,
-        )
+    def _record_llm_failure(self, exc: LlmClientError) -> None:
+        self._last_llm_report = {
+            "status": "degraded" if self.llm_available else "unconfigured",
+            "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "last_error": exc.detail,
+            "provider_reachable": False,
+            "non_stream_ok": False,
+            "stream_ok": False,
+        }
 
     def _load_user_state(self, *, user_id: str) -> dict[str, object]:
         raw_state = self.memory_store.load_user_state(user_id)
         profile_memory = raw_state.get("profile_memory", {})
         field_locks = raw_state.get("field_locks", {})
         provider_state = raw_state.get("provider_state", {})
+        preferences = raw_state.get("preferences", {})
+        pending_confirmation = raw_state.get("pending_confirmation", {})
         return {
             "profile_memory": profile_memory if isinstance(profile_memory, dict) else {},
             "profile_accepted": bool(raw_state.get("profile_accepted", False)),
             "field_locks": field_locks if isinstance(field_locks, dict) else {},
             "provider_state": provider_state if isinstance(provider_state, dict) else {},
+            "preferences": preferences if isinstance(preferences, dict) else {},
+            "conversation_summary": str(raw_state.get("conversation_summary") or ""),
+            "pending_confirmation": pending_confirmation if isinstance(pending_confirmation, dict) else {},
         }
+
+    def _save_user_state(self, *, user_id: str, state: dict[str, object]) -> None:
+        self.memory_store.save_user_state(
+            user_id=user_id,
+            profile_memory=dict(state["profile_memory"]),
+            profile_accepted=bool(state["profile_accepted"]),
+            field_locks=dict(state["field_locks"]),
+            provider_state=dict(state["provider_state"]),
+            preferences=dict(state["preferences"]),
+            conversation_summary=str(state["conversation_summary"]),
+            pending_confirmation=dict(state["pending_confirmation"]),
+        )
+
+    def _persist_chat_state(
+        self,
+        *,
+        user_id: str,
+        transcript: list[ChatMessage],
+        response: ChatResponse,
+        state: dict[str, object],
+        persist_assistant_turn: bool,
+    ) -> None:
+        latest_user_message = next((message.content for message in reversed(transcript) if message.role == "user"), "").strip()
+        if latest_user_message:
+            self._append_turn_if_new(user_id=user_id, role="user", content=latest_user_message)
+        if persist_assistant_turn and response.answer.strip():
+            self._append_turn_if_new(user_id=user_id, role="assistant", content=response.answer.strip())
+        if response.pending_confirmation:
+            state["pending_confirmation"] = {
+                "action": response.pending_confirmation.action,
+                "prompt": response.pending_confirmation.prompt,
+                "params": dict(response.pending_confirmation.params),
+                "expires_at": response.pending_confirmation.expires_at,
+            }
+        else:
+            state["pending_confirmation"] = {}
+        if self.memory_summary_enabled:
+            self._maybe_refresh_summary(user_id=user_id, state=state)
+        self._save_user_state(user_id=user_id, state=state)
+
+    def _append_turn_if_new(self, *, user_id: str, role: str, content: str) -> None:
+        recent_turns = self.memory_store.load_recent_turns(user_id, limit=1)
+        if recent_turns and recent_turns[-1]["role"] == role and recent_turns[-1]["content"] == content:
+            return
+        self.memory_store.append_turn(user_id=user_id, role=role, content=content)
+
+    def _maybe_refresh_summary(self, *, user_id: str, state: dict[str, object]) -> None:
+        recent_turns = self.memory_store.load_recent_turns(user_id, limit=8)
+        if len(recent_turns) < 6:
+            return
+        try:
+            summary_messages = self.policy_builder.build_summary_messages(
+                recent_turns=recent_turns,
+                previous_summary=str(state.get("conversation_summary") or ""),
+            )
+            summary = self.llm_client.generate_text(messages=summary_messages)
+            if summary.strip():
+                state["conversation_summary"] = summary.strip()
+        except LlmClientError:
+            return
+
+    def _update_preferences(
+        self,
+        *,
+        state: dict[str, object],
+        request: ChatRequest,
+        profile_context: dict[str, object],
+    ) -> None:
+        preferences = dict(state.get("preferences") or {})
+        explicit_suburb = (request.suburb or "").strip()
+        if explicit_suburb:
+            preferences["preferred_suburb"] = explicit_suburb
+        elif str(profile_context.get("suburb") or "").strip():
+            preferences.setdefault("preferred_suburb", str(profile_context["suburb"]).strip())
+        state["preferences"] = preferences
 
     def _persist_action_response(
         self,
@@ -779,6 +585,9 @@ class SimpleChatService:
             profile_accepted=bool(state["profile_accepted"]),
             field_locks=dict(state["field_locks"]),
             provider_state=dict(state["provider_state"]),
+            preferences=dict(state["preferences"]),
+            conversation_summary=str(state["conversation_summary"]),
+            pending_confirmation=dict(state["pending_confirmation"]),
         )
         self.memory_store.append_turn(user_id=user_id, role="assistant", content=answer)
         history = self.memory_store.load_recent_turns(user_id, limit=20)
@@ -815,37 +624,10 @@ class SimpleChatService:
             concerns=[str(item) for item in concerns if str(item).strip()],
         )
 
-    def _safe_price_from(self, raw_value: object) -> int:
+    @staticmethod
+    def _safe_price_from(raw_value: object) -> int:
         try:
             parsed = int(raw_value)
         except (TypeError, ValueError):
             return 30
         return min(max(parsed, 1), 5000)
-
-    def _load_openai_api_key(self) -> str:
-        raw_key = os.getenv("OPENAI_API_KEY", "")
-        parsed_key = _extract_openai_api_key(raw_key)
-        if parsed_key:
-            return parsed_key
-
-        key_file = _clean_env_value(os.getenv("OPENAI_API_KEY_FILE", ""))
-        if not key_file:
-            return ""
-        try:
-            raw_text = Path(key_file).read_text(encoding="utf-8")
-        except OSError:
-            return ""
-        return _extract_openai_api_key(raw_text)
-
-    def _load_barkai_custom_system_prompt(self) -> str:
-        inline_prompt = os.getenv("BARKAI_CUSTOM_SYSTEM_PROMPT", "").strip()
-        if inline_prompt:
-            return inline_prompt
-
-        prompt_file = os.getenv("BARKAI_CUSTOM_SYSTEM_PROMPT_FILE", "").strip().strip("'\"")
-        if not prompt_file:
-            prompt_file = str(DEFAULT_CUSTOM_SYSTEM_PROMPT_PATH)
-        try:
-            return Path(prompt_file).read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""

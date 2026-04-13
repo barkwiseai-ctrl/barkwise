@@ -111,7 +111,17 @@ def chat_stream(request: ChatRequest, authorization: Optional[str] = Header(defa
             return
         except Exception:
             logger.exception("Chat stream failed")
-            yield f"data: {json.dumps({'type': 'error', 'error': 'BarkAI could not reply. Please retry.'})}\n\n"
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "error",
+                        "error": "BarkAI could not reply. Please retry.",
+                        "error_type": "backend_unavailable",
+                    }
+                )
+                + "\n\n"
+            )
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -123,3 +133,15 @@ def chat_stream(request: ChatRequest, authorization: Optional[str] = Header(defa
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/diagnostics/llm")
+def barkai_llm_diagnostics(
+    x_barkai_diagnostics_token: Optional[str] = Header(default=None),
+):
+    expected = chat_service.diagnostics_token
+    if not expected:
+        raise HTTPException(status_code=404, detail="BarkAI diagnostics are not configured")
+    if x_barkai_diagnostics_token != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return chat_service.run_llm_diagnostics()

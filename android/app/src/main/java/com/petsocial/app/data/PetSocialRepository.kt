@@ -368,6 +368,7 @@ class PetSocialRepository(
                 val responseBody = response.body ?: error("Empty stream response")
                 var finalResponse: ChatResponse? = null
                 var streamError: String? = null
+                var streamErrorType: String? = null
 
                 responseBody.source().use { source ->
                     while (!source.exhausted()) {
@@ -391,13 +392,14 @@ class PetSocialRepository(
 
                             "error" -> {
                                 streamError = event["error"]?.jsonPrimitive?.contentOrNull ?: "BarkAI could not reply."
+                                streamErrorType = event["error_type"]?.jsonPrimitive?.contentOrNull
                             }
                         }
                     }
                 }
 
                 if (!streamError.isNullOrBlank()) {
-                    error(streamError)
+                    error(listOfNotNull(streamErrorType, streamError).joinToString(": "))
                 }
                 finalResponse ?: error("No final response from stream")
             }

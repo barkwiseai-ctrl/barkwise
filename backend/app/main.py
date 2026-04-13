@@ -102,10 +102,4 @@ def health():
 
 @app.get("/ready")
 def ready():
-    llm_configured = bool(chat.chat_service.llm_available)
-    return {
-        "status": "ready",
-        "llm_configured": llm_configured,
-        "llm_mode": "openai" if llm_configured else "unconfigured",
-        "barkai_mode": chat.chat_service.barkai_mode,
-    }
+    return chat.chat_service.ready_state

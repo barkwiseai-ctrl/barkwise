@@ -58,10 +58,29 @@ class MemoryStore:
                         profile_accepted INTEGER NOT NULL DEFAULT 0,
                         field_locks_json TEXT NOT NULL DEFAULT '{}',
                         provider_state_json TEXT NOT NULL DEFAULT '{}',
+                        preferences_json TEXT NOT NULL DEFAULT '{}',
+                        conversation_summary TEXT NOT NULL DEFAULT '',
+                        pending_confirmation_json TEXT NOT NULL DEFAULT '{}',
                         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
                     """
                 )
+                existing_columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(user_memory)").fetchall()
+                }
+                if "preferences_json" not in existing_columns:
+                    conn.execute(
+                        "ALTER TABLE user_memory ADD COLUMN preferences_json TEXT NOT NULL DEFAULT '{}'"
+                    )
+                if "conversation_summary" not in existing_columns:
+                    conn.execute(
+                        "ALTER TABLE user_memory ADD COLUMN conversation_summary TEXT NOT NULL DEFAULT ''"
+                    )
+                if "pending_confirmation_json" not in existing_columns:
+                    conn.execute(
+                        "ALTER TABLE user_memory ADD COLUMN pending_confirmation_json TEXT NOT NULL DEFAULT '{}'"
+                    )
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS chat_history (
@@ -86,7 +105,18 @@ class MemoryStore:
         with self._lock:
             with self._connect() as conn:
                 row = conn.execute(
-                    "SELECT profile_json, profile_accepted, field_locks_json, provider_state_json FROM user_memory WHERE user_id = ?",
+                    """
+                    SELECT
+                        profile_json,
+                        profile_accepted,
+                        field_locks_json,
+                        provider_state_json,
+                        preferences_json,
+                        conversation_summary,
+                        pending_confirmation_json
+                    FROM user_memory
+                    WHERE user_id = ?
+                    """,
                     (user_id,),
                 ).fetchone()
 
@@ -96,6 +126,9 @@ class MemoryStore:
                         "profile_accepted": False,
                         "field_locks": {},
                         "provider_state": {},
+                        "preferences": {},
+                        "conversation_summary": "",
+                        "pending_confirmation": {},
                     }
                 else:
                     result = {
@@ -103,6 +136,9 @@ class MemoryStore:
                         "profile_accepted": bool(row["profile_accepted"]),
                         "field_locks": self._safe_json_object(row["field_locks_json"]),
                         "provider_state": self._safe_json_object(row["provider_state_json"]),
+                        "preferences": self._safe_json_object(row["preferences_json"]),
+                        "conversation_summary": str(row["conversation_summary"] or ""),
+                        "pending_confirmation": self._safe_json_object(row["pending_confirmation_json"]),
                     }
         self._log_db_timing("load_user_state", started_at)
         return result
@@ -114,19 +150,35 @@ class MemoryStore:
         profile_accepted: bool,
         field_locks: Dict[str, bool],
         provider_state: Dict[str, Any],
+        preferences: Dict[str, Any],
+        conversation_summary: str,
+        pending_confirmation: Dict[str, Any],
     ) -> None:
         started_at = perf_counter()
         with self._lock:
             with self._connect() as conn:
                 conn.execute(
                     """
-                    INSERT INTO user_memory (user_id, profile_json, profile_accepted, field_locks_json, provider_state_json, updated_at)
-                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    INSERT INTO user_memory (
+                        user_id,
+                        profile_json,
+                        profile_accepted,
+                        field_locks_json,
+                        provider_state_json,
+                        preferences_json,
+                        conversation_summary,
+                        pending_confirmation_json,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(user_id) DO UPDATE SET
                         profile_json = excluded.profile_json,
                         profile_accepted = excluded.profile_accepted,
                         field_locks_json = excluded.field_locks_json,
                         provider_state_json = excluded.provider_state_json,
+                        preferences_json = excluded.preferences_json,
+                        conversation_summary = excluded.conversation_summary,
+                        pending_confirmation_json = excluded.pending_confirmation_json,
                         updated_at = CURRENT_TIMESTAMP
                     """,
                     (
@@ -135,6 +187,9 @@ class MemoryStore:
                         1 if profile_accepted else 0,
                         dump_json(field_locks),
                         dump_json(provider_state),
+                        dump_json(preferences),
+                        conversation_summary,
+                        dump_json(pending_confirmation),
                     ),
                 )
                 conn.commit()

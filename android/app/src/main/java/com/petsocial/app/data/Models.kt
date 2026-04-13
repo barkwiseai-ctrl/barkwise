@@ -416,6 +416,14 @@ data class PetProfileSuggestion(
 )
 
 @Serializable
+data class ChatPendingConfirmation(
+    val action: String,
+    val prompt: String,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    val params: JsonObject? = null,
+)
+
+@Serializable
 data class ChatResponse(
     val answer: String = "",
     val message: ChatMessage? = null,
@@ -427,6 +435,9 @@ data class ChatResponse(
     @SerialName("answer_source") val answerSource: String = "fallback",
     @SerialName("answer_badges") val answerBadges: List<String> = emptyList(),
     val citations: List<ChatCitation> = emptyList(),
+    val status: String = "ok",
+    @SerialName("error_type") val errorType: String? = null,
+    @SerialName("pending_confirmation") val pendingConfirmation: ChatPendingConfirmation? = null,
 )
 
 @Serializable
