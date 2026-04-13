@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
 import time
 from typing import Generator, Iterable
 
@@ -127,23 +128,35 @@ class LlmClient:
             return report
 
         probe_messages = [
-            {"role": "system", "content": "Reply with OK."},
-            {"role": "user", "content": "OK"},
+            {"role": "system", "content": "Respond with exactly OK and nothing else."},
+            {"role": "user", "content": "Health check"},
         ]
         try:
             text = self.generate_text(messages=probe_messages)
             report["provider_reachable"] = True
-            report["non_stream_ok"] = text.strip().lower().startswith("ok")
+            report["non_stream_ok"] = self._synthetic_probe_passed(text)
         except LlmClientError as exc:
             report["last_error"] = exc.detail
             return report
 
         try:
             streamed = "".join(self.stream_text(messages=probe_messages)).strip()
-            report["stream_ok"] = streamed.lower().startswith("ok")
+            report["stream_ok"] = self._synthetic_probe_passed(streamed)
         except LlmClientError as exc:
             report["last_error"] = exc.detail
         return report
+
+    @staticmethod
+    def _synthetic_probe_passed(text: str) -> bool:
+        normalized = text.strip().lower()
+        if not normalized:
+            return False
+        collapsed = re.sub(r"[^a-z]+", " ", normalized).strip()
+        if not collapsed:
+            return False
+        words = collapsed.split()
+        head = words[:4]
+        return any(word in {"ok", "okay"} for word in head)
 
     def _create_completion(self, *, messages: list[dict[str, str]], stream: bool, model: str | None):
         last_error: LlmClientError | None = None

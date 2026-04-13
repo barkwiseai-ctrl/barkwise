@@ -11,7 +11,7 @@ from app.services import chat_tools as chat_tools_module
 from app.services import simple_chat_service as simple_chat_module
 from app.services.chat_eval import APP_INTENT_EVAL_CASES, DOG_ADVICE_EVAL_CASES, MIXED_EVAL_CASES, UNSAFE_REPLY_REGRESSION_CASES
 from app.services.chat_router import PendingConfirmation
-from app.services.llm_client import extract_openai_api_key
+from app.services.llm_client import LlmClient, extract_openai_api_key
 from app.services.simple_chat_service import SimpleChatService
 
 
@@ -451,3 +451,12 @@ def test_chat_eval_fixtures_cover_expected_categories():
     assert len(APP_INTENT_EVAL_CASES) >= 15
     assert len(MIXED_EVAL_CASES) >= 10
     assert len(UNSAFE_REPLY_REGRESSION_CASES) >= 10
+
+
+def test_synthetic_probe_accepts_ok_variations():
+    assert LlmClient._synthetic_probe_passed("OK")
+    assert LlmClient._synthetic_probe_passed("OK.")
+    assert LlmClient._synthetic_probe_passed("Okay, BarkAI is healthy.")
+    assert LlmClient._synthetic_probe_passed("Sure, OK")
+    assert not LlmClient._synthetic_probe_passed("")
+    assert not LlmClient._synthetic_probe_passed("Healthy")
