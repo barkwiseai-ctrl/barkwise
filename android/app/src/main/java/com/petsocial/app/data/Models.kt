@@ -371,6 +371,7 @@ data class ServiceAvailabilitySlot(
 data class ChatRequest(
     @SerialName("user_id") val userId: String,
     val messages: List<ChatMessage>,
+    val suburb: String? = null,
 )
 
 @Serializable

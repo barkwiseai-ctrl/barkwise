@@ -320,17 +320,19 @@ class PetSocialRepository(
         cachePrefs.edit().putString(barkAiConversationKeyForUser(normalizedUserId), encoded).apply()
     }
 
-    suspend fun sendChat(messages: List<ChatTurn>): ChatResponse = api.chat(
+    suspend fun sendChat(messages: List<ChatTurn>, suburb: String? = null): ChatResponse = api.chat(
         ChatRequest(
             userId = userId,
             messages = messages
                 .takeLast(20)
                 .map { ChatMessage(role = it.role, content = it.content) },
+            suburb = suburb?.trim()?.ifBlank { null },
         )
     )
 
     suspend fun streamChat(
         messages: List<ChatTurn>,
+        suburb: String? = null,
         onDelta: (String) -> Unit,
     ): ChatResponse = withContext(Dispatchers.IO) {
         val payload = ChatRequest(
@@ -338,6 +340,7 @@ class PetSocialRepository(
             messages = messages
                 .takeLast(20)
                 .map { ChatMessage(role = it.role, content = it.content) },
+            suburb = suburb?.trim()?.ifBlank { null },
         )
         val streamPrimaryBaseUrl = normalizeBaseUrl(baseUrl) ?: DEFAULT_API_BASE_URL
 

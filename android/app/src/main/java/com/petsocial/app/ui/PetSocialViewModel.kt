@@ -42,7 +42,6 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeParseException
 import kotlin.math.max
-import kotlin.random.Random
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -234,7 +233,6 @@ internal sealed interface ServiceQuoteRequestResolution {
 }
 
 internal sealed interface BarkAiEntryResolution {
-    data class StayOnOnboarding(val selectedThreadId: String) : BarkAiEntryResolution
     data class StartNewThread(
         val selectedThreadId: String,
         val barkThreads: List<BarkThread>,
@@ -720,6 +718,15 @@ data class PendingInviteUiState(
     val loading: Boolean = false,
 )
 
+data class FirstRunOnboardingUiState(
+    val isRequired: Boolean = false,
+    val activeUserId: String = "user_2",
+    val ownerName: String = "",
+    val dogName: String = "",
+    val suburb: String = "",
+    val loading: Boolean = false,
+)
+
 private fun UiState.toShellUiState(): ShellUiState {
     val unreadNotifications = notifications.count { notification -> !notification.read }
     val unreadCommunityNotifications = notifications.count { notification ->
@@ -784,8 +791,8 @@ private fun UiState.toBarkAiTabUiState(): BarkAiTabUiState = BarkAiTabUiState(
     a2uiProviderCard = a2uiProviderCard,
     barkThreads = barkThreads,
     selectedBarkThreadId = selectedBarkThreadId,
-    onboardingMode = onboardingActive,
-    onboardingNeedsPhoto = onboardingActive && onboardingStep >= 3 && !onboardingPhotoCaptured,
+    onboardingMode = false,
+    onboardingNeedsPhoto = false,
 )
 
 private fun UiState.toCommunityTabUiState(): CommunityTabUiState = CommunityTabUiState(
@@ -873,6 +880,15 @@ private fun UiState.toPendingInviteUiState(): PendingInviteUiState = PendingInvi
     loading = loading,
 )
 
+private fun UiState.toFirstRunOnboardingUiState(): FirstRunOnboardingUiState = FirstRunOnboardingUiState(
+    isRequired = BuildConfig.ONBOARD_SCRIPT_ENABLED && onboardingActive,
+    activeUserId = activeUserId,
+    ownerName = onboardingOwnerName.ifBlank { profileInfo.displayName },
+    dogName = onboardingDogName.ifBlank { profileInfo.dogName },
+    suburb = onboardingSuburb.ifBlank { profileInfo.suburb.ifBlank { selectedSuburb } },
+    loading = loading,
+)
+
 private fun accountLabel(userId: String): String = when (userId) {
     "user_1" -> "Sesame"
     "user_2" -> "Snowy"
@@ -898,52 +914,6 @@ private val ONBOARD_EVENT_TITLE = BuildConfig.ONBOARD_EVENT_TITLE.trim().ifBlank
 private const val ONBOARD_THREAD_ID = "bark_thread_onboarding"
 private const val ACTIVATION_EVENT_PREFIX = "activation"
 private const val ACTIVATION_CATEGORY = "community"
-private val ONBOARD_WELCOME_QUESTIONS = listOf(
-    "Hey, welcome! What's your name?",
-    "Hey there, welcome to BarkWise. What's your name?",
-    "Welcome in! What should I call you?",
-    "Hi and welcome. What's your name?",
-    "Great to meet you. What's your name?",
-    "Hello! Let's get started, what's your name?",
-    "Welcome aboard. What's your name?",
-    "Hey! Before we begin, what's your name?",
-    "Hi there, what's your name so I can personalize this?",
-    "Welcome to BarkWise. Tell me your name.",
-)
-private val ONBOARD_DOG_NAME_QUESTIONS = listOf(
-    "What's your dogs' name?",
-    "Awesome, and what's your dog's name?",
-    "Love it. What's your pup's name?",
-    "Nice to meet you. What's your dog's name?",
-    "Great, now tell me your dog's name.",
-    "Perfect. What should I call your dog?",
-    "Thanks. What's your furry mate's name?",
-    "Sweet. What's your dog's name so I can remember it?",
-    "Cool, and your dog's name is?",
-    "Brilliant. Who's your dog?",
-)
-private val ONBOARD_SUBURB_QUESTIONS = listOf(
-    "Which suburb are you in?",
-    "Nice. What suburb should I use for your local BarkWise activity?",
-    "Great. Which suburb are you based in?",
-    "Perfect. What suburb do you want on your profile?",
-    "Thanks. Which suburb should I set for you?",
-    "Awesome. What suburb are you and your dog usually in?",
-    "Sweet. Which local suburb should I save?",
-    "Great, what suburb are you in?",
-)
-private val ONBOARD_DOG_PHOTO_QUESTIONS = listOf(
-    "Can I see your dog?",
-    "Can you share a quick photo of your dog?",
-    "Mind showing me your pup on camera?",
-    "Let's add a dog photo. Can I see your dog?",
-    "Want to snap a photo of your dog now?",
-    "Could you show me your dog with a quick pic?",
-    "Tap camera and show me your dog?",
-    "Can we grab a photo of your dog?",
-    "Ready for a dog pic? I'd love to see them.",
-    "Last step, can I see your dog?",
-)
 private val KNOWN_FRIEND_PROFILES = mapOf(
     "user_1" to ("Sesame" to ("Luna" to "https://images.unsplash.com/photo-1580467277788-c6e040296602?auto=format&fit=crop&w=1200&q=80")),
     "user_2" to ("Snowy" to ("Milo" to "https://images.unsplash.com/photo-1585943870180-be99fca07f23?auto=format&fit=crop&w=1200&q=80")),
@@ -997,6 +967,10 @@ class PetSocialViewModel(
         .map { state -> state.toPendingInviteUiState() }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toPendingInviteUiState())
+    val firstRunOnboardingUiState: StateFlow<FirstRunOnboardingUiState> = _uiState
+        .map { state -> state.toFirstRunOnboardingUiState() }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _uiState.value.toFirstRunOnboardingUiState())
     private var servicesSearchJob: Job? = null
     private var weatherTickerJob: Job? = null
     private var messageRefreshJob: Job? = null
@@ -1313,35 +1287,16 @@ class PetSocialViewModel(
         if (!isOnboardingScriptEnabled()) return
         if (normalizeTestProfileMode(_uiState.value.testProfileMode) != TEST_PROFILE_MODE_ONBOARDING) return
         val state = _uiState.value
-        val firstPrompt = pickOnboardingVariation(ONBOARD_WELCOME_QUESTIONS)
-        val introTurn = onboardingAssistantTurn(firstPrompt)
-        val introConversation = listOf(introTurn)
-        val introResponse = onboardingChatResponse(
-            answer = firstPrompt,
-            conversation = introConversation,
-        )
         _uiState.value = state.withNavigation {
             copy(
-                selectedTab = AppTab.BarkAI,
-                selectedBarkThreadId = ONBOARD_THREAD_ID,
+                selectedTab = AppTab.Profile,
                 onboardingActive = true,
                 onboardingStep = 0,
             )
         }.copy(
-            barkThreads = listOf(
-                BarkThread(
-                    id = ONBOARD_THREAD_ID,
-                    title = "Onboarding",
-                    conversation = introConversation,
-                    chat = introResponse,
-                    updatedAt = System.currentTimeMillis(),
-                ),
-            ),
-            chat = introResponse,
-            conversation = introConversation,
             onboardingOwnerName = "",
             onboardingDogName = "",
-            onboardingSuburb = "",
+            onboardingSuburb = state.profileInfo.suburb.ifBlank { state.selectedSuburb },
             onboardingPhotoCaptured = false,
             authRequired = false,
             authOtpRequested = false,
@@ -1726,25 +1681,14 @@ class PetSocialViewModel(
 
     fun openBarkAiTab() {
         val state = _uiState.value
-        when (val resolution = resolveBarkAiEntry(
-            onboardingActive = isOnboardingScriptEnabled() && state.onboardingActive,
+        val resolution = resolveBarkAiEntry(
+            onboardingActive = false,
             selectedBarkThreadId = state.selectedBarkThreadId,
             barkThreads = state.barkThreads,
             newThreadId = "bark_thread_${System.currentTimeMillis()}",
             updatedAt = System.currentTimeMillis(),
-        )) {
-            is BarkAiEntryResolution.StayOnOnboarding -> {
-                _uiState.value = _uiState.value.withNavigation {
-                    copy(
-                        selectedTab = AppTab.BarkAI,
-                        selectedBarkThreadId = resolution.selectedThreadId,
-                    )
-                }
-            }
-            is BarkAiEntryResolution.StartNewThread -> {
-                applyBarkAiNewThreadState(state = state, resolution = resolution)
-            }
-        }
+        )
+        applyBarkAiNewThreadState(state = state, resolution = resolution)
     }
 
     fun openProfileNotifications(filter: String = "all") {
@@ -1916,27 +1860,14 @@ class PetSocialViewModel(
 
     fun startNewBarkThread() {
         val state = _uiState.value
-        when (val resolution = resolveBarkAiEntry(
-            onboardingActive = isOnboardingScriptEnabled() && state.onboardingActive,
+        val resolution = resolveBarkAiEntry(
+            onboardingActive = false,
             selectedBarkThreadId = state.selectedBarkThreadId,
             barkThreads = state.barkThreads,
             newThreadId = "bark_thread_${System.currentTimeMillis()}",
             updatedAt = System.currentTimeMillis(),
-        )) {
-            is BarkAiEntryResolution.StayOnOnboarding -> {
-                _uiState.value = _uiState.value.withNavigation {
-                    copy(
-                        selectedTab = AppTab.BarkAI,
-                        selectedBarkThreadId = resolution.selectedThreadId,
-                    )
-                }.copy(
-                    toastMessage = "Finish onboarding first",
-                )
-            }
-            is BarkAiEntryResolution.StartNewThread -> {
-                applyBarkAiNewThreadState(state = state, resolution = resolution)
-            }
-        }
+        )
+        applyBarkAiNewThreadState(state = state, resolution = resolution)
     }
 
     private fun applyBarkAiNewThreadState(
@@ -1961,12 +1892,6 @@ class PetSocialViewModel(
     }
 
     fun selectBarkThread(threadId: String) {
-        if (isOnboardingScriptEnabled() && _uiState.value.onboardingActive) {
-            _uiState.value = _uiState.value.withNavigation { copy(selectedTab = AppTab.BarkAI) }.copy(
-                toastMessage = "Finish onboarding first",
-            )
-            return
-        }
         val state = _uiState.value
         val selected = state.barkThreads.firstOrNull { it.id == threadId } ?: return
         _uiState.value = state.withNavigation {
@@ -3501,10 +3426,6 @@ class PetSocialViewModel(
     fun sendChat(message: String) {
         val trimmedMessage = message.trim()
         if (trimmedMessage.isBlank()) return
-        if (isOnboardingScriptEnabled() && _uiState.value.onboardingActive) {
-            handleOnboardingTextReply(trimmedMessage)
-            return
-        }
         val state = _uiState.value
         val nextConversation = state.conversation + ChatTurn(role = "user", content = trimmedMessage)
         repository.saveBarkAiConversation(nextConversation)
@@ -3545,6 +3466,7 @@ class PetSocialViewModel(
             runCatching {
                 repository.streamChat(
                     messages = nextConversation,
+                    suburb = state.selectedSuburb,
                     onDelta = { delta ->
                         streamingBuffer.append(delta)
                         flushStreamingText()
@@ -3593,202 +3515,89 @@ class PetSocialViewModel(
         }
     }
 
-    fun submitOnboardingPhotoCapture(photoCaptured: Boolean, dogPhotoUri: String? = null) {
-        val state = _uiState.value
-        if (!isOnboardingScriptEnabled() || !state.onboardingActive || state.onboardingStep < 3) return
-
-        val userTurn = ChatTurn(
-            role = "user",
-            content = if (photoCaptured) "Shared a dog photo from camera." else "Tried to share a dog photo.",
-        )
-        if (!photoCaptured) {
-            val retryPrompt = "I couldn't read that photo. Tap Camera and try once more."
-            applyOnboardingConversationUpdate(
-                conversation = state.conversation + userTurn + onboardingAssistantTurn(retryPrompt),
-                latestAssistantAnswer = retryPrompt,
-                onboardingStep = 3,
-                onboardingActive = true,
-                ownerName = state.onboardingOwnerName,
-                dogName = state.onboardingDogName,
-                suburb = state.onboardingSuburb,
-                photoCaptured = false,
-                dogPhotoUri = null,
-            )
-            return
-        }
-
-        val completedProfile = updateOnboardingProfileInfo(
-            profile = state.profileInfo,
-            ownerName = state.onboardingOwnerName,
-            dogName = state.onboardingDogName,
-            suburb = state.onboardingSuburb,
-            dogPhotoUri = dogPhotoUri,
-        )
-        val completionResolution = resolveOnboardingCompletion(
-            barkThreads = state.barkThreads,
-            fallbackThreadId = "bark_thread_${System.currentTimeMillis()}",
-            fallbackUpdatedAt = System.currentTimeMillis(),
-        )
-        _uiState.value = state.withNavigation {
-            copy(
-                selectedTab = AppTab.Profile,
-                selectedBarkThreadId = completionResolution.selectedThreadId,
-                onboardingStep = 3,
-                onboardingActive = false,
-            )
-        }.copy(
-            chat = completionResolution.chat,
-            conversation = completionResolution.conversation,
-            barkThreads = completionResolution.barkThreads,
-            profileInfo = completedProfile,
-            onboardingOwnerName = state.onboardingOwnerName,
-            onboardingDogName = state.onboardingDogName,
-            onboardingSuburb = state.onboardingSuburb,
-            onboardingPhotoCaptured = true,
-            selectedSuburb = state.onboardingSuburb.trim().ifBlank { state.selectedSuburb },
-            authRequired = false,
-            authOtpRequested = false,
-            authInviteId = "",
-            authEmail = "",
-            authOtpExpiresAt = null,
-            authInFlight = false,
-            loading = false,
-            streamingAssistantText = "",
-            error = null,
-            toastMessage = "You're all set. Home is on the far left if you want to review or edit your profile.",
-        )
-        repository.setTestProfileMode(TEST_PROFILE_MODE_READY)
-        _uiState.value = _uiState.value.copy(testProfileMode = TEST_PROFILE_MODE_READY)
-        viewModelScope.launch {
-            persistProfileInfoSilently(completedProfile)
-            loadHomeData(_uiState.value.selectedCategory, allowAuthRetry = false)
-        }
-    }
-
-    private fun handleOnboardingTextReply(message: String) {
-        val state = _uiState.value
-        val userTurn = ChatTurn(role = "user", content = message)
-        when (state.onboardingStep) {
-            0 -> {
-                val dogNameQuestion = pickOnboardingVariation(ONBOARD_DOG_NAME_QUESTIONS)
-                applyOnboardingConversationUpdate(
-                    conversation = state.conversation + userTurn + onboardingAssistantTurn(dogNameQuestion),
-                    latestAssistantAnswer = dogNameQuestion,
-                    onboardingStep = 1,
-                    onboardingActive = true,
-                    ownerName = message,
-                    dogName = "",
-                    suburb = "",
-                    photoCaptured = false,
-                    dogPhotoUri = null,
-                )
-            }
-            1 -> {
-                val suburbQuestion = pickOnboardingVariation(ONBOARD_SUBURB_QUESTIONS)
-                applyOnboardingConversationUpdate(
-                    conversation = state.conversation + userTurn + onboardingAssistantTurn(suburbQuestion),
-                    latestAssistantAnswer = suburbQuestion,
-                    onboardingStep = 2,
-                    onboardingActive = true,
-                    ownerName = state.onboardingOwnerName,
-                    dogName = message,
-                    suburb = "",
-                    photoCaptured = false,
-                    dogPhotoUri = null,
-                )
-            }
-            2 -> {
-                val photoQuestion = pickOnboardingVariation(ONBOARD_DOG_PHOTO_QUESTIONS)
-                applyOnboardingConversationUpdate(
-                    conversation = state.conversation + userTurn + onboardingAssistantTurn(photoQuestion),
-                    latestAssistantAnswer = photoQuestion,
-                    onboardingStep = 3,
-                    onboardingActive = true,
-                    ownerName = state.onboardingOwnerName,
-                    dogName = state.onboardingDogName,
-                    suburb = message,
-                    photoCaptured = false,
-                    dogPhotoUri = null,
-                )
-            }
-            else -> {
-                val cameraReminder = "Tap the Camera button below so I can see your dog."
-                applyOnboardingConversationUpdate(
-                    conversation = state.conversation + userTurn + onboardingAssistantTurn(cameraReminder),
-                    latestAssistantAnswer = cameraReminder,
-                    onboardingStep = 3,
-                    onboardingActive = true,
-                    ownerName = state.onboardingOwnerName,
-                    dogName = state.onboardingDogName,
-                    suburb = state.onboardingSuburb,
-                    photoCaptured = false,
-                    dogPhotoUri = null,
-                )
-            }
-        }
-    }
-
-    private fun applyOnboardingConversationUpdate(
-        conversation: List<ChatTurn>,
-        latestAssistantAnswer: String,
-        onboardingStep: Int,
-        onboardingActive: Boolean,
+    fun completeFirstRunOnboarding(
         ownerName: String,
         dogName: String,
         suburb: String,
         photoCaptured: Boolean,
         dogPhotoUri: String? = null,
-        toastMessage: String? = null,
     ) {
         val state = _uiState.value
-        val selectedThread = state.barkThreads.firstOrNull { it.id == state.selectedBarkThreadId } ?: BarkThread(
-            id = ONBOARD_THREAD_ID,
-            title = "Onboarding",
+        if (!isOnboardingScriptEnabled() || !state.onboardingActive) return
+        if (ownerName.isBlank() || dogName.isBlank() || suburb.isBlank()) return
+
+        val completedProfile = updateOnboardingProfileInfo(
+            profile = state.profileInfo,
+            ownerName = ownerName,
+            dogName = dogName,
+            suburb = suburb,
+            dogPhotoUri = dogPhotoUri,
         )
-        val response = onboardingChatResponse(
-            answer = latestAssistantAnswer,
-            conversation = conversation,
-        )
-        val updatedThread = selectedThread.copy(
-            title = if (onboardingActive) "Onboarding" else "Onboarding complete",
-            conversation = conversation,
-            chat = response,
-            updatedAt = System.currentTimeMillis(),
-        )
-        _uiState.value = state.withNavigation {
-            copy(
-                selectedTab = AppTab.BarkAI,
-                selectedBarkThreadId = updatedThread.id,
-                onboardingStep = onboardingStep,
-                onboardingActive = onboardingActive,
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                loading = true,
+                error = null,
             )
-        }.copy(
-            chat = response,
-            conversation = conversation,
-            barkThreads = upsertBarkThread(state.barkThreads, updatedThread),
-            profileInfo = updateOnboardingProfileInfo(
-                profile = state.profileInfo,
-                ownerName = ownerName,
-                dogName = dogName,
-                suburb = suburb,
-                dogPhotoUri = dogPhotoUri,
-            ),
-            onboardingOwnerName = ownerName,
-            onboardingDogName = dogName,
-            onboardingSuburb = suburb,
-            onboardingPhotoCaptured = photoCaptured,
-            selectedSuburb = suburb.trim().ifBlank { state.selectedSuburb },
-            authRequired = false,
-            authOtpRequested = false,
-            authInviteId = "",
-            authEmail = "",
-            authOtpExpiresAt = null,
-            authInFlight = false,
-            loading = false,
-            streamingAssistantText = "",
-            error = null,
-            toastMessage = toastMessage,
-        )
+            runCatching {
+                persistProfileInfo(profileInfo = completedProfile)
+            }.onSuccess { savedProfile ->
+                val current = _uiState.value
+                val completionResolution = resolveOnboardingCompletion(
+                    barkThreads = current.barkThreads,
+                    fallbackThreadId = "bark_thread_${System.currentTimeMillis()}",
+                    fallbackUpdatedAt = System.currentTimeMillis(),
+                )
+                _uiState.value = current.withNavigation {
+                    copy(
+                        selectedTab = AppTab.Profile,
+                        selectedBarkThreadId = completionResolution.selectedThreadId,
+                        onboardingStep = 0,
+                        onboardingActive = false,
+                    )
+                }.copy(
+                    chat = completionResolution.chat,
+                    conversation = completionResolution.conversation,
+                    barkThreads = completionResolution.barkThreads,
+                    profileInfo = savedProfile,
+                    onboardingOwnerName = ownerName.trim(),
+                    onboardingDogName = dogName.trim(),
+                    onboardingSuburb = suburb.trim(),
+                    onboardingPhotoCaptured = photoCaptured,
+                    selectedSuburb = suburb.trim().ifBlank { current.selectedSuburb },
+                    authRequired = false,
+                    authOtpRequested = false,
+                    authInviteId = "",
+                    authEmail = "",
+                    authOtpExpiresAt = null,
+                    authInFlight = false,
+                    loading = false,
+                    streamingAssistantText = "",
+                    error = null,
+                    toastMessage = "You're all set. BarkAI will remember these details.",
+                )
+                repository.setTestProfileMode(TEST_PROFILE_MODE_READY)
+                _uiState.value = _uiState.value.copy(testProfileMode = TEST_PROFILE_MODE_READY)
+                loadHomeData(_uiState.value.selectedCategory, allowAuthRetry = false)
+            }.onFailure { error ->
+                val statusCode = (error as? HttpException)?.code()
+                if (statusCode == 401 || statusCode == 403) {
+                    _uiState.value = _uiState.value.copy(
+                        loading = false,
+                        authRequired = true,
+                        authInFlight = false,
+                        error = "Sign in required to finish setup",
+                        toastMessage = "Session expired. Sign in again, then finish setup.",
+                    )
+                    return@onFailure
+                }
+                _uiState.value = _uiState.value.copy(
+                    loading = false,
+                    error = error.message ?: "Unable to finish setup",
+                    toastMessage = "Could not save setup. Please retry.",
+                )
+            }
+        }
     }
 
     private fun buildFallbackChatResponse(
@@ -5151,32 +4960,6 @@ class PetSocialViewModel(
             .ifBlank { "na" }
     }
 
-    private fun onboardingAssistantTurn(content: String): ChatTurn {
-        return ChatTurn(
-            role = "assistant",
-            content = content,
-            answerSource = "onboarding_script",
-            answerBadges = emptyList(),
-        )
-    }
-
-    private fun onboardingChatResponse(
-        answer: String,
-        conversation: List<ChatTurn>,
-    ): ChatResponse {
-        return ChatResponse(
-            answer = answer,
-            conversation = conversation,
-            answerSource = "onboarding_script",
-            answerBadges = emptyList(),
-        )
-    }
-
-    private fun pickOnboardingVariation(options: List<String>): String {
-        if (options.isEmpty()) return ""
-        return options[Random.nextInt(options.size)]
-    }
-
     private fun updateOnboardingProfileInfo(
         profile: ProfileInfo,
         ownerName: String,
@@ -5220,52 +5003,55 @@ class PetSocialViewModel(
         return next
     }
 
-    private suspend fun persistProfileInfoSilently(profileInfo: ProfileInfo) {
+    private suspend fun persistProfileInfo(profileInfo: ProfileInfo): ProfileInfo {
         val normalized = if (isStagingTestBuild()) {
             profileInfo.copy(suburb = STAGING_TEST_SUBURB)
         } else {
             profileInfo
         }
-        runCatching {
-            repository.saveUserProfile(
-                displayName = normalized.displayName,
-                email = normalized.email,
-                phone = normalized.phone,
-                humanPronouns = normalized.humanPronouns,
-                humanRoleLabel = normalized.humanRoleLabel,
-                serviceProviderMode = normalized.serviceProviderMode,
-                dogName = normalized.dogName,
-                dogAgeMonths = normalized.dogAgeMonths,
-                dogBreedMix = normalized.dogBreedMix,
-                dogSexNeuter = normalized.dogGender,
-                dogWeightClass = normalized.dogWeightKg,
-                dogPhotoUrls = normalized.dogPhotoUrls,
-                secondaryDogName = normalized.secondaryDogName,
-                secondaryDogAgeMonths = normalized.secondaryDogAgeMonths,
-                secondaryDogPhotoUrl = "",
-                secondaryDogGender = normalized.secondaryDogGender,
-                secondaryDogWeightKg = normalized.secondaryDogWeightKg,
-                bio = normalized.bio,
-                suburb = normalized.suburb,
-                favoriteSuburbs = normalized.favoriteSuburbs,
-                playEnergyLevel = normalized.playEnergyLevel,
-                playStyle = normalized.playStyle,
-                socialConfidence = normalized.socialConfidence,
-                triggerNotes = normalized.triggerNotes,
-                idealMatch = normalized.idealMatch,
-                walkPreferences = normalized.walkPreferences,
-                trainingStyle = normalized.trainingStyle,
-                feedingRules = normalized.feedingRules,
-                consentBoundaries = normalized.consentBoundaries,
-                vaccinationStatus = normalized.vaccinationStatus,
-                microchipped = normalized.microchipped,
-                recallTrained = normalized.recallTrained,
-                leashReliability = normalized.leashReliability,
-                emergencyContactName = normalized.emergencyContactName,
-                emergencyContactPhone = normalized.emergencyContactPhone,
-                fieldVisibility = normalized.fieldVisibility,
-            )
-        }
+        val response = repository.saveUserProfile(
+            displayName = normalized.displayName,
+            email = normalized.email,
+            phone = normalized.phone,
+            humanPronouns = normalized.humanPronouns,
+            humanRoleLabel = normalized.humanRoleLabel,
+            serviceProviderMode = normalized.serviceProviderMode,
+            dogName = normalized.dogName,
+            dogAgeMonths = normalized.dogAgeMonths,
+            dogBreedMix = normalized.dogBreedMix,
+            dogSexNeuter = normalized.dogGender,
+            dogWeightClass = normalized.dogWeightKg,
+            dogPhotoUrls = normalized.dogPhotoUrls,
+            secondaryDogName = normalized.secondaryDogName,
+            secondaryDogAgeMonths = normalized.secondaryDogAgeMonths,
+            secondaryDogPhotoUrl = "",
+            secondaryDogGender = normalized.secondaryDogGender,
+            secondaryDogWeightKg = normalized.secondaryDogWeightKg,
+            bio = normalized.bio,
+            suburb = normalized.suburb,
+            favoriteSuburbs = normalized.favoriteSuburbs,
+            playEnergyLevel = normalized.playEnergyLevel,
+            playStyle = normalized.playStyle,
+            socialConfidence = normalized.socialConfidence,
+            triggerNotes = normalized.triggerNotes,
+            idealMatch = normalized.idealMatch,
+            walkPreferences = normalized.walkPreferences,
+            trainingStyle = normalized.trainingStyle,
+            feedingRules = normalized.feedingRules,
+            consentBoundaries = normalized.consentBoundaries,
+            vaccinationStatus = normalized.vaccinationStatus,
+            microchipped = normalized.microchipped,
+            recallTrained = normalized.recallTrained,
+            leashReliability = normalized.leashReliability,
+            emergencyContactName = normalized.emergencyContactName,
+            emergencyContactPhone = normalized.emergencyContactPhone,
+            fieldVisibility = normalized.fieldVisibility,
+        )
+        return response.toProfileInfo(
+            activeUserId = _uiState.value.activeUserId,
+            fallbackProfile = normalized,
+            fallbackSuburb = normalized.suburb,
+        )
     }
 
     private fun normalizeTestProfileMode(raw: String): String {
@@ -5696,18 +5482,14 @@ internal fun resolveHomePayloadState(
     )
 }
 
+@Suppress("UNUSED_PARAMETER")
 internal fun resolveBarkAiEntry(
     onboardingActive: Boolean,
     selectedBarkThreadId: String,
     barkThreads: List<BarkThread>,
     newThreadId: String,
     updatedAt: Long,
-): BarkAiEntryResolution {
-    if (onboardingActive) {
-        return BarkAiEntryResolution.StayOnOnboarding(
-            selectedThreadId = barkThreads.firstOrNull { thread -> thread.id == selectedBarkThreadId }?.id ?: ONBOARD_THREAD_ID,
-        )
-    }
+): BarkAiEntryResolution.StartNewThread {
     val newThread = BarkThread(
         id = newThreadId,
         title = "New thread",

@@ -7,35 +7,31 @@ import org.junit.Test
 class BarkAiThreadStateTest {
 
     @Test
-    fun resolveBarkAiEntry_whileOnboarding_staysOnOnboardingThread() {
+    fun resolveBarkAiEntry_whileOnboarding_startsNormalThread() {
         val resolution = resolveBarkAiEntry(
             onboardingActive = true,
             selectedBarkThreadId = "bark_thread_onboarding",
             barkThreads = listOf(BarkThread(id = "bark_thread_onboarding", title = "Onboarding")),
             newThreadId = "bark_thread_new",
             updatedAt = 10L,
-        )
+        ) as BarkAiEntryResolution.StartNewThread
 
-        assertEquals(
-            BarkAiEntryResolution.StayOnOnboarding("bark_thread_onboarding"),
-            resolution,
-        )
+        assertEquals("bark_thread_new", resolution.selectedThreadId)
+        assertEquals("bark_thread_new", resolution.barkThreads.first().id)
     }
 
     @Test
-    fun resolveBarkAiEntry_whileOnboarding_defaultsToCanonicalOnboardingThreadId() {
+    fun resolveBarkAiEntry_whileOnboarding_doesNotCreateCanonicalOnboardingThread() {
         val resolution = resolveBarkAiEntry(
             onboardingActive = true,
             selectedBarkThreadId = "missing_thread",
             barkThreads = emptyList(),
             newThreadId = "bark_thread_new",
             updatedAt = 10L,
-        )
+        ) as BarkAiEntryResolution.StartNewThread
 
-        assertEquals(
-            BarkAiEntryResolution.StayOnOnboarding("bark_thread_onboarding"),
-            resolution,
-        )
+        assertEquals("bark_thread_new", resolution.selectedThreadId)
+        assertTrue(resolution.barkThreads.none { thread -> thread.id == "bark_thread_onboarding" })
     }
 
     @Test

@@ -58,7 +58,17 @@ def test_resolve_transcript_prefers_messages_and_limits_to_last_20():
 def test_build_openai_messages_includes_profile_and_custom_policy(monkeypatch):
     service = SimpleChatService()
     monkeypatch.setenv("BARKAI_MODE", "custom")
-    monkeypatch.setattr(service, "_profile_context", lambda user_id: {"display_name": "Alex", "dog_name": "Milo", "suburb": "Richmond"})
+    monkeypatch.setattr(
+        service,
+        "_profile_context",
+        lambda user_id: {
+            "display_name": "Alex",
+            "dog_name": "Milo",
+            "suburb": "Richmond",
+            "play_style": "gentle one-on-one play",
+            "trigger_notes": "guards tennis balls",
+        },
+    )
     monkeypatch.setattr(service, "_load_user_state", lambda user_id: {"preferences": {"preferred_suburb": "Richmond"}, "conversation_summary": "Dog is shy at parks."})
 
     messages = service._build_openai_messages(
@@ -68,8 +78,58 @@ def test_build_openai_messages_includes_profile_and_custom_policy(monkeypatch):
 
     assert messages[0]["role"] == "system"
     assert "Milo" in messages[0]["content"]
+    assert "guards tennis balls" in messages[0]["content"]
+    assert "Use saved profile context" in messages[0]["content"]
     assert "The goal is to avoid crate use." in messages[0]["content"]
     assert "Dog is shy at parks." in messages[0]["content"]
+
+
+def test_profile_context_includes_behavior_and_preference_fields(monkeypatch):
+    service = SimpleChatService()
+    monkeypatch.setattr(
+        simple_chat_module.auth_otp_store,
+        "get_or_create_user_profile",
+        lambda user_id: SimpleNamespace(
+            service_provider_mode=False,
+            display_name="Alex",
+            suburb="Richmond",
+            dog_name="Milo",
+            dog_breed_mix="Kelpie mix",
+            dog_sex_neuter="male neutered",
+            dog_age_months=30,
+            dog_weight_class="12 kg",
+            secondary_dog_name="Nori",
+            secondary_dog_age_months=18,
+            secondary_dog_gender="female",
+            secondary_dog_weight_kg="9",
+            bio="Sensitive rescue dog",
+            favorite_suburbs=["Richmond", "Collingwood"],
+            play_energy_level="medium",
+            play_style="gentle one-on-one play",
+            social_confidence="slow warm-up",
+            trigger_notes="guards tennis balls",
+            ideal_match="calm dogs",
+            walk_preferences="quiet morning walks",
+            training_style="force-free",
+            feeding_rules="no shared bowls",
+            consent_boundaries="no surprise pats",
+            vaccination_status="up to date",
+            microchipped=True,
+            recall_trained=False,
+            leash_reliability="needs leash near roads",
+        ),
+    )
+
+    context = service._profile_context(user_id="user_2")
+
+    assert context["dog_name"] == "Milo"
+    assert context["dog_age_months"] == 30
+    assert context["play_style"] == "gentle one-on-one play"
+    assert context["trigger_notes"] == "guards tennis balls"
+    assert context["training_style"] == "force-free"
+    assert context["favorite_suburbs"] == ["Richmond", "Collingwood"]
+    assert context["microchipped"] is True
+    assert "recall_trained" not in context
 
 
 def test_build_openai_messages_omits_custom_policy_in_standard_mode(monkeypatch):

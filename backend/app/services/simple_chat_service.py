@@ -386,20 +386,57 @@ class SimpleChatService:
             return {}
 
         context: dict[str, object] = {}
-        if profile.display_name.strip():
-            context["display_name"] = profile.display_name.strip()
-        if profile.suburb.strip():
-            context["suburb"] = profile.suburb.strip()
-        if profile.dog_name.strip():
-            context["dog_name"] = profile.dog_name.strip()
-        if profile.dog_breed_mix.strip():
-            context["dog_breed_mix"] = profile.dog_breed_mix.strip()
-        if profile.dog_age_months > 0:
-            context["dog_age_months"] = profile.dog_age_months
-        if profile.dog_weight_class.strip():
-            context["dog_weight_class"] = profile.dog_weight_class.strip()
-        if profile.bio.strip():
-            context["bio"] = profile.bio.strip()
+
+        def add_text(key: str, attr: str) -> None:
+            value = str(getattr(profile, attr, "") or "").strip()
+            if value:
+                context[key] = value
+
+        def read_positive_int(attr: str) -> int:
+            try:
+                return int(getattr(profile, attr, 0) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        add_text("display_name", "display_name")
+        add_text("suburb", "suburb")
+        add_text("dog_name", "dog_name")
+        add_text("dog_breed_mix", "dog_breed_mix")
+        add_text("dog_sex_neuter", "dog_sex_neuter")
+        add_text("dog_weight_class", "dog_weight_class")
+        add_text("secondary_dog_name", "secondary_dog_name")
+        add_text("secondary_dog_gender", "secondary_dog_gender")
+        add_text("secondary_dog_weight_kg", "secondary_dog_weight_kg")
+        add_text("bio", "bio")
+        add_text("play_energy_level", "play_energy_level")
+        add_text("play_style", "play_style")
+        add_text("social_confidence", "social_confidence")
+        add_text("trigger_notes", "trigger_notes")
+        add_text("ideal_match", "ideal_match")
+        add_text("walk_preferences", "walk_preferences")
+        add_text("training_style", "training_style")
+        add_text("feeding_rules", "feeding_rules")
+        add_text("consent_boundaries", "consent_boundaries")
+        add_text("vaccination_status", "vaccination_status")
+        add_text("leash_reliability", "leash_reliability")
+
+        dog_age_months = read_positive_int("dog_age_months")
+        if dog_age_months > 0:
+            context["dog_age_months"] = dog_age_months
+        secondary_dog_age_months = read_positive_int("secondary_dog_age_months")
+        if secondary_dog_age_months > 0:
+            context["secondary_dog_age_months"] = secondary_dog_age_months
+        favorite_suburbs = [
+            str(value).strip()
+            for value in list(getattr(profile, "favorite_suburbs", []) or [])
+            if str(value).strip()
+        ]
+        if favorite_suburbs:
+            context["favorite_suburbs"] = favorite_suburbs[:5]
+        if bool(getattr(profile, "microchipped", False)):
+            context["microchipped"] = True
+        if bool(getattr(profile, "recall_trained", False)):
+            context["recall_trained"] = True
         return context
 
     def _load_openai_api_key(self) -> str:

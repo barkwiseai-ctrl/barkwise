@@ -2,6 +2,7 @@ package com.petsocial.app.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.util.Log
@@ -80,6 +81,8 @@ import com.petsocial.app.ui.screens.ServicesScreen
 import com.petsocial.app.ui.components.HeaderRosterChip
 import com.petsocial.app.ui.qr.QrPayloadAction
 import com.petsocial.app.ui.qr.parseQrPayload
+import java.io.File
+import java.io.FileOutputStream
 import java.net.URI
 
 private data class TabItem(
@@ -202,6 +205,7 @@ fun PetSocialApp(initialDeepLink: String? = null) {
     val shellState by vm.shellUiState.collectAsStateWithLifecycle()
     val authState by vm.authDialogUiState.collectAsStateWithLifecycle()
     val pendingInviteState by vm.pendingInviteUiState.collectAsStateWithLifecycle()
+    val firstRunOnboardingState by vm.firstRunOnboardingUiState.collectAsStateWithLifecycle()
     var locationRetryKey by remember { mutableIntStateOf(0) }
     var showLocationPermissionPrimer by rememberSaveable { mutableStateOf(false) }
     val isProviderSurface = BuildConfig.APP_SURFACE.equals("provider", ignoreCase = true)
@@ -599,6 +603,95 @@ fun PetSocialApp(initialDeepLink: String? = null) {
         )
     }
 
+    if (
+        !authState.isRequired &&
+        pendingInviteState.invite == null &&
+        firstRunOnboardingState.isRequired
+    ) {
+        var ownerName by rememberSaveable(firstRunOnboardingState.activeUserId) {
+            mutableStateOf(firstRunOnboardingState.ownerName)
+        }
+        var dogName by rememberSaveable(firstRunOnboardingState.activeUserId) {
+            mutableStateOf(firstRunOnboardingState.dogName)
+        }
+        var suburb by rememberSaveable(firstRunOnboardingState.activeUserId) {
+            mutableStateOf(firstRunOnboardingState.suburb)
+        }
+        var photoCaptured by rememberSaveable(firstRunOnboardingState.activeUserId) {
+            mutableStateOf(false)
+        }
+        var dogPhotoUri by rememberSaveable(firstRunOnboardingState.activeUserId) {
+            mutableStateOf<String?>(null)
+        }
+        val onboardingPhotoCaptureLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.TakePicturePreview(),
+        ) { bitmap ->
+            if (bitmap != null) {
+                dogPhotoUri = persistFirstRunOnboardingDogPhoto(context = context, bitmap = bitmap)
+                photoCaptured = dogPhotoUri != null
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Set up BarkWise") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("A quick setup helps BarkWise show local groups, events, and dog-friendly recommendations without relying on BarkAI.")
+                    OutlinedTextField(
+                        value = ownerName,
+                        onValueChange = { ownerName = it },
+                        label = { Text("Your name") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = dogName,
+                        onValueChange = { dogName = it },
+                        label = { Text("Dog name") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = suburb,
+                        onValueChange = { suburb = it },
+                        label = { Text("Suburb") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = {
+                                locationPermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                                    ),
+                                )
+                            },
+                        ) { Text("Allow location") }
+                        TextButton(onClick = { onboardingPhotoCaptureLauncher.launch(null) }) {
+                            Text(if (photoCaptured) "Dog photo added" else "Add dog photo")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = ownerName.isNotBlank() &&
+                        dogName.isNotBlank() &&
+                        suburb.isNotBlank() &&
+                        !firstRunOnboardingState.loading,
+                    onClick = {
+                        vm.completeFirstRunOnboarding(
+                            ownerName = ownerName,
+                            dogName = dogName,
+                            suburb = suburb,
+                            photoCaptured = photoCaptured,
+                            dogPhotoUri = dogPhotoUri,
+                        )
+                    },
+                ) { Text(if (firstRunOnboardingState.loading) "Saving..." else "Finish setup") }
+            },
+        )
+    }
+
     if (!authState.isRequired) pendingInviteState.invite?.let { invite ->
         var ownerName by rememberSaveable(invite.token) { mutableStateOf("") }
         var dogName by rememberSaveable(invite.token) { mutableStateOf("") }
@@ -673,6 +766,20 @@ fun PetSocialApp(initialDeepLink: String? = null) {
     }
 }
 
+private fun persistFirstRunOnboardingDogPhoto(context: android.content.Context, bitmap: Bitmap): String? {
+    val directory = File(context.filesDir, "onboarding_dog_photos")
+    if (!directory.exists() && !directory.mkdirs()) return null
+    val file = File(directory, "dog_${System.currentTimeMillis()}.jpg")
+    return runCatching {
+        FileOutputStream(file).use { stream ->
+            val compressed = bitmap.compress(Bitmap.CompressFormat.JPEG, 92, stream)
+            if (!compressed) throw IllegalStateException("Failed to compress onboarding photo.")
+            stream.flush()
+        }
+        file.toURI().toString()
+    }.getOrNull()
+}
+
 @Composable
 private fun ServicesTabRoute(vm: PetSocialViewModel) {
     DebugRecomposeCounter(tag = "ServicesTabRoute")
@@ -737,9 +844,7 @@ private fun BarkAiTabRoute(vm: PetSocialViewModel) {
         onSelectBarkThread = vm::selectBarkThread,
         onNewBarkThread = vm::startNewBarkThread,
         onSend = vm::sendChat,
-        onOnboardingPhotoCaptured = { captured, photoUri ->
-            vm.submitOnboardingPhotoCapture(photoCaptured = captured, dogPhotoUri = photoUri)
-        },
+        onOnboardingPhotoCaptured = { _, _ -> },
         onCtaClick = vm::handleCta,
         onAcceptProfile = vm::acceptProfileCard,
         onSubmitProvider = vm::submitProviderListing,
