@@ -170,6 +170,46 @@ def test_create_chat_response_uses_group_tool_and_returns_confirmation_cta(monke
     assert any(cta.action == "send_bark_message" and cta.payload.get("message") == "join group g_1" for cta in response.cta_chips)
 
 
+def test_example_group_query_routes_to_tool_without_llm(monkeypatch):
+    service = SimpleChatService()
+    monkeypatch.setattr(service, "_profile_context", lambda user_id: {"suburb": "Sunshine West"})
+    monkeypatch.setattr(
+        service.llm_client,
+        "generate_text",
+        lambda messages: (_ for _ in ()).throw(AssertionError("group lookup should not hit the LLM")),
+    )
+
+    with temporary_groups(
+        [
+            Group(
+                id="g_user_collenso_dogpark",
+                name="Collenso Dog Park",
+                suburb="Sunshine West",
+                member_count=3,
+                official=False,
+                owner_user_id="user_1",
+            ),
+        ],
+        [],
+    ):
+        response = service.create_chat_response(
+            ChatRequest(
+                user_id="example_group_user",
+                suburb="Sunshine West",
+                message="I'm new to Sunshine West. Can you find any dog park groups nearby?",
+            )
+        )
+
+    assert response.status == "ok"
+    assert response.answer_source == "tool_group_search"
+    assert "Collenso Dog Park" in response.answer
+    assert any(cta.action == "open_community" for cta in response.cta_chips)
+    assert any(
+        cta.action == "send_bark_message" and cta.payload.get("message") == "join group g_user_collenso_dogpark"
+        for cta in response.cta_chips
+    )
+
+
 def test_create_chat_response_group_tool_requests_suburb_when_unknown(monkeypatch):
     service = SimpleChatService()
     monkeypatch.setattr(service, "_profile_context", lambda user_id: {})
@@ -403,6 +443,57 @@ def test_create_chat_response_falls_back_to_llm(monkeypatch):
     assert response.answer == "Hello back"
     assert response.status == "ok"
     assert response.error_type is None
+
+
+def test_example_resource_guarding_query_uses_reactivity_policy(monkeypatch):
+    service = SimpleChatService()
+    captured_system_prompts: list[str] = []
+
+    def fake_generate_text(messages):
+        captured_system_prompts.append(messages[0]["content"])
+        return "Use management, trades, distance, and qualified force-free help."
+
+    monkeypatch.setattr(service.llm_client, "generate_text", fake_generate_text)
+
+    response = service.create_chat_response(
+        ChatRequest(
+            user_id="example_resource_guarding_user",
+            message="My dog gets aggressive over toys. What should I do?",
+        )
+    )
+
+    assert response.status == "ok"
+    assert response.answer_source == "assistant"
+    assert response.answer == "Use management, trades, distance, and qualified force-free help."
+    assert captured_system_prompts
+    assert "For aggression, resource guarding, or reactivity" in captured_system_prompts[0]
+    assert "qualified help" in captured_system_prompts[0]
+
+
+def test_example_crate_query_uses_exception_only_crate_policy(monkeypatch):
+    service = SimpleChatService()
+    captured_system_prompts: list[str] = []
+
+    def fake_generate_text(messages):
+        captured_system_prompts.append(messages[0]["content"])
+        return "Avoid crate reliance, use it only as a temporary safety bridge, and build a non-crate plan."
+
+    monkeypatch.setattr(service.llm_client, "generate_text", fake_generate_text)
+
+    response = service.create_chat_response(
+        ChatRequest(
+            user_id="example_crate_user",
+            message="My puppy hates being left alone and cries in the crate. Should I keep crate training?",
+        )
+    )
+
+    assert response.status == "ok"
+    assert response.answer_source == "assistant"
+    assert "temporary safety bridge" in response.answer
+    assert captured_system_prompts
+    assert "The goal is to avoid crate use." in captured_system_prompts[0]
+    assert "narrow, temporary exceptions" in captured_system_prompts[0]
+    assert "give a phase-out path" in captured_system_prompts[0]
 
 
 def test_create_chat_response_returns_structured_error_when_llm_fails(monkeypatch):

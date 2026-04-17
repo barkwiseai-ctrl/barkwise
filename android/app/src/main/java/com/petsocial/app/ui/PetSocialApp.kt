@@ -71,6 +71,7 @@ import androidx.core.content.ContextCompat
 import com.petsocial.app.R
 import com.petsocial.app.BuildConfig
 import com.petsocial.app.data.ApiService
+import com.petsocial.app.data.MockApiService
 import com.petsocial.app.data.PetSocialRepository
 import com.petsocial.app.location.LocationResolver
 import com.petsocial.app.ui.screens.ChatScreen
@@ -191,7 +192,8 @@ fun PetSocialApp(initialDeepLink: String? = null) {
     val phoneSizeClass = rememberPhoneSizeClass()
     val horizontalPadding = contentHorizontalPadding(phoneSizeClass)
     val api = remember {
-        ApiService.create(
+        createBarkWiseApiService(
+            useMockData = BuildConfig.USE_MOCK_DATA,
             baseUrl = baseUrl,
             fallbackBaseUrl = fallbackBaseUrl,
             authTokenProvider = {
@@ -762,6 +764,23 @@ fun PetSocialApp(initialDeepLink: String? = null) {
             dismissButton = {
                 TextButton(onClick = vm::dismissPendingInvite) { Text("Cancel") }
             },
+        )
+    }
+}
+
+internal fun createBarkWiseApiService(
+    useMockData: Boolean,
+    baseUrl: String,
+    fallbackBaseUrl: String?,
+    authTokenProvider: () -> String?,
+): ApiService {
+    return if (useMockData) {
+        MockApiService.create()
+    } else {
+        ApiService.create(
+            baseUrl = baseUrl,
+            fallbackBaseUrl = fallbackBaseUrl,
+            authTokenProvider = authTokenProvider,
         )
     }
 }

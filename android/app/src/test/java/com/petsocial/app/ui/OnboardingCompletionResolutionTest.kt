@@ -10,6 +10,41 @@ import org.junit.Test
 class OnboardingCompletionResolutionTest {
 
     @Test
+    fun firstRunOnboardingUiState_ignoresGlobalLoadingUntilSetupSubmitStarts() {
+        val state = UiState(
+            loading = true,
+            onboardingSaving = false,
+            profileInfo = ProfileInfo(
+                displayName = "Alex",
+                dogName = "Milo",
+                suburb = "Sunshine West",
+            ),
+            navigation = NavigationState(onboardingActive = true),
+        )
+
+        val onboardingState = state.toFirstRunOnboardingUiState()
+
+        assertTrue(onboardingState.isRequired)
+        assertEquals("Alex", onboardingState.ownerName)
+        assertEquals("Milo", onboardingState.dogName)
+        assertEquals("Sunshine West", onboardingState.suburb)
+        assertFalse(onboardingState.loading)
+    }
+
+    @Test
+    fun firstRunOnboardingUiState_usesDedicatedSavingFlag() {
+        val state = UiState(
+            loading = false,
+            onboardingSaving = true,
+            navigation = NavigationState(onboardingActive = true),
+        )
+
+        val onboardingState = state.toFirstRunOnboardingUiState()
+
+        assertTrue(onboardingState.loading)
+    }
+
+    @Test
     fun resolveOnboardingCompletion_removesOnboardingThreadAndKeepsNormalThread() {
         val normalConversation = listOf(ChatTurn(role = "assistant", content = "Normal thread"))
         val normalChat = ChatResponse(answer = "Normal thread", conversation = normalConversation)
