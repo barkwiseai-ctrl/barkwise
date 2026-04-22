@@ -1,5 +1,6 @@
 package com.petsocial.app.ui
 
+import com.petsocial.app.BuildConfig
 import com.petsocial.app.data.ChatResponse
 import com.petsocial.app.data.ChatTurn
 import org.junit.Assert.assertEquals
@@ -24,7 +25,7 @@ class OnboardingCompletionResolutionTest {
 
         val onboardingState = state.toFirstRunOnboardingUiState()
 
-        assertTrue(onboardingState.isRequired)
+        assertEquals(BuildConfig.ONBOARD_SCRIPT_ENABLED, onboardingState.isRequired)
         assertEquals("Alex", onboardingState.ownerName)
         assertEquals("Milo", onboardingState.dogName)
         assertEquals("Sunshine West", onboardingState.suburb)

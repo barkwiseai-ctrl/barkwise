@@ -523,6 +523,32 @@ fun CommunityScreen(
                         )
                     }
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = !loading,
+                        onClick = {
+                            scannerStatusMessage = null
+                            showInviteQrScanner = true
+                        },
+                    ) {
+                        Icon(
+                            Icons.Default.QrCodeScanner,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            text = "Scan Invite QR",
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
+                scannerStatusMessage?.let { message ->
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 

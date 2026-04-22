@@ -161,7 +161,7 @@ if [[ "$RUN_ANDROID_BUNDLE" == "1" ]]; then
   step "Android signed prod bundle build"
   (
     cd "$ANDROID_DIR"
-    ./gradlew :app:bundleProdRelease
+    ./gradlew --no-configuration-cache :app:bundleProdRelease
   )
 fi
 

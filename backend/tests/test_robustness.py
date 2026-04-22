@@ -84,6 +84,13 @@ def test_memory_store_serializes_jsonable_state(tmp_path):
         provider_state={
             "draft_steps": ("intro", "photos"),
         },
+        preferences={
+            "preferred_suburbs": ("Sunshine West", "Footscray"),
+        },
+        conversation_summary="Owner is working on park manners.",
+        pending_confirmation={
+            "expires_at": created_at,
+        },
     )
 
     state = store.load_user_state("u_jsonable")
@@ -91,6 +98,9 @@ def test_memory_store_serializes_jsonable_state(tmp_path):
     assert state["profile_memory"]["last_seen_at"] == "2026-03-29T09:30:00Z"
     assert set(state["profile_memory"]["traits"]) == {"friendly", "curious"}
     assert state["provider_state"]["draft_steps"] == ["intro", "photos"]
+    assert state["preferences"]["preferred_suburbs"] == ["Sunshine West", "Footscray"]
+    assert state["conversation_summary"] == "Owner is working on park manners."
+    assert state["pending_confirmation"]["expires_at"] == "2026-03-29T09:30:00Z"
 
 
 def test_community_store_serializes_jsonable_snapshot_payload(tmp_path):
