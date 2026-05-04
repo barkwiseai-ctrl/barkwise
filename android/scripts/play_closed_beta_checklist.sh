@@ -184,10 +184,12 @@ else
   status_line "BLOCKED" "In-app QR scanner" "Scanner implementation or camera permission wiring missing."
 fi
 
-if rg -q 'Scan Invite QR' "$APP_DIR/src/main/java/com/petsocial/app/ui/screens/CommunityScreen.kt"; then
-  status_line "PASS" "Community scan entrypoint" "\"Scan Invite QR\" entry exists in Community UI."
+if rg -q 'Scan Invite QR' "$APP_DIR/src/main/java/com/petsocial/app/ui/screens/CommunityScreen.kt" \
+  && rg -q 'showInviteQrScanner\s*=\s*true' "$APP_DIR/src/main/java/com/petsocial/app/ui/screens/CommunityScreen.kt" \
+  && rg -q 'QrScannerSheet' "$APP_DIR/src/main/java/com/petsocial/app/ui/screens/CommunityScreen.kt"; then
+  status_line "PASS" "Community scan entrypoint" "\"Scan Invite QR\" opens the Community QR scanner."
 else
-  status_line "BLOCKED" "Community scan entrypoint" "Community QR scan entrypoint missing."
+  status_line "BLOCKED" "Community scan entrypoint" "Community QR scan entrypoint or scanner sheet wiring missing."
 fi
 
 if [[ -f "$APP_DIR/src/test/java/com/petsocial/app/ui/qr/QrCodeUtilsTest.kt" ]]; then
@@ -232,17 +234,19 @@ else
   status_line "BLOCKED" "Welfare country policy config" "Missing \`backend/app/resources/welfare_policy_countries.json\`."
 fi
 
-if rg -q 'def _crate_policy_guard' "$ROOT_DIR/backend/app/services/ai_orchestrator.py" \
-  && rg -q 'def _welfare_policy_guard' "$ROOT_DIR/backend/app/services/ai_orchestrator.py" \
-  && rg -q 'def _resolve_country_code' "$ROOT_DIR/backend/app/services/ai_orchestrator.py"; then
-  status_line "PASS" "BarkWise policy guards" "Crating/welfare/country policy guard methods detected in orchestrator."
+if rg -q 'CUSTOM_POLICY_LINES' "$ROOT_DIR/backend/app/services/chat_policy.py" \
+  && rg -q 'Crate policy: the goal is to avoid crate use' "$ROOT_DIR/backend/app/services/chat_policy.py" \
+  && rg -q 'Never normalize dominance language' "$ROOT_DIR/backend/app/services/chat_policy.py" \
+  && rg -q 'medical_red_flag' "$ROOT_DIR/backend/app/services/chat_policy.py" \
+  && rg -q 'def _detect_policy_tags' "$ROOT_DIR/backend/app/services/chat_router.py"; then
+  status_line "PASS" "BarkWise policy guards" "Simplified BarkAI policy prompts and router policy-tag detection are present."
 else
-  status_line "BLOCKED" "BarkWise policy guards" "Missing one or more policy guard methods in \`ai_orchestrator.py\`."
+  status_line "BLOCKED" "BarkWise policy guards" "Missing simplified BarkAI policy prompts or router policy-tag detection."
 fi
 
 if [[ "$RUN_BACKEND_POLICY_TESTS" == "1" ]]; then
   if [[ -x "$BACKEND_PYTHON" ]]; then
-    if "$BACKEND_PYTHON" -m pytest "$ROOT_DIR/backend/tests/test_ai_orchestrator_rag_gate.py" -k "crate or policy or ute or tether or country" >"$policy_tests_log" 2>&1; then
+    if "$BACKEND_PYTHON" -m pytest "$ROOT_DIR/backend/tests/test_simple_chat_service.py" -k "policy or crate or resource_guarding or dominance or red_flag or rescue or reactive" >"$policy_tests_log" 2>&1; then
       status_line "PASS" "BarkWise policy regression tests" "Policy tests passed. Log: \`$policy_tests_log\`."
     else
       status_line "BLOCKED" "BarkWise policy regression tests" "Policy tests failed. Log: \`$policy_tests_log\`."

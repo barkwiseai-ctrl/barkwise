@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any
 
 from app.data import community_events, event_rsvps, group_memberships, groups
@@ -19,6 +20,11 @@ def _utc_now_iso() -> str:
 def _thread_id_from_users(user_a: str, user_b: str) -> str:
     first, second = sorted([user_a.strip(), user_b.strip()])
     return f"dm_{first}_{second}"
+
+
+_TOOL_ID_RE = re.compile(r"^[A-Za-z0-9_:-]{1,80}$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TIME_SLOT_RE = re.compile(r"^\d{2}:\d{2}$")
 
 
 class BarkAiTools:
@@ -297,13 +303,8 @@ class BarkAiTools:
     def _provider_availability(self, *, params: dict[str, Any]) -> BarkAiResult:
         provider_id = str(params.get("provider_id") or "")
         date = str(params.get("date") or "")
-        if not provider_id or not date:
-            return BarkAiResult(
-                answer="I need both a provider and a date to check availability.",
-                answer_source="tool_provider_availability",
-                status="error",
-                error_type="tool_failed",
-            )
+        if not self._is_valid_tool_id(provider_id) or not self._is_iso_date(date):
+            return self._tool_error("I need a valid provider ID and YYYY-MM-DD date before I can check availability.")
         slots = service_store.get_available_slots(provider_id=provider_id, slot_date=date)
         available = [slot.time_slot for slot in slots if slot.available][:5]
         if not available:
@@ -372,6 +373,8 @@ class BarkAiTools:
         return self._confirmation_result(pending, label="Confirm Provider Mode")
 
     def _confirm_join_group(self, *, group_id: str) -> BarkAiResult:
+        if not self._is_valid_tool_id(group_id):
+            return self._tool_error("I need a valid BarkWise group ID before I can join a group.")
         group = next((item for item in groups if item.id == group_id), None)
         if group is None:
             return self._tool_error("I could not find that BarkWise group.")
@@ -384,6 +387,8 @@ class BarkAiTools:
         return self._confirmation_result(pending, label=f"Confirm Join {group.name[:18]}")
 
     def _confirm_rsvp_event(self, *, event_id: str) -> BarkAiResult:
+        if not self._is_valid_tool_id(event_id):
+            return self._tool_error("I need a valid BarkWise event ID before I can RSVP.")
         event = next((item for item in community_events if item.id == event_id), None)
         if event is None:
             return self._tool_error("I could not find that BarkWise event.")
@@ -396,19 +401,20 @@ class BarkAiTools:
         return self._confirmation_result(pending, label=f"Confirm RSVP {event.title[:18]}")
 
     def _confirm_send_message(self, *, recipient_user_id: str, body: str) -> BarkAiResult:
-        if not recipient_user_id or not body:
-            return self._tool_error("I need both a recipient and a message body before I can send that.")
+        clean_body = self._clean_message_body(body)
+        if not self._is_valid_tool_id(recipient_user_id) or clean_body is None:
+            return self._tool_error("I need a valid recipient ID and a message body under 500 characters before I can send that.")
         pending = PendingConfirmation(
             action="send_message",
-            prompt=f"I can send this BarkWise message to {recipient_user_id}: “{body}”. Do you want me to send it?",
-            params={"recipient_user_id": recipient_user_id, "body": body},
+            prompt=f"I can send this BarkWise message to {recipient_user_id}: “{clean_body}”. Do you want me to send it?",
+            params={"recipient_user_id": recipient_user_id, "body": clean_body},
             expires_at=None,
         )
         return self._confirmation_result(pending, label="Confirm Send Message")
 
     def _confirm_booking_hold(self, *, provider_id: str, date: str, time_slot: str) -> BarkAiResult:
-        if not provider_id or not date or not time_slot:
-            return self._tool_error("I need a provider, date, and time to create a BarkWise booking hold.")
+        if not self._is_valid_tool_id(provider_id) or not self._is_iso_date(date) or not self._is_valid_time_slot(time_slot):
+            return self._tool_error("I need a valid provider ID, YYYY-MM-DD date, and HH:MM time to create a BarkWise booking hold.")
         pending = PendingConfirmation(
             action="create_booking_hold",
             prompt=f"I can place a temporary hold for {provider_id} on {date} at {time_slot}. Do you want me to do that?",
@@ -418,6 +424,8 @@ class BarkAiTools:
         return self._confirmation_result(pending, label="Confirm Booking Hold")
 
     def _execute_join_group(self, *, user_id: str, group_id: str) -> BarkAiResult:
+        if not self._is_valid_tool_id(group_id):
+            return self._tool_error("I need a valid BarkWise group ID before I can join a group.")
         group = next((item for item in groups if item.id == group_id), None)
         if group is None:
             return self._tool_error("I could not find that BarkWise group.")
@@ -442,6 +450,8 @@ class BarkAiTools:
         )
 
     def _execute_rsvp_event(self, *, user_id: str, event_id: str) -> BarkAiResult:
+        if not self._is_valid_tool_id(event_id):
+            return self._tool_error("I need a valid BarkWise event ID before I can RSVP.")
         event = next((item for item in community_events if item.id == event_id), None)
         if event is None:
             return self._tool_error("I could not find that BarkWise event.")
@@ -457,13 +467,14 @@ class BarkAiTools:
         )
 
     def _execute_send_message(self, *, user_id: str, recipient_user_id: str, body: str) -> BarkAiResult:
-        if not recipient_user_id or not body:
-            return self._tool_error("I need both a recipient and a message body before I can send that.")
+        clean_body = self._clean_message_body(body)
+        if not self._is_valid_tool_id(recipient_user_id) or clean_body is None:
+            return self._tool_error("I need a valid recipient ID and a message body under 500 characters before I can send that.")
         thread_id = _thread_id_from_users(user_id, recipient_user_id)
         message_store.send_message(
             sender_user_id=user_id,
             recipient_user_id=recipient_user_id,
-            body=body,
+            body=clean_body,
             created_at=_utc_now_iso(),
             thread_id=thread_id,
         )
@@ -474,8 +485,8 @@ class BarkAiTools:
         )
 
     def _execute_booking_hold(self, *, user_id: str, provider_id: str, date: str, time_slot: str) -> BarkAiResult:
-        if not provider_id or not date or not time_slot:
-            return self._tool_error("I need a provider, date, and time to create a BarkWise booking hold.")
+        if not self._is_valid_tool_id(provider_id) or not self._is_iso_date(date) or not self._is_valid_time_slot(time_slot):
+            return self._tool_error("I need a valid provider ID, YYYY-MM-DD date, and HH:MM time to create a BarkWise booking hold.")
         hold = service_store.create_booking_hold(
             BookingHoldRequest(
                 user_id=user_id,
@@ -491,14 +502,16 @@ class BarkAiTools:
         )
 
     def _confirmation_result(self, pending: PendingConfirmation, *, label: str) -> BarkAiResult:
+        confirmation_token = pending.ensure_confirmation_token()
+        prompt = f'{pending.prompt} Reply "Confirm {confirmation_token}" to continue.'
         return BarkAiResult(
-            answer=pending.prompt,
+            answer=prompt,
             answer_source="tool_confirmation",
             status="needs_confirmation",
             error_type="confirmation_required",
             pending_confirmation=pending,
             cta_chips=[
-                CtaChip(label=label, action="send_bark_message", payload={"message": "Yes, confirm"}),
+                CtaChip(label=label, action="send_bark_message", payload={"message": f"Confirm {confirmation_token}"}),
                 CtaChip(label="Cancel", action="send_bark_message", payload={"message": "Cancel"}),
             ],
         )
@@ -511,6 +524,35 @@ class BarkAiTools:
             status="error",
             error_type="tool_failed",
         )
+
+    @staticmethod
+    def _is_valid_tool_id(value: str) -> bool:
+        return bool(_TOOL_ID_RE.fullmatch(value.strip()))
+
+    @staticmethod
+    def _is_iso_date(value: str) -> bool:
+        cleaned = value.strip()
+        if not _DATE_RE.fullmatch(cleaned):
+            return False
+        try:
+            datetime.strptime(cleaned, "%Y-%m-%d")
+            return True
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _is_valid_time_slot(value: str) -> bool:
+        if not _TIME_SLOT_RE.fullmatch(value.strip()):
+            return False
+        hour, minute = (int(part) for part in value.split(":", maxsplit=1))
+        return 0 <= hour <= 23 and 0 <= minute <= 59
+
+    @staticmethod
+    def _clean_message_body(value: str) -> str | None:
+        body = re.sub(r"\s+", " ", value).strip()
+        if not body or len(body) > 500:
+            return None
+        return body
 
     @staticmethod
     def _resolve_suburb(*, latest_user_message: str, profile_context: dict[str, object]) -> str | None:

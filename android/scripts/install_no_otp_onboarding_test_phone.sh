@@ -10,6 +10,7 @@ PROFILE_MODE="${PROFILE_MODE:-onboarding}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 CLEAR_DATA="${CLEAR_DATA:-1}"
 SERIAL="${SERIAL:-}"
+BARKWISE_STAGING_API_BASE_URL="${BARKWISE_STAGING_API_BASE_URL:-https://api.barkwiseai.com/}"
 
 require_cmd() {
   local cmd="$1"
@@ -41,10 +42,11 @@ echo "Checking for connected physical Android device..."
 adb "${ADB_ARGS[@]}" get-state >/dev/null
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
-  echo "Building BarkWise Test with mock data and OTP disabled..."
+  echo "Building BarkWise Test with mock data, OTP disabled, and API base ${BARKWISE_STAGING_API_BASE_URL}..."
   (
     cd "$ANDROID_DIR"
-    BARKWISE_TEST_USE_MOCK_DATA=true \
+    BARKWISE_STAGING_API_BASE_URL="$BARKWISE_STAGING_API_BASE_URL" \
+      BARKWISE_TEST_USE_MOCK_DATA=true \
       BARKWISE_TEST_ALLOW_DEMO_LOGIN=true \
       BARKWISE_TEST_REQUIRE_INVITE_OTP_AUTH=false \
       ./gradlew :app:assembleStagingDebug
@@ -74,6 +76,7 @@ Expected state:
   - App: BarkWise Test ($PACKAGE_NAME)
   - Auth: OTP disabled for this test build
   - Data: mock data enabled
+  - API: $BARKWISE_STAGING_API_BASE_URL
   - Startup: profile_mode=$PROFILE_MODE
 
 To rerun:

@@ -462,6 +462,7 @@ data class UiState(
     val onboardingDogName: String = "",
     val onboardingSuburb: String = "",
     val onboardingPhotoCaptured: Boolean = false,
+    val onboardingSaving: Boolean = false,
     val testProfileMode: String = TEST_PROFILE_MODE_READY,
     val profileIdentityHeaderVisible: Boolean = false,
     val friendQrPayload: String = "",
@@ -880,13 +881,13 @@ private fun UiState.toPendingInviteUiState(): PendingInviteUiState = PendingInvi
     loading = loading,
 )
 
-private fun UiState.toFirstRunOnboardingUiState(): FirstRunOnboardingUiState = FirstRunOnboardingUiState(
+internal fun UiState.toFirstRunOnboardingUiState(): FirstRunOnboardingUiState = FirstRunOnboardingUiState(
     isRequired = BuildConfig.ONBOARD_SCRIPT_ENABLED && onboardingActive,
     activeUserId = activeUserId,
     ownerName = onboardingOwnerName.ifBlank { profileInfo.displayName },
     dogName = onboardingDogName.ifBlank { profileInfo.dogName },
     suburb = onboardingSuburb.ifBlank { profileInfo.suburb.ifBlank { selectedSuburb } },
-    loading = loading,
+    loading = onboardingSaving,
 )
 
 private fun accountLabel(userId: String): String = when (userId) {
@@ -1298,6 +1299,7 @@ class PetSocialViewModel(
             onboardingDogName = "",
             onboardingSuburb = state.profileInfo.suburb.ifBlank { state.selectedSuburb },
             onboardingPhotoCaptured = false,
+            onboardingSaving = false,
             authRequired = false,
             authOtpRequested = false,
             authInviteId = "",
@@ -1360,6 +1362,7 @@ class PetSocialViewModel(
             onboardingDogName = "",
             onboardingSuburb = "",
             onboardingPhotoCaptured = false,
+            onboardingSaving = false,
             toastMessage = if (showToast) {
                 if (normalizedMode == TEST_PROFILE_MODE_ONBOARDING) {
                     "Mode set: onboarding profile"
@@ -3536,7 +3539,7 @@ class PetSocialViewModel(
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
-                loading = true,
+                onboardingSaving = true,
                 error = null,
             )
             runCatching {
@@ -3571,6 +3574,7 @@ class PetSocialViewModel(
                     authEmail = "",
                     authOtpExpiresAt = null,
                     authInFlight = false,
+                    onboardingSaving = false,
                     loading = false,
                     streamingAssistantText = "",
                     error = null,
@@ -3583,7 +3587,7 @@ class PetSocialViewModel(
                 val statusCode = (error as? HttpException)?.code()
                 if (statusCode == 401 || statusCode == 403) {
                     _uiState.value = _uiState.value.copy(
-                        loading = false,
+                        onboardingSaving = false,
                         authRequired = true,
                         authInFlight = false,
                         error = "Sign in required to finish setup",
@@ -3592,7 +3596,7 @@ class PetSocialViewModel(
                     return@onFailure
                 }
                 _uiState.value = _uiState.value.copy(
-                    loading = false,
+                    onboardingSaving = false,
                     error = error.message ?: "Unable to finish setup",
                     toastMessage = "Could not save setup. Please retry.",
                 )

@@ -1,6 +1,6 @@
 # Executive Summary
 
-Last updated: 2026-04-02
+Last updated: 2026-04-17
 
 Primary launch plan: [MVP_PLAY_BETA_LAUNCH_PLAN.md](/Users/yingxu/public-repos/pet-social-app/MVP_PLAY_BETA_LAUNCH_PLAN.md)
 
@@ -72,3 +72,5 @@ Completed major features:
 - Backend JSON persistence hardening across memory/community stores with jsonable serialization for datetimes and structured containers plus robustness tests that lock in snapshot compatibility.
 - BarkAI custom-mode framework with deploy-time `BARKAI_MODE` switching, optional custom system prompts, Reddit-derived question-pattern recognition, curated forbidden-reply pattern enforcement, and readiness endpoint mode visibility.
 - Deterministic in-chat community group discovery tooling with suburb-aware matching/fallback logic and join/open-community CTA actions, wired through backend chat responses and rendered as actionable chip rows in Android chat UI.
+- BarkAI production reliability hardening across backend and Android chat onboarding, including restored onboarding script/photo capture handling, resilient stream-open and mid-stream fallback to non-stream responses, retry/backoff handling for transient OpenAI failures, and robust API-key parsing/sanitization from env or key-file formats.
+- BarkAI regression validation suite covering Android onboarding/API-service wiring and backend golden prompt contracts, including deterministic assertions for safety-policy phrasing, direct tool routing, and expected CTA outputs.

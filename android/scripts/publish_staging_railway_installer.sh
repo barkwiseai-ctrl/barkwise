@@ -11,6 +11,7 @@ STAGING_APK_SOURCE="$ANDROID_DIR/app/build/outputs/apk/staging/debug/app-staging
 SKIP_BUILD="${SKIP_BUILD:-0}"
 INSTALL_BASE_URL="${INSTALL_BASE_URL:-https://barkwise-production.up.railway.app/install}"
 VERSION="${VERSION:-}"
+BARKWISE_STAGING_API_BASE_URL="${BARKWISE_STAGING_API_BASE_URL:-https://api.barkwiseai.com/}"
 
 require_cmd() {
   local cmd="$1"
@@ -52,10 +53,10 @@ require_cmd python3
 require_cmd git
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
-  echo "Building staging debug APK..."
+  echo "Building staging debug APK with API base ${BARKWISE_STAGING_API_BASE_URL}..."
   (
     cd "$ANDROID_DIR"
-    ./gradlew :app:assembleStagingDebug
+    BARKWISE_STAGING_API_BASE_URL="$BARKWISE_STAGING_API_BASE_URL" ./gradlew :app:assembleStagingDebug
   )
 fi
 

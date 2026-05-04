@@ -14,6 +14,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -69,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -86,8 +88,14 @@ import com.petsocial.app.ui.ProfileInfo
 import com.petsocial.app.ui.ProviderBooking
 import com.petsocial.app.ui.ProviderListing
 import com.petsocial.app.ui.calendar.calendarEventToCalendarDraft
+import com.petsocial.app.ui.calendar.FleaMedicationPlan
+import com.petsocial.app.ui.calendar.fleaMedicationLogDraft
+import com.petsocial.app.ui.calendar.fleaMedicationReminderDraft
+import com.petsocial.app.ui.calendar.isFleaMedicationIntervalValid
+import com.petsocial.app.ui.calendar.nextDueDate
 import com.petsocial.app.ui.calendar.openCalendarDraft
 import com.petsocial.app.ui.calendar.ownerBookingToCalendarDraft
+import com.petsocial.app.ui.calendar.parseFleaMedicationDate
 import com.petsocial.app.ui.calendar.providerBookingToCalendarDraft
 import com.petsocial.app.ui.qr.QrPayloadAction
 import com.petsocial.app.ui.qr.QrScannerSheet
@@ -95,6 +103,7 @@ import com.petsocial.app.ui.qr.generateQrImageBitmap
 import com.petsocial.app.ui.qr.parseQrPayload
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
+import java.time.temporal.ChronoUnit
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.roundToInt
@@ -244,6 +253,7 @@ fun ProfileScreen(
     var showHelpDialog by rememberSaveable { mutableStateOf(false) }
     var showInstallQrDialog by rememberSaveable { mutableStateOf(false) }
     var showSecurityDetails by rememberSaveable { mutableStateOf(false) }
+    var showFleaMedicationDialog by rememberSaveable { mutableStateOf(false) }
     var biometricLockEnabled by rememberSaveable { mutableStateOf(false) }
     var selectedAppointment by remember { mutableStateOf<AppointmentPopupState?>(null) }
     var offerDialogItemId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -286,6 +296,42 @@ fun ProfileScreen(
                 ?: defaultThemeMode,
         )
     }
+    val fleaMedicationPrefsPrefix = remember(activeUserId) {
+        "flea_med_${activeUserId}_"
+    }
+    var fleaMedicationBrand by rememberSaveable(activeUserId) {
+        mutableStateOf(
+            settingsPrefs.getString("${fleaMedicationPrefsPrefix}brand", "")
+                .orEmpty(),
+        )
+    }
+    var fleaMedicationIntervalDaysText by rememberSaveable(activeUserId) {
+        mutableStateOf(
+            settingsPrefs.getInt("${fleaMedicationPrefsPrefix}interval_days", 30).toString(),
+        )
+    }
+    var fleaMedicationLastGivenDate by rememberSaveable(activeUserId) {
+        mutableStateOf(
+            settingsPrefs.getString("${fleaMedicationPrefsPrefix}last_given_date", LocalDate.now().toString())
+                ?: LocalDate.now().toString(),
+        )
+    }
+    var fleaMedicationNotes by rememberSaveable(activeUserId) {
+        mutableStateOf(
+            settingsPrefs.getString("${fleaMedicationPrefsPrefix}notes", "")
+                .orEmpty(),
+        )
+    }
+    val saveFleaMedicationPlan = remember(settingsPrefs, fleaMedicationPrefsPrefix) {
+        { brand: String, intervalDays: Int, lastGivenDate: String, notes: String ->
+            settingsPrefs.edit()
+                .putString("${fleaMedicationPrefsPrefix}brand", brand)
+                .putInt("${fleaMedicationPrefsPrefix}interval_days", intervalDays)
+                .putString("${fleaMedicationPrefsPrefix}last_given_date", lastGivenDate)
+                .putString("${fleaMedicationPrefsPrefix}notes", notes)
+                .apply()
+        }
+    }
     val activeAccountLabel = activeUserId
     val profileDogPhotoUrls = remember(profileInfo.dogPhotoUrls) {
         profileInfo.dogPhotoUrls
@@ -317,6 +363,36 @@ fun ProfileScreen(
             profileInfo.socialConfidence.isNotBlank(),
             profileDogPhotoUrls.isNotEmpty(),
         )
+    }
+    val fleaMedicationIntervalDays = remember(fleaMedicationIntervalDaysText) {
+        fleaMedicationIntervalDaysText.trim().toIntOrNull()
+    }
+    val fleaMedicationLastGiven = remember(fleaMedicationLastGivenDate) {
+        parseFleaMedicationDate(fleaMedicationLastGivenDate)
+    }
+    val fleaMedicationPlan = remember(
+        fleaMedicationBrand,
+        fleaMedicationIntervalDays,
+        fleaMedicationLastGiven,
+        fleaMedicationNotes,
+    ) {
+        if (
+            fleaMedicationBrand.trim().isBlank() ||
+            !isFleaMedicationIntervalValid(fleaMedicationIntervalDays) ||
+            fleaMedicationLastGiven == null
+        ) {
+            null
+        } else {
+            FleaMedicationPlan(
+                brand = fleaMedicationBrand.trim(),
+                intervalDays = fleaMedicationIntervalDays ?: 30,
+                lastGivenDate = fleaMedicationLastGiven,
+                notes = fleaMedicationNotes.trim(),
+            )
+        }
+    }
+    val fleaMedicationNextDueDate = remember(fleaMedicationPlan) {
+        fleaMedicationPlan?.nextDueDate()
     }
     val totalFriendCount = remember(friendProfiles) {
         friendProfiles.count { profile -> profile.isFriend }
@@ -902,6 +978,51 @@ fun ProfileScreen(
                             .fillMaxHeight(),
                     )
                 }
+
+                FleaMedicationCard(
+                    dogName = profileInfo.dogName,
+                    brand = fleaMedicationBrand,
+                    intervalDays = fleaMedicationIntervalDays,
+                    lastGivenDate = fleaMedicationLastGiven,
+                    nextDueDate = fleaMedicationNextDueDate,
+                    notes = fleaMedicationNotes,
+                    onEdit = { showFleaMedicationDialog = true },
+                    onMarkGivenToday = {
+                        val plan = fleaMedicationPlan
+                        if (plan == null) {
+                            showFleaMedicationDialog = true
+                        } else {
+                            val todayDate = LocalDate.now()
+                            val updatedLastGivenDate = todayDate.toString()
+                            fleaMedicationLastGivenDate = updatedLastGivenDate
+                            saveFleaMedicationPlan(
+                                fleaMedicationBrand.trim(),
+                                plan.intervalDays,
+                                updatedLastGivenDate,
+                                fleaMedicationNotes.trim(),
+                            )
+                            context.openCalendarDraft(
+                                fleaMedicationLogDraft(
+                                    dogName = profileInfo.dogName,
+                                    plan = plan,
+                                    givenDate = todayDate,
+                                ),
+                            )
+                        }
+                    },
+                    onAddReminder = {
+                        fleaMedicationPlan?.let { plan ->
+                            context.openCalendarDraft(
+                                fleaMedicationReminderDraft(
+                                    dogName = profileInfo.dogName,
+                                    plan = plan,
+                                ),
+                            )
+                        } ?: run {
+                            showFleaMedicationDialog = true
+                        }
+                    },
+                )
 
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -3388,6 +3509,103 @@ fun ProfileScreen(
         )
     }
 
+    if (showFleaMedicationDialog) {
+        val normalizedBrand = fleaMedicationBrand.trim()
+        val normalizedIntervalDays = fleaMedicationIntervalDaysText.trim().toIntOrNull()
+        val normalizedLastGivenDate = fleaMedicationLastGivenDate.trim()
+        val parsedLastGivenDate = parseFleaMedicationDate(normalizedLastGivenDate)
+        val normalizedNotes = fleaMedicationNotes.trim()
+        val canSaveFleaMedication =
+            normalizedBrand.isNotBlank() &&
+                isFleaMedicationIntervalValid(normalizedIntervalDays) &&
+                parsedLastGivenDate != null
+        AlertDialog(
+            onDismissRequest = { showFleaMedicationDialog = false },
+            title = { Text("Flea meds") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Save the brand, last-given date, and repeat interval for your primary dog. Then BarkWise can prefill both reminder and log events in your calendar.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = fleaMedicationBrand,
+                        onValueChange = { fleaMedicationBrand = it.take(40) },
+                        label = { Text("Brand") },
+                        placeholder = { Text("Example: NexGard") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = fleaMedicationIntervalDaysText,
+                        onValueChange = { value ->
+                            fleaMedicationIntervalDaysText = value.filter { it.isDigit() }.take(3)
+                        },
+                        label = { Text("Repeat every N days") },
+                        supportingText = {
+                            Text("Most chewables are monthly. Accepted range: 7 to 120 days.")
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = fleaMedicationLastGivenDate,
+                        onValueChange = { fleaMedicationLastGivenDate = it.take(10) },
+                        label = { Text("Last given date") },
+                        placeholder = { Text("YYYY-MM-DD") },
+                        supportingText = {
+                            Text("Use the date you actually administered it, not just the due date.")
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TextButton(
+                        onClick = { fleaMedicationLastGivenDate = LocalDate.now().toString() },
+                        modifier = Modifier.wrapContentWidth(),
+                    ) {
+                        Text("Use today")
+                    }
+                    OutlinedTextField(
+                        value = fleaMedicationNotes,
+                        onValueChange = { fleaMedicationNotes = it.take(160) },
+                        label = { Text("Notes") },
+                        placeholder = { Text("Dose, pack size, or where you bought it") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = canSaveFleaMedication,
+                    onClick = {
+                        val intervalDays = normalizedIntervalDays ?: 30
+                        saveFleaMedicationPlan(
+                            normalizedBrand,
+                            intervalDays,
+                            normalizedLastGivenDate,
+                            normalizedNotes,
+                        )
+                        fleaMedicationBrand = normalizedBrand
+                        fleaMedicationIntervalDaysText = intervalDays.toString()
+                        fleaMedicationLastGivenDate = normalizedLastGivenDate
+                        fleaMedicationNotes = normalizedNotes
+                        showFleaMedicationDialog = false
+                    },
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFleaMedicationDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
 }
 
 @Composable
@@ -4533,6 +4751,101 @@ private fun ProfileTrustBadges(
                 badges.forEach { badge ->
                     AssistChip(onClick = {}, label = { Text(badge) })
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FleaMedicationCard(
+    dogName: String,
+    brand: String,
+    intervalDays: Int?,
+    lastGivenDate: LocalDate?,
+    nextDueDate: LocalDate?,
+    notes: String,
+    onEdit: () -> Unit,
+    onMarkGivenToday: () -> Unit,
+    onAddReminder: () -> Unit,
+) {
+    val dogLabel = dogName.trim().ifBlank { "your dog" }
+    val today = LocalDate.now()
+    val details = if (
+        brand.trim().isNotBlank() &&
+        isFleaMedicationIntervalValid(intervalDays) &&
+        lastGivenDate != null &&
+        nextDueDate != null
+    ) {
+        buildList {
+            add("Brand: ${brand.trim()}")
+            add("Last given: $lastGivenDate")
+            add("Next due: $nextDueDate")
+            add("Every ${intervalDays ?: 30} days")
+            notes.trim().takeIf { it.isNotBlank() }?.let { add("Notes: $it") }
+        }
+    } else {
+        listOf("Save the brand and interval once, then use calendar drafts for reminders and logs.")
+    }
+    val statusLabel = when {
+        nextDueDate == null -> "Setup needed"
+        nextDueDate.isBefore(today) -> "Overdue"
+        nextDueDate == today -> "Due today"
+        else -> "Due ${ChronoUnit.DAYS.between(today, nextDueDate)}d"
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Flea meds", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        dogLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                AssistChip(onClick = onEdit, label = { Text(statusLabel) })
+            }
+            details.forEach { line ->
+                Text(
+                    line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = onMarkGivenToday,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Mark given today")
+                }
+                Button(
+                    onClick = onAddReminder,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Add reminder")
+                }
+            }
+            TextButton(
+                onClick = onEdit,
+                modifier = Modifier.wrapContentWidth(),
+            ) {
+                Text(if (brand.trim().isBlank()) "Set up flea meds" else "Edit details")
             }
         }
     }
