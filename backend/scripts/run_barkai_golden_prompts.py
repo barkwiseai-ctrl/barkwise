@@ -21,6 +21,8 @@ class GoldenCase:
     required_any: tuple[str, ...] = ()
     forbidden_any: tuple[str, ...] = ()
     expected_cta_actions: tuple[str, ...] = ()
+    expected_cta_payload_any: tuple[str, ...] = ()
+    expected_pending_action: str | None = None
     suburb: str = "Sunshine West"
     timeout_seconds: int = 60
     metadata: dict[str, str] = field(default_factory=dict)
@@ -100,6 +102,8 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
         expected_status="needs_confirmation",
         expected_answer_source="tool_confirmation",
         required_any=("confirm", "provider mode", "go ahead"),
+        expected_cta_payload_any=("Confirm ",),
+        expected_pending_action="provider_mode_enable",
         metadata={"category": "app_action", "route": "provider_mode_enable"},
     ),
     GoldenCase(
@@ -108,6 +112,8 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
         expected_status="needs_confirmation",
         expected_answer_source="tool_confirmation",
         required_any=("confirm", "join", "group"),
+        expected_cta_payload_any=("Confirm ",),
+        expected_pending_action="join_group",
         metadata={"category": "app_action", "route": "join_group"},
     ),
     GoldenCase(
@@ -189,6 +195,12 @@ def validate_case(case: GoldenCase, response: dict[str, Any]) -> list[str]:
         for chip in response.get("cta_chips", [])
         if isinstance(chip, dict)
     }
+    cta_payload_messages = [
+        str(chip.get("payload", {}).get("message") or "")
+        for chip in response.get("cta_chips", [])
+        if isinstance(chip, dict) and isinstance(chip.get("payload"), dict)
+    ]
+    pending_confirmation = response.get("pending_confirmation") if isinstance(response.get("pending_confirmation"), dict) else {}
 
     if status != case.expected_status:
         failures.append(f"expected status {case.expected_status!r}, got {status!r}")
@@ -205,6 +217,16 @@ def validate_case(case: GoldenCase, response: dict[str, Any]) -> list[str]:
     missing_ctas = [action for action in case.expected_cta_actions if action not in cta_actions]
     if missing_ctas:
         failures.append(f"missing CTA actions {missing_ctas!r}")
+    if case.expected_cta_payload_any and not any(
+        expected in payload_message
+        for expected in case.expected_cta_payload_any
+        for payload_message in cta_payload_messages
+    ):
+        failures.append(f"missing one of expected CTA payload snippets {case.expected_cta_payload_any!r}")
+    if case.expected_pending_action and pending_confirmation.get("action") != case.expected_pending_action:
+        failures.append(
+            f"expected pending action {case.expected_pending_action!r}, got {pending_confirmation.get('action')!r}"
+        )
     return failures
 
 

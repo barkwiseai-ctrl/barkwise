@@ -66,6 +66,7 @@ def test_memory_store_handles_invalid_json_state(tmp_path):
     assert state["field_locks"] == {}
     assert state["provider_state"] == {}
     assert state["profile_accepted"] is True
+    assert state["sanitized_memory"] == {}
 
 
 def test_memory_store_serializes_jsonable_state(tmp_path):
@@ -88,6 +89,12 @@ def test_memory_store_serializes_jsonable_state(tmp_path):
             "preferred_suburbs": ("Sunshine West", "Footscray"),
         },
         conversation_summary="Owner is working on park manners.",
+        sanitized_memory={
+            "stable_profile_facts": {"dog_name": "Milo"},
+            "stable_preferences": {"preferred_suburbs": ("Sunshine West", "Footscray")},
+            "open_loops": ["Practice calmer park arrivals"],
+            "active_plan": "Keep sessions short.",
+        },
         pending_confirmation={
             "expires_at": created_at,
         },
@@ -100,6 +107,8 @@ def test_memory_store_serializes_jsonable_state(tmp_path):
     assert state["provider_state"]["draft_steps"] == ["intro", "photos"]
     assert state["preferences"]["preferred_suburbs"] == ["Sunshine West", "Footscray"]
     assert state["conversation_summary"] == "Owner is working on park manners."
+    assert state["sanitized_memory"]["stable_profile_facts"]["dog_name"] == "Milo"
+    assert state["sanitized_memory"]["open_loops"] == ["Practice calmer park arrivals"]
     assert state["pending_confirmation"]["expires_at"] == "2026-03-29T09:30:00Z"
 
 

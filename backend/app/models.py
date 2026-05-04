@@ -418,6 +418,7 @@ class ChatPendingConfirmation(BaseModel):
     prompt: str
     expires_at: Optional[str] = None
     params: Dict[str, Any] = Field(default_factory=dict)
+    confirmation_token: Optional[str] = Field(default=None, exclude=True)
 
 
 class ChatResponse(BaseModel):

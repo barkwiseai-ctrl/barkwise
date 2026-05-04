@@ -60,6 +60,7 @@ class MemoryStore:
                         provider_state_json TEXT NOT NULL DEFAULT '{}',
                         preferences_json TEXT NOT NULL DEFAULT '{}',
                         conversation_summary TEXT NOT NULL DEFAULT '',
+                        sanitized_memory_json TEXT NOT NULL DEFAULT '{}',
                         pending_confirmation_json TEXT NOT NULL DEFAULT '{}',
                         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
@@ -76,6 +77,10 @@ class MemoryStore:
                 if "conversation_summary" not in existing_columns:
                     conn.execute(
                         "ALTER TABLE user_memory ADD COLUMN conversation_summary TEXT NOT NULL DEFAULT ''"
+                    )
+                if "sanitized_memory_json" not in existing_columns:
+                    conn.execute(
+                        "ALTER TABLE user_memory ADD COLUMN sanitized_memory_json TEXT NOT NULL DEFAULT '{}'"
                     )
                 if "pending_confirmation_json" not in existing_columns:
                     conn.execute(
@@ -113,6 +118,7 @@ class MemoryStore:
                         provider_state_json,
                         preferences_json,
                         conversation_summary,
+                        sanitized_memory_json,
                         pending_confirmation_json
                     FROM user_memory
                     WHERE user_id = ?
@@ -128,6 +134,7 @@ class MemoryStore:
                         "provider_state": {},
                         "preferences": {},
                         "conversation_summary": "",
+                        "sanitized_memory": {},
                         "pending_confirmation": {},
                     }
                 else:
@@ -138,6 +145,7 @@ class MemoryStore:
                         "provider_state": self._safe_json_object(row["provider_state_json"]),
                         "preferences": self._safe_json_object(row["preferences_json"]),
                         "conversation_summary": str(row["conversation_summary"] or ""),
+                        "sanitized_memory": self._safe_json_object(row["sanitized_memory_json"]),
                         "pending_confirmation": self._safe_json_object(row["pending_confirmation_json"]),
                     }
         self._log_db_timing("load_user_state", started_at)
@@ -152,6 +160,7 @@ class MemoryStore:
         provider_state: Dict[str, Any],
         preferences: Dict[str, Any],
         conversation_summary: str,
+        sanitized_memory: Dict[str, Any],
         pending_confirmation: Dict[str, Any],
     ) -> None:
         started_at = perf_counter()
@@ -167,10 +176,11 @@ class MemoryStore:
                         provider_state_json,
                         preferences_json,
                         conversation_summary,
+                        sanitized_memory_json,
                         pending_confirmation_json,
                         updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(user_id) DO UPDATE SET
                         profile_json = excluded.profile_json,
                         profile_accepted = excluded.profile_accepted,
@@ -178,6 +188,7 @@ class MemoryStore:
                         provider_state_json = excluded.provider_state_json,
                         preferences_json = excluded.preferences_json,
                         conversation_summary = excluded.conversation_summary,
+                        sanitized_memory_json = excluded.sanitized_memory_json,
                         pending_confirmation_json = excluded.pending_confirmation_json,
                         updated_at = CURRENT_TIMESTAMP
                     """,
@@ -189,6 +200,7 @@ class MemoryStore:
                         dump_json(provider_state),
                         dump_json(preferences),
                         conversation_summary,
+                        dump_json(sanitized_memory),
                         dump_json(pending_confirmation),
                     ),
                 )

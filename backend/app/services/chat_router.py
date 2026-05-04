@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 import re
+import secrets
 from typing import Any
 
 from app.models import ChatMessage
@@ -29,6 +30,7 @@ class PendingConfirmation:
     prompt: str
     params: dict[str, Any] = field(default_factory=dict)
     expires_at: str | None = None
+    confirmation_token: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "PendingConfirmation | None":
@@ -41,6 +43,7 @@ class PendingConfirmation:
             prompt=prompt,
             params=dict(payload.get("params") or {}),
             expires_at=str(payload.get("expires_at") or "") or None,
+            confirmation_token=cls._clean_confirmation_token(payload.get("confirmation_token")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,7 +52,18 @@ class PendingConfirmation:
             "prompt": self.prompt,
             "params": dict(self.params),
             "expires_at": self.expires_at,
+            "confirmation_token": self.confirmation_token,
         }
+
+    def ensure_confirmation_token(self) -> str:
+        if not self.confirmation_token:
+            self.confirmation_token = secrets.token_hex(3)
+        return self.confirmation_token
+
+    @staticmethod
+    def _clean_confirmation_token(value: object) -> str | None:
+        token = str(value or "").strip().lower()
+        return token if re.fullmatch(r"[a-f0-9]{6,16}", token) else None
 
 
 @dataclass
@@ -137,9 +151,24 @@ class BarkAiRouter:
             except ValueError:
                 pass
 
-        normalized = re.sub(r"[^a-z\s]", "", message.strip().lower())
-        normalized = re.sub(r"\s+", " ", normalized).strip()
-        if normalized in self._CONFIRM_WORDS:
+        normalized = self._normalize_confirmation_message(message)
+        if pending_confirmation.confirmation_token:
+            token = pending_confirmation.confirmation_token.lower()
+            allowed_token_phrases = {
+                f"confirm {token}",
+                f"yes confirm {token}",
+                f"yes {token}",
+                f"go ahead {token}",
+                f"do it {token}",
+            }
+            if normalized in allowed_token_phrases:
+                return BarkAiDecision(
+                    route=BarkAiRoute.TOOL_ACTION_EXECUTE,
+                    tool_name=pending_confirmation.action,
+                    params=dict(pending_confirmation.params),
+                    pending_confirmation=pending_confirmation,
+                )
+        elif normalized in self._CONFIRM_WORDS:
             return BarkAiDecision(
                 route=BarkAiRoute.TOOL_ACTION_EXECUTE,
                 tool_name=pending_confirmation.action,
@@ -260,6 +289,11 @@ class BarkAiRouter:
         if "rescue" in normalized or "decompression" in normalized:
             tags.append("rescue")
         return tags
+
+    @staticmethod
+    def _normalize_confirmation_message(message: str) -> str:
+        normalized = re.sub(r"[^a-z0-9\s]", " ", message.strip().lower())
+        return re.sub(r"\s+", " ", normalized).strip()
 
     @staticmethod
     def confirmation_expiry_iso(minutes: int = 10) -> str:

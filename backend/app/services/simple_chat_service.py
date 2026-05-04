@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
 from typing import Generator
 
 from fastapi import HTTPException
@@ -20,7 +21,7 @@ from app.services.auth_otp_store import auth_otp_store
 from app.services.chat_policy import ChatPolicyBuilder
 from app.services.chat_router import BarkAiDecision, BarkAiFailureCategory, BarkAiResult, BarkAiRoute, BarkAiRouter, PendingConfirmation
 from app.services.chat_tools import BarkAiTools
-from app.services.llm_client import LlmClient, LlmClientError, extract_openai_api_key as _extract_openai_api_key
+from app.services.llm_client import LlmClient, LlmClientError, StructuredChatReply, extract_openai_api_key as _extract_openai_api_key
 from app.services.memory_store import MemoryStore
 from app.services.service_store import service_store
 
@@ -31,6 +32,15 @@ PROVIDER_FIELDS = (
     "description",
     "price_from",
     "contact_name",
+)
+
+MEMORY_FACT_VALUE_LIMIT = 160
+OPEN_LOOP_ITEM_LIMIT = 120
+ACTIVE_PLAN_LIMIT = 160
+MAX_OPEN_LOOPS = 5
+_MEMORY_INSTRUCTION_RE = re.compile(
+    r"(ignore\s+(previous|above)|hidden prompt|system prompt|developer message|internal routing|implementation detail|tool call|override (the )?instructions)",
+    re.IGNORECASE,
 )
 
 
@@ -120,6 +130,7 @@ class SimpleChatService:
             transcript=transcript,
             response=response,
             state=state,
+            profile_context=profile_context,
             persist_assistant_turn=response.status != "error",
         )
         return response
@@ -146,6 +157,7 @@ class SimpleChatService:
                 transcript=transcript,
                 response=response,
                 state=state,
+                profile_context=profile_context,
                 persist_assistant_turn=response.status != "error",
             )
             yield {"type": "delta", "delta": response.answer}
@@ -158,39 +170,27 @@ class SimpleChatService:
             state=state,
             policy_tags=decision.policy_tags,
         )
-        chunks: list[str] = []
         try:
-            for delta in self.llm_client.stream_text(messages=messages):
-                chunks.append(delta)
-                yield {"type": "delta", "delta": delta}
-            text = "".join(chunks).strip()
-            if not text:
-                raise LlmClientError(category="llm_unavailable", detail="OpenAI returned an empty streamed chat response")
+            reply = self.llm_client.stream_structured_chat_reply(messages=messages)
             self._record_llm_success(stream=True)
-            result = BarkAiResult(answer=text, answer_source="assistant")
-        except LlmClientError as exc:
-            if chunks:
-                try:
-                    fallback_text = self.llm_client.generate_text(messages=messages)
-                    self._record_llm_success(stream=False)
-                    result = BarkAiResult(answer=fallback_text, answer_source="assistant")
-                except LlmClientError as fallback_exc:
-                    self._record_llm_failure(fallback_exc)
-                    result = self._error_result_from_llm_exception(fallback_exc)
-            else:
-                try:
-                    fallback_text = self.llm_client.generate_text(messages=messages)
-                    self._record_llm_success(stream=False)
-                    result = BarkAiResult(answer=fallback_text, answer_source="assistant")
-                except LlmClientError as fallback_exc:
-                    self._record_llm_failure(fallback_exc)
-                    result = self._error_result_from_llm_exception(fallback_exc)
+            result = self._structured_reply_to_result(reply)
+            yield {"type": "delta", "delta": reply.answer}
+        except LlmClientError:
+            try:
+                reply = self.llm_client.generate_structured_chat_reply(messages=messages)
+                self._record_llm_success(stream=False)
+                result = self._structured_reply_to_result(reply)
+                yield {"type": "delta", "delta": reply.answer}
+            except LlmClientError as fallback_exc:
+                self._record_llm_failure(fallback_exc)
+                result = self._error_result_from_llm_exception(fallback_exc)
         response = self._build_chat_response_from_result(transcript=transcript, result=result)
         self._persist_chat_state(
             user_id=request.user_id,
             transcript=transcript,
             response=response,
             state=state,
+            profile_context=profile_context,
             persist_assistant_turn=response.status != "error",
         )
         yield {"type": "final", "response": response.model_dump(mode="json")}
@@ -299,9 +299,9 @@ class SimpleChatService:
                 state=state,
                 policy_tags=decision.policy_tags,
             )
-            text = self.llm_client.generate_text(messages=messages)
+            reply = self.llm_client.generate_structured_chat_reply(messages=messages)
             self._record_llm_success(stream=False)
-            result = BarkAiResult(answer=text, answer_source="assistant")
+            result = self._structured_reply_to_result(reply)
         except LlmClientError as exc:
             self._record_llm_failure(exc)
             result = self._error_result_from_llm_exception(exc)
@@ -317,30 +317,29 @@ class SimpleChatService:
         decision: BarkAiDecision,
     ) -> ChatResponse:
         if not self.tools_enabled and decision.route in {BarkAiRoute.TOOL_READ, BarkAiRoute.TOOL_ACTION_CONFIRMATION, BarkAiRoute.TOOL_ACTION_EXECUTE}:
-            fallback_decision = BarkAiDecision(route=BarkAiRoute.CHAT, policy_tags=decision.policy_tags)
-            return self._execute_decision(
-                request=request,
+            return self._build_chat_response_from_result(
                 transcript=transcript,
-                state=state,
-                profile_context=profile_context,
-                decision=fallback_decision,
+                result=self._tool_unavailable_result(),
             )
 
-        if decision.route == BarkAiRoute.TOOL_ACTION_EXECUTE:
-            self.tools.mutating_actions_enabled = self.mutating_actions_enabled
-            result = self.tools.execute_confirmed_action(
-                user_id=request.user_id,
-                action=str(decision.tool_name or ""),
-                params=dict(decision.params),
-            )
-        else:
-            result = self.tools.execute(
-                user_id=request.user_id,
-                transcript=transcript,
-                tool_name=str(decision.tool_name or ""),
-                params=dict(decision.params),
-                profile_context=profile_context,
-            )
+        try:
+            if decision.route == BarkAiRoute.TOOL_ACTION_EXECUTE:
+                self.tools.mutating_actions_enabled = self.mutating_actions_enabled
+                result = self.tools.execute_confirmed_action(
+                    user_id=request.user_id,
+                    action=str(decision.tool_name or ""),
+                    params=dict(decision.params),
+                )
+            else:
+                result = self.tools.execute(
+                    user_id=request.user_id,
+                    transcript=transcript,
+                    tool_name=str(decision.tool_name or ""),
+                    params=dict(decision.params),
+                    profile_context=profile_context,
+                )
+        except Exception:
+            result = self._tool_unavailable_result()
         if result.pending_confirmation and not result.pending_confirmation.expires_at:
             result.pending_confirmation.expires_at = self.router.confirmation_expiry_iso()
         return self._build_chat_response_from_result(transcript=transcript, result=result)
@@ -374,8 +373,12 @@ class SimpleChatService:
         return self.policy_builder.build_messages(
             transcript=transcript,
             profile_context=resolved_profile_context,
-            memory_summary=str(resolved_state.get("conversation_summary") or ""),
             preferences=dict(resolved_state.get("preferences") or {}),
+            sanitized_memory=self._sanitize_memory_payload(
+                resolved_state.get("sanitized_memory"),
+                profile_context=resolved_profile_context,
+                preferences=dict(resolved_state.get("preferences") or {}),
+            ),
             policy_tags=policy_tags or [],
         )
 
@@ -459,6 +462,7 @@ class SimpleChatService:
                 prompt=result.pending_confirmation.prompt,
                 expires_at=result.pending_confirmation.expires_at,
                 params=dict(result.pending_confirmation.params),
+                confirmation_token=result.pending_confirmation.confirmation_token,
             )
             if result.pending_confirmation
             else None
@@ -475,6 +479,23 @@ class SimpleChatService:
             status=result.status,
             error_type=result.error_type,
             pending_confirmation=pending_confirmation,
+        )
+
+    @staticmethod
+    def _structured_reply_to_result(reply: StructuredChatReply) -> BarkAiResult:
+        return BarkAiResult(
+            answer=reply.answer,
+            answer_source="assistant",
+            answer_badges=list(reply.safety_flags),
+        )
+
+    @staticmethod
+    def _tool_unavailable_result() -> BarkAiResult:
+        return BarkAiResult(
+            answer="BarkAI tools are unavailable right now. Please try again shortly.",
+            answer_source="tool_disabled",
+            status="error",
+            error_type="tool_failed",
         )
 
     def _error_result_from_llm_exception(self, exc: LlmClientError) -> BarkAiResult:
@@ -529,6 +550,12 @@ class SimpleChatService:
             "provider_state": provider_state if isinstance(provider_state, dict) else {},
             "preferences": preferences if isinstance(preferences, dict) else {},
             "conversation_summary": str(raw_state.get("conversation_summary") or ""),
+            "sanitized_memory": self._sanitize_memory_payload(
+                raw_state.get("sanitized_memory"),
+                profile_context={},
+                preferences=preferences if isinstance(preferences, dict) else {},
+                merge_trusted=False,
+            ),
             "pending_confirmation": pending_confirmation if isinstance(pending_confirmation, dict) else {},
         }
 
@@ -541,6 +568,12 @@ class SimpleChatService:
             provider_state=dict(state["provider_state"]),
             preferences=dict(state["preferences"]),
             conversation_summary=str(state["conversation_summary"]),
+            sanitized_memory=self._sanitize_memory_payload(
+                state.get("sanitized_memory"),
+                profile_context={},
+                preferences=dict(state["preferences"]),
+                merge_trusted=False,
+            ),
             pending_confirmation=dict(state["pending_confirmation"]),
         )
 
@@ -551,6 +584,7 @@ class SimpleChatService:
         transcript: list[ChatMessage],
         response: ChatResponse,
         state: dict[str, object],
+        profile_context: dict[str, object],
         persist_assistant_turn: bool,
     ) -> None:
         latest_user_message = next((message.content for message in reversed(transcript) if message.role == "user"), "").strip()
@@ -564,11 +598,25 @@ class SimpleChatService:
                 "prompt": response.pending_confirmation.prompt,
                 "params": dict(response.pending_confirmation.params),
                 "expires_at": response.pending_confirmation.expires_at,
+                "confirmation_token": response.pending_confirmation.confirmation_token,
             }
         else:
             state["pending_confirmation"] = {}
+        state["sanitized_memory"] = self._sync_trusted_memory_fields(
+            self._sanitize_memory_payload(
+                state.get("sanitized_memory"),
+                profile_context=profile_context,
+                preferences=dict(state.get("preferences") or {}),
+            ),
+            profile_context=profile_context,
+            preferences=dict(state.get("preferences") or {}),
+        )
         if self.memory_summary_enabled:
-            self._maybe_refresh_summary(user_id=user_id, state=state)
+            self._maybe_refresh_sanitized_memory(
+                user_id=user_id,
+                state=state,
+                profile_context=profile_context,
+            )
         self._save_user_state(user_id=user_id, state=state)
 
     def _append_turn_if_new(self, *, user_id: str, role: str, content: str) -> None:
@@ -577,18 +625,31 @@ class SimpleChatService:
             return
         self.memory_store.append_turn(user_id=user_id, role=role, content=content)
 
-    def _maybe_refresh_summary(self, *, user_id: str, state: dict[str, object]) -> None:
+    def _maybe_refresh_sanitized_memory(
+        self,
+        *,
+        user_id: str,
+        state: dict[str, object],
+        profile_context: dict[str, object],
+    ) -> None:
         recent_turns = self.memory_store.load_recent_turns(user_id, limit=8)
         if len(recent_turns) < 6:
             return
         try:
-            summary_messages = self.policy_builder.build_summary_messages(
+            memory_messages = self.policy_builder.build_memory_messages(
                 recent_turns=recent_turns,
-                previous_summary=str(state.get("conversation_summary") or ""),
+                previous_memory=self._sanitize_memory_payload(
+                    state.get("sanitized_memory"),
+                    profile_context=profile_context,
+                    preferences=dict(state.get("preferences") or {}),
+                ),
             )
-            summary = self.llm_client.generate_text(messages=summary_messages)
-            if summary.strip():
-                state["conversation_summary"] = summary.strip()
+            memory_payload = self.llm_client.generate_json_object(messages=memory_messages)
+            state["sanitized_memory"] = self._sanitize_memory_payload(
+                memory_payload,
+                profile_context=profile_context,
+                preferences=dict(state.get("preferences") or {}),
+            )
         except LlmClientError:
             return
 
@@ -607,6 +668,134 @@ class SimpleChatService:
             preferences.setdefault("preferred_suburb", str(profile_context["suburb"]).strip())
         state["preferences"] = preferences
 
+    def _sanitize_memory_payload(
+        self,
+        raw_memory: object,
+        *,
+        profile_context: dict[str, object],
+        preferences: dict[str, object],
+        merge_trusted: bool = True,
+    ) -> dict[str, object]:
+        payload = raw_memory if isinstance(raw_memory, dict) else {}
+        stable_profile_facts = self._sanitize_memory_map(payload.get("stable_profile_facts"), allow_ints=True)
+        stable_preferences = self._sanitize_memory_map(payload.get("stable_preferences"), allow_ints=False)
+        open_loops = self._sanitize_open_loops(payload.get("open_loops"))
+        active_plan = self._sanitize_active_plan(payload.get("active_plan"))
+        sanitized = {
+            "stable_profile_facts": stable_profile_facts,
+            "stable_preferences": stable_preferences,
+            "open_loops": open_loops,
+            "active_plan": active_plan,
+        }
+        if not merge_trusted:
+            return sanitized
+        return self._sync_trusted_memory_fields(
+            sanitized,
+            profile_context=profile_context,
+            preferences=preferences,
+        )
+
+    def _sync_trusted_memory_fields(
+        self,
+        sanitized_memory: dict[str, object],
+        *,
+        profile_context: dict[str, object],
+        preferences: dict[str, object],
+    ) -> dict[str, object]:
+        merged = {
+            "stable_profile_facts": self._sanitize_memory_map(
+                dict(sanitized_memory.get("stable_profile_facts") or {}),
+                allow_ints=True,
+            ),
+            "stable_preferences": self._sanitize_memory_map(
+                dict(sanitized_memory.get("stable_preferences") or {}),
+                allow_ints=False,
+            ),
+            "open_loops": self._sanitize_open_loops(sanitized_memory.get("open_loops")),
+            "active_plan": self._sanitize_active_plan(sanitized_memory.get("active_plan")),
+        }
+        merged["stable_profile_facts"] = self._trusted_memory_profile_facts(profile_context)
+        merged["stable_preferences"] = self._trusted_memory_preferences(preferences)
+        return merged
+
+    def _trusted_memory_profile_facts(self, profile_context: dict[str, object]) -> dict[str, object]:
+        return self._sanitize_memory_map(profile_context, allow_ints=True)
+
+    def _trusted_memory_preferences(self, preferences: dict[str, object]) -> dict[str, object]:
+        return self._sanitize_memory_map(preferences, allow_ints=False)
+
+    def _sanitize_memory_map(self, raw_map: object, *, allow_ints: bool) -> dict[str, object]:
+        if not isinstance(raw_map, dict):
+            return {}
+        sanitized: dict[str, object] = {}
+        for raw_key, raw_value in raw_map.items():
+            key = str(raw_key).strip()
+            if not key or self._looks_instruction_like(key):
+                continue
+            normalized = self._sanitize_memory_value(raw_value, allow_ints=allow_ints)
+            if normalized is not None:
+                sanitized[key] = normalized
+        return sanitized
+
+    def _sanitize_memory_value(self, raw_value: object, *, allow_ints: bool) -> object | None:
+        if isinstance(raw_value, bool):
+            return raw_value
+        if allow_ints and isinstance(raw_value, int):
+            return raw_value
+        if isinstance(raw_value, str):
+            cleaned = raw_value.strip()
+            if not cleaned or len(cleaned) > MEMORY_FACT_VALUE_LIMIT or self._looks_instruction_like(cleaned):
+                return None
+            if "\n\n" in cleaned:
+                return None
+            return cleaned
+        if isinstance(raw_value, list):
+            values: list[str] = []
+            for item in raw_value:
+                if not isinstance(item, str):
+                    return None
+                cleaned = item.strip()
+                if not cleaned or len(cleaned) > MEMORY_FACT_VALUE_LIMIT or self._looks_instruction_like(cleaned):
+                    return None
+                values.append(cleaned)
+            return values
+        return None
+
+    def _sanitize_open_loops(self, raw_loops: object) -> list[str]:
+        if not isinstance(raw_loops, list):
+            return []
+        sanitized: list[str] = []
+        for item in raw_loops[:MAX_OPEN_LOOPS]:
+            if not isinstance(item, str):
+                return []
+            cleaned = item.strip()
+            if (
+                not cleaned
+                or len(cleaned) > OPEN_LOOP_ITEM_LIMIT
+                or self._looks_instruction_like(cleaned)
+                or "\n\n" in cleaned
+            ):
+                return []
+            sanitized.append(cleaned)
+        return sanitized
+
+    def _sanitize_active_plan(self, raw_plan: object) -> str:
+        if not isinstance(raw_plan, str):
+            return ""
+        cleaned = raw_plan.strip()
+        if (
+            not cleaned
+            or len(cleaned) > ACTIVE_PLAN_LIMIT
+            or self._looks_instruction_like(cleaned)
+            or "\n\n" in cleaned
+        ):
+            return ""
+        return cleaned
+
+    @staticmethod
+    def _looks_instruction_like(text: str) -> bool:
+        return bool(_MEMORY_INSTRUCTION_RE.search(text))
+
     def _persist_action_response(
         self,
         *,
@@ -624,6 +813,12 @@ class SimpleChatService:
             provider_state=dict(state["provider_state"]),
             preferences=dict(state["preferences"]),
             conversation_summary=str(state["conversation_summary"]),
+            sanitized_memory=self._sanitize_memory_payload(
+                state.get("sanitized_memory"),
+                profile_context={},
+                preferences=dict(state["preferences"]),
+                merge_trusted=False,
+            ),
             pending_confirmation=dict(state["pending_confirmation"]),
         )
         self.memory_store.append_turn(user_id=user_id, role="assistant", content=answer)
